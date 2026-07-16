@@ -421,13 +421,13 @@
       fingerprint_hint:"The person and finger are stored in the panel and in the selected ESP. Linking an existing ID does not change its biometric template.",
       physical_ids:"Physical fingerprint IDs", finger:"Finger", status:"Status", updated:"Updated", keypads:"Keypads", add_keypad:"Add keypad",
       zigbee_hint:"Zigbee keypads normally sleep. Their status shows whether they are configured in Home Assistant, not whether they are continuously online.",
-      ha_entities:"Home Assistant entities", add_door:"Add door", door_hint:"Every door must use an existing Home Assistant lock, switch, button, input button or cover and a compatible open action.",
+      ha_entities:"Home Assistant entities", add_door:"Add door", door_hint:"An authorized credential directly runs the selected default action. Lock entities expose open only when the device reports that capability.",
       activity_log:"Activity log", retention:"Retention", retention_hint:"Expired entries are deleted automatically. A hard safety limit of 10,000 entries also applies.",
       date:"Date", event:"Event", confidence:"Confidence", detail:"Detail", no_users:"No users", no_credentials:"No credentials",
       associate_people:"Link to Home Assistant People…", create_in_ha:"Create in HA", add_fingerprint:"Add fingerprint", add_code:"Add code/tag",
       rename:"Rename", delete:"Delete", save:"Save", edit:"Edit", configured:"Configured", available:"Available", unavailable:"Unavailable", missing:"Entity missing",
       active:"Active", pending:"Enrolling", deleting:"Pending deletion", delete_pending:"Deleting", unassigned:"Unassigned finger", assign_finger:"Assign finger", no_records:"No records",
-      fingerprint:"Fingerprint", keypad:"Keypad", code:"Code", action:"Action", days:"{count} days", one_day:"1 day",
+      fingerprint:"Fingerprint", keypad:"Keypad", code:"Code", action:"Action", default_action:"Default authentication action", action_map:"Key mapping", days:"{count} days", one_day:"1 day",
       reader_summary:"{count} / {capacity} templates · {status}", choose_reader:"Select a fingerprint reader", reader_not_ready:"The selected reader is not ready.",
       select_finger:"Select the finger to enroll", identify_finger:"Identify the existing fingerprint", assign_finger:"Assign a finger to this credential",
       person_id:"{name} · ID {id} · {reader}", selected:"Selected", already_registered:"Already registered for this person", none:"None", continue:"Continue",
@@ -441,13 +441,15 @@
       prompt_cancel_entity:"Cancel button entity:", prompt_delete_entity:"Delete button entity:", prompt_registry_entity:"Name registry text entity:",
       prompt_access_entity:"Access event entity:", prompt_management_entity:"Management event entity:", prompt_count_entity:"Fingerprint count entity (optional):",
       prompt_capacity_entity:"Reader capacity entity (optional):", prompt_device_entity:"Device availability entity (optional):",
-      choose_door_entity:"Select a Home Assistant entity for this door.", choose_action:"Select an open action.", linked:"Linked", management_empty:"No recent management action.",
+      prompt_key_open:"Raw keypad action for OPEN (optional):", prompt_key_unlock:"Raw keypad action for UNLOCK (optional):", prompt_key_lock:"Raw keypad action for LOCK (optional):",
+      choose_door_entity:"Select a Home Assistant entity for this door.", choose_action:"Select the default authentication action.", linked:"Linked", management_empty:"No recent management action.",
       access_granted:"Access recognized", scan_unmatched:"Fingerprint not recognized", scan_invalid:"Invalid scan", scan_misplaced:"Finger misplaced",
       enrollment_requested:"Enrollment started", enrollment_scan:"Enrollment scan", enrollment_done:"Enrollment completed", enroll_failed:"Enrollment failed",
       enroll_cancelled:"Enrollment cancelled", user_deleted:"Fingerprint deleted", delete_queued:"Deletion queued", delete_requested:"Deletion sent",
       delete_retry:"Retrying deletion", delete_failed:"Deletion not confirmed", existing_id_linked:"Existing ID linked", user_renamed:"Credential updated",
       person_created:"User created", person_linked:"Linked to Home Assistant", person_renamed:"User updated", keypad_credential_added:"Keypad credential added",
       keypad_credential_deleted:"Keypad credential deleted", keypad_capture_failed:"Keypad capture failed", keypad_denied:"Keypad credential denied",
+      door_action_executed:"Door action executed", door_action_failed:"Door action failed",
       left_thumb:"Left thumb", left_index:"Left index", left_middle:"Left middle", left_ring:"Left ring", left_pinky:"Left little finger",
       right_thumb:"Right thumb", right_index:"Right index", right_middle:"Right middle", right_ring:"Right ring", right_pinky:"Right little finger",
       left_hand:"LEFT HAND", right_hand:"RIGHT HAND"
@@ -463,13 +465,13 @@
       fingerprint_hint:"La persona y el dedo se guardan en el panel y en el ESP seleccionado. Vincular un ID existente no modifica su plantilla biométrica.",
       physical_ids:"IDs físicos de huella", finger:"Dedo", status:"Estado", updated:"Actualización", keypads:"Keypads", add_keypad:"Añadir keypad",
       zigbee_hint:"Los keypads Zigbee suelen dormir. El estado indica si están configurados en Home Assistant, no si permanecen continuamente online.",
-      ha_entities:"Entidades de Home Assistant", add_door:"Añadir puerta", door_hint:"Cada puerta debe usar un lock, switch, button, input button o cover existente en Home Assistant y una acción compatible.",
+      ha_entities:"Entidades de Home Assistant", add_door:"Añadir puerta", door_hint:"Una credencial autorizada ejecuta directamente la acción predeterminada. En entidades lock, open solo aparece si el dispositivo declara esa capacidad.",
       activity_log:"Registro de actividad", retention:"Retención", retention_hint:"Las entradas caducadas se borran automáticamente. También se aplica un límite de seguridad de 10.000 entradas.",
       date:"Fecha", event:"Evento", confidence:"Confianza", detail:"Detalle", no_users:"No hay usuarios", no_credentials:"Sin credenciales",
       associate_people:"Asociar con People…", create_in_ha:"Crear en HA", add_fingerprint:"Añadir huella", add_code:"Añadir código/tag",
       rename:"Renombrar", delete:"Borrar", save:"Guardar", edit:"Editar", configured:"Configurado", available:"Disponible", unavailable:"No disponible", missing:"Falta la entidad",
       active:"Activa", pending:"Registrando", deleting:"Pendiente de borrar", delete_pending:"Borrando", unassigned:"Dedo sin asignar", assign_finger:"Asignar dedo", no_records:"No hay registros",
-      fingerprint:"Huella", keypad:"Keypad", code:"Código", action:"Acción", days:"{count} días", one_day:"1 día",
+      fingerprint:"Huella", keypad:"Keypad", code:"Código", action:"Acción", default_action:"Acción predeterminada al autenticar", action_map:"Mapa de teclas", days:"{count} días", one_day:"1 día",
       reader_summary:"{count} / {capacity} plantillas · {status}", choose_reader:"Selecciona un lector de huellas", reader_not_ready:"El lector seleccionado no está preparado.",
       select_finger:"Selecciona el dedo a registrar", identify_finger:"Identifica la huella existente", assign_finger:"Asigna un dedo a esta credencial",
       person_id:"{name} · ID {id} · {reader}", selected:"Seleccionado", already_registered:"Ya registrados para esta persona", none:"Ninguno", continue:"Continuar",
@@ -483,13 +485,15 @@
       prompt_cancel_entity:"Entidad button de cancelación:", prompt_delete_entity:"Entidad button de borrado:", prompt_registry_entity:"Entidad text del registro de nombres:",
       prompt_access_entity:"Entidad del evento de acceso:", prompt_management_entity:"Entidad del evento de gestión:", prompt_count_entity:"Entidad del contador de huellas (opcional):",
       prompt_capacity_entity:"Entidad de capacidad (opcional):", prompt_device_entity:"Entidad de disponibilidad del dispositivo (opcional):",
-      choose_door_entity:"Selecciona una entidad de Home Assistant para esta puerta.", choose_action:"Selecciona una acción de apertura.", linked:"Asociada", management_empty:"Sin acciones recientes de gestión.",
+      prompt_key_open:"Acción bruta del keypad para OPEN (opcional):", prompt_key_unlock:"Acción bruta del keypad para UNLOCK (opcional):", prompt_key_lock:"Acción bruta del keypad para LOCK (opcional):",
+      choose_door_entity:"Selecciona una entidad de Home Assistant para esta puerta.", choose_action:"Selecciona la acción predeterminada al autenticar.", linked:"Asociada", management_empty:"Sin acciones recientes de gestión.",
       access_granted:"Acceso reconocido", scan_unmatched:"Huella no reconocida", scan_invalid:"Lectura inválida", scan_misplaced:"Dedo mal colocado",
       enrollment_requested:"Registro iniciado", enrollment_scan:"Lectura de registro", enrollment_done:"Registro completado", enroll_failed:"Registro fallido",
       enroll_cancelled:"Registro cancelado", user_deleted:"Huella borrada", delete_queued:"Borrado pendiente", delete_requested:"Borrado enviado",
       delete_retry:"Reintentando borrado", delete_failed:"Borrado no confirmado", existing_id_linked:"ID existente vinculado", user_renamed:"Credencial actualizada",
       person_created:"Usuario creado", person_linked:"Asociado con Home Assistant", person_renamed:"Usuario actualizado", keypad_credential_added:"Credencial keypad registrada",
       keypad_credential_deleted:"Credencial keypad borrada", keypad_capture_failed:"Captura keypad fallida", keypad_denied:"Credencial keypad denegada",
+      door_action_executed:"Acción de puerta ejecutada", door_action_failed:"Acción de puerta fallida",
       left_thumb:"Pulgar izquierdo", left_index:"Índice izquierdo", left_middle:"Corazón izquierdo", left_ring:"Anular izquierdo", left_pinky:"Meñique izquierdo",
       right_thumb:"Pulgar derecho", right_index:"Índice derecho", right_middle:"Corazón derecho", right_ring:"Anular derecho", right_pinky:"Meñique derecho",
       left_hand:"MANO IZQUIERDA", right_hand:"MANO DERECHA"
@@ -618,9 +622,22 @@
     const keypads = (data.access_readers || []).filter(reader => reader.reader_type === "keypad");
     $("#keypads-body").innerHTML = keypads.length ? keypads.map(reader => {
       const config = reader.config || {};
-      const entities = [config.transaction_entity, config.code_entity, config.action_entity].filter(Boolean).map(value => `<span class="entity">${esc(value)}</span>`).join("");
+      const mapping = Object.entries(config.action_map || {}).map(([raw,action]) => `${esc(raw)} → ${esc(action)}`).join(" · ") || "—";
+      const entities = [config.transaction_entity, config.code_entity, config.action_entity].filter(Boolean).map(value => `<span class="entity">${esc(value)}</span>`).join("") + `<div class="muted" style="margin-top:7px">${t("action_map")}: ${mapping}</div>`;
       return `<tr><td><strong>${esc(reader.id)}</strong></td><td>${esc(reader.name)}</td><td><select onchange="associateReader('${reader.id}',this.value)">${doorOptions(reader.door_id)}</select></td><td>${entities}</td><td><span class="status ${esc(reader.availability)}">${statusLabel(reader.availability)}</span></td><td class="actions-cell"><button class="secondary" onclick="editReader('${reader.id}')">${t("edit")}</button></td></tr>`;
     }).join("") : `<tr><td colspan="6" class="empty">${t("no_records")}</td></tr>`;
+  }
+
+  function configureKeypadActionMap(current = {}) {
+    const mapping = {...current};
+    for (const [action,label,fallback] of [["open","prompt_key_open","disarm"],["unlock","prompt_key_unlock",""],["lock","prompt_key_lock","arm_all_zones"]]) {
+      const existing = Object.keys(mapping).find(raw => mapping[raw] === action) ?? fallback;
+      const raw = prompt(t(label),existing);
+      if (raw === null) return null;
+      for (const key of Object.keys(mapping)) if (mapping[key] === action) delete mapping[key];
+      if (raw.trim()) mapping[raw.trim()] = action;
+    }
+    return mapping;
   }
 
   function doorEntityOptions(selected) {
@@ -631,7 +648,7 @@
     return (entity?.actions || []).map(action => `<option value="${esc(action)}" ${action === selected ? "selected" : ""}>${esc(action)}</option>`).join("");
   }
   function renderDoors() {
-    $("#doors-body").innerHTML = (data.doors || []).map(door => `<div class="door-card" data-door="${esc(door.id)}"><div><label>${t("name")}</label><input class="door-name" value="${esc(door.name)}"><span class="entity">${esc(door.id)}</span></div><div><label>${t("ha_entities")}</label><select class="door-entity" onchange="updateDoorActions('${door.id}')">${doorEntityOptions(door.entity_id)}</select></div><div><label>${t("action")}</label><select class="door-action">${actionOptions(door.entity_id,door.open_action)}</select></div><div><span class="status">${esc(door.state || "—")}</span><button style="margin-left:8px" onclick="saveDoor('${door.id}')">${t("save")}</button></div></div>`).join("");
+    $("#doors-body").innerHTML = (data.doors || []).map(door => `<div class="door-card" data-door="${esc(door.id)}"><div><label>${t("name")}</label><input class="door-name" value="${esc(door.name)}"><span class="entity">${esc(door.id)}</span></div><div><label>${t("ha_entities")}</label><select class="door-entity" onchange="updateDoorActions('${door.id}')">${doorEntityOptions(door.entity_id)}</select></div><div><label>${t("default_action")}</label><select class="door-action">${actionOptions(door.entity_id,door.default_action || door.open_action)}</select></div><div><span class="status">${esc(door.state || "—")}</span><button style="margin-left:8px" onclick="saveDoor('${door.id}')">${t("save")}</button></div></div>`).join("");
   }
 
   function renderLogs() {
@@ -695,7 +712,7 @@
   window.assignFinger = (readerId,slot) => { selectedReader=readerId; $("#fingerprint-reader").value=readerId; const user=data.users.find(item=>item.reader_id===readerId&&Number(item.slot)===Number(slot)); if(user) openFingerModal("assign",user); };
   window.deleteFingerprint = (readerId,slot) => confirm(t("confirm_delete_fingerprint",{id:slot,reader:readerName(readerId)})) && mutate(`users/${slot}?reader_id=${encodeURIComponent(readerId)}`,"DELETE");
   window.updateDoorActions = id => { const row=document.querySelector(`[data-door="${CSS.escape(id)}"]`), entity=row.querySelector(".door-entity").value; row.querySelector(".door-action").innerHTML=actionOptions(entity,""); };
-  window.saveDoor = id => { const row=document.querySelector(`[data-door="${CSS.escape(id)}"]`); mutate(`doors/${id}`,"PUT",{name:row.querySelector(".door-name").value.trim(),entity_id:row.querySelector(".door-entity").value,open_action:row.querySelector(".door-action").value}); };
+  window.saveDoor = id => { const row=document.querySelector(`[data-door="${CSS.escape(id)}"]`); mutate(`doors/${id}`,"PUT",{name:row.querySelector(".door-name").value.trim(),entity_id:row.querySelector(".door-entity").value,default_action:row.querySelector(".door-action").value}); };
   window.editReader = id => {
     const reader=data.access_readers.find(item=>item.id===id); if(!reader)return;
     const name=prompt(t("prompt_reader_name"),reader.name); if(!name?.trim())return;
@@ -703,6 +720,7 @@
     const fields=reader.reader_type==="keypad" ? [["transaction_entity","prompt_transaction"],["code_entity","prompt_code_entity"],["action_entity","prompt_action_entity"]] : [["slot_entity","prompt_slot_entity"],["enroll_entity","prompt_enroll_entity"],["cancel_entity","prompt_cancel_entity"],["delete_entity","prompt_delete_entity"],["name_registry_entity","prompt_registry_entity"],["access_event_entity","prompt_access_entity"],["management_event_entity","prompt_management_entity"],["fingerprint_count_entity","prompt_count_entity"],["reader_capacity_entity","prompt_capacity_entity"],["device_status_entity","prompt_device_entity"]];
     const legacyDiscovery = Boolean(reader.config?.legacy_autodiscovery);
     if(!legacyDiscovery) for(const [key,label] of fields){const value=prompt(t(label),config[key]||"");if(value===null)return;config[key]=value.trim();}
+    if(reader.reader_type==="keypad"){const mapping=configureKeypadActionMap(config.action_map||{});if(mapping===null)return;config.action_map=mapping;}
     mutate(`readers/${id}`,"PUT",{name:name.trim(),door_id:reader.door_id,enabled:reader.enabled,...(!legacyDiscovery?{config}:{})});
   };
 
@@ -717,8 +735,8 @@
   $("#keypad-start").addEventListener("click",async()=>{if(!keypadPerson)return;const reader_id=$("#keypad-reader").value;const ok=await mutate("keypad/capture","POST",{person_id:keypadPerson.id,reader_id});if(ok){keypadCapturing=true;$("#keypad-start").disabled=true;$("#keypad-status").textContent=t("capture_wait");}});
   ["#keypad-close","#keypad-cancel"].forEach(id=>$(id).addEventListener("click",()=>closeKeypadModal())); $("#keypad-modal").addEventListener("click",event=>event.target===$("#keypad-modal")&&closeKeypadModal());
   $("#add-person").addEventListener("click",async()=>{const name=prompt(t("prompt_person"));if(!name?.trim())return;const existing=data.ha_people.find(person=>normalize(person.name)===normalize(name));await mutate("people","POST",{name:name.trim(),ha_person_entity_id:existing?.entity_id||""});});
-  $("#add-door").addEventListener("click",async()=>{const name=prompt(t("prompt_door_name"));if(!name?.trim())return;const id=prompt(t("prompt_door_id"),normalize(name).replace(/[^a-z0-9]+/g,"_"));if(!id?.trim())return;const entity=prompt(t("choose_door_entity"),data.door_entities[0]?.entity_id||"");const option=data.door_entities.find(item=>item.entity_id===entity?.trim());if(!option){showError(t("choose_door_entity"));return;}const action=prompt(t("choose_action"),option.actions[0]||"");if(!action)return;await mutate("doors","POST",{id:id.trim(),name:name.trim(),entity_id:entity.trim(),open_action:action.trim()});});
-  $("#add-keypad").addEventListener("click",async()=>{const name=prompt(t("prompt_reader_name"));if(!name?.trim())return;const id=prompt(t("prompt_reader_id"),normalize(name).replace(/[^a-z0-9]+/g,"_"));if(!id?.trim())return;const door=prompt(t("prompt_door_link",{doors:data.doors.map(item=>item.id).join(", ")}),data.doors[0]?.id||"");if(!door?.trim())return;const prefix=normalize(name).replace(/[^a-z0-9]+/g,"_");const transaction=prompt(t("prompt_transaction"),`sensor.${prefix}_action_transaction`),code=prompt(t("prompt_code_entity"),`sensor.${prefix}_action_code`),action=prompt(t("prompt_action_entity"),`sensor.${prefix}_action`);if(!transaction||!code||!action)return;await mutate("readers","POST",{id:id.trim(),name:name.trim(),reader_type:"keypad",door_id:door.trim(),config:{transaction_entity:transaction.trim(),code_entity:code.trim(),action_entity:action.trim(),action_map:{disarm:"open",arm_all_zones:"lock"}}});});
+  $("#add-door").addEventListener("click",async()=>{const name=prompt(t("prompt_door_name"));if(!name?.trim())return;const id=prompt(t("prompt_door_id"),normalize(name).replace(/[^a-z0-9]+/g,"_"));if(!id?.trim())return;const entity=prompt(t("choose_door_entity"),data.door_entities[0]?.entity_id||"");const option=data.door_entities.find(item=>item.entity_id===entity?.trim());if(!option){showError(t("choose_door_entity"));return;}const action=prompt(t("choose_action"),option.actions[0]||"");if(!action)return;await mutate("doors","POST",{id:id.trim(),name:name.trim(),entity_id:entity.trim(),default_action:action.trim()});});
+  $("#add-keypad").addEventListener("click",async()=>{const name=prompt(t("prompt_reader_name"));if(!name?.trim())return;const id=prompt(t("prompt_reader_id"),normalize(name).replace(/[^a-z0-9]+/g,"_"));if(!id?.trim())return;const door=prompt(t("prompt_door_link",{doors:data.doors.map(item=>item.id).join(", ")}),data.doors[0]?.id||"");if(!door?.trim())return;const prefix=normalize(name).replace(/[^a-z0-9]+/g,"_");const transaction=prompt(t("prompt_transaction"),`sensor.${prefix}_action_transaction`),code=prompt(t("prompt_code_entity"),`sensor.${prefix}_action_code`),action=prompt(t("prompt_action_entity"),`sensor.${prefix}_action`);if(!transaction||!code||!action)return;const action_map=configureKeypadActionMap({disarm:"open",arm_all_zones:"lock"});if(action_map===null)return;await mutate("readers","POST",{id:id.trim(),name:name.trim(),reader_type:"keypad",door_id:door.trim(),config:{transaction_entity:transaction.trim(),code_entity:code.trim(),action_entity:action.trim(),action_map}});});
   $("#add-fingerprint-reader").addEventListener("click",async()=>{const name=prompt(t("prompt_reader_name"));if(!name?.trim())return;const id=prompt(t("prompt_reader_id"),normalize(name).replace(/[^a-z0-9]+/g,"_"));if(!id?.trim())return;const door=prompt(t("prompt_door_link",{doors:data.doors.map(item=>item.id).join(", ")}),data.doors[0]?.id||"");if(!door?.trim())return;const fields=[["slot_entity","prompt_slot_entity"],["enroll_entity","prompt_enroll_entity"],["cancel_entity","prompt_cancel_entity"],["delete_entity","prompt_delete_entity"],["name_registry_entity","prompt_registry_entity"],["access_event_entity","prompt_access_entity"],["management_event_entity","prompt_management_entity"]],config={};for(const [key,label] of fields){const value=prompt(t(label),"");if(!value)return;config[key]=value.trim();}for(const [key,label] of [["fingerprint_count_entity","prompt_count_entity"],["reader_capacity_entity","prompt_capacity_entity"],["device_status_entity","prompt_device_entity"]]){const value=prompt(t(label),"");if(value===null)return;if(value.trim())config[key]=value.trim();}await mutate("readers","POST",{id:id.trim(),name:name.trim(),reader_type:"fingerprint",door_id:door.trim(),config});});
   $("#log-retention").addEventListener("change",event=>mutate("settings/log-retention","PUT",{days:Number(event.target.value)}));
   document.addEventListener("keydown",event=>{if(event.key!=="Escape")return;if(fingerModal)closeFingerModal();if(keypadPerson)closeKeypadModal();});

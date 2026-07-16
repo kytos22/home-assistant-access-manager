@@ -16,6 +16,8 @@ for (const marker of [
   'data-tab="keypads"',
   'data-tab="doors"',
   'data-tab="logs"',
+  'default_action',
+  'configureKeypadActionMap',
 ]) {
   if (!html.includes(marker)) throw new Error(`Missing UI marker: ${marker}`);
 }

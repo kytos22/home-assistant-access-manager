@@ -2,7 +2,7 @@
 
 Access Manager is an administrator-only Home Assistant add-on for managing identities and access credentials outside Lovelace.
 
-It connects Home Assistant People to fingerprint IDs and Zigbee/MQTT keypad credentials, associates readers with doors, and emits a normalized event for automations.
+It connects Home Assistant People to fingerprint IDs and Zigbee/MQTT keypad credentials, associates readers with doors, directly controls the configured door after authorization, and emits a normalized event for observability and optional automations.
 
 ## Features
 
@@ -12,6 +12,8 @@ It connects Home Assistant People to fingerprint IDs and Zigbee/MQTT keypad cred
 - Keypad capture using `code/tag + action button`.
 - Keyed HMAC storage for keypad credentials; plaintext secrets are never persisted.
 - Doors backed by an existing Home Assistant `lock`, `switch`, `button`, `input_button` or `cover` entity.
+- Capability-aware direct door actions after successful authentication.
+- Per-door default action plus `code/tag + action button` overrides from keypads.
 - Configurable log retention with a 10,000-row hard safety limit.
 - Persistent SQLite data stored in the add-on `/data` directory.
 - Normalized `access_manager_credential` Home Assistant events.
@@ -39,16 +41,18 @@ Supported architectures: `amd64`, `aarch64`, and `armv7`.
 Access Manager intentionally starts with an empty database.
 
 1. Add or link users in **Users & credentials**.
-2. Add a door in **Doors** and choose an existing Home Assistant entity plus its open action.
+2. Add a door in **Doors** and choose an existing Home Assistant entity plus its default authentication action.
 3. Add fingerprint readers or keypads and assign each one to a door.
 4. Enroll or link credentials.
-5. Create Home Assistant automations that consume the normalized event.
+5. Optionally create Home Assistant automations that consume the normalized event for notifications or auditing.
+
+No Home Assistant automation is required to operate the door. Access Manager calls the configured entity service directly after an authorized credential. Disable older automations that also open the same door to avoid duplicate commands.
 
 ### Door actions
 
 | Entity domain | Supported action |
 | --- | --- |
-| `lock` | `open`, `unlock` |
+| `lock` | `open` when supported, `unlock`, `lock` |
 | `switch` | `turn_on` |
 | `button` | `press` |
 | `input_button` | `press` |
@@ -64,6 +68,7 @@ data:
   event_id: front_reader:123
   door_id: front_door
   door_entity_id: lock.front_door
+  door_default_action: open
   door_open_action: open
   reader_id: front_reader
   reader_type: fingerprint
@@ -72,14 +77,17 @@ data:
   ha_person_entity_id: person.example_person
   credential_type: fingerprint
   credential_id: "7"
+  requested_action: default
   action: open
   authorized: true
+  action_executed: true
+  action_error: null
 ```
 
-Example automation:
+Example failure-notification automation:
 
 ```yaml
-alias: Open front door from Access Manager
+alias: Report Access Manager door failures
 triggers:
   - trigger: event
     event_type: access_manager_credential
@@ -87,15 +95,15 @@ conditions:
   - condition: template
     value_template: >-
       {{ trigger.event.data.authorized
-         and trigger.event.data.door_id == 'front_door'
-         and trigger.event.data.action == 'open' }}
+         and not trigger.event.data.action_executed }}
 actions:
-  - action: lock.open
-    target:
-      entity_id: "{{ trigger.event.data.door_entity_id }}"
+  - action: persistent_notification.create
+    data:
+      title: Access Manager door action failed
+      message: "{{ trigger.event.data.action_error }}"
 ```
 
-Review the action and entity for your lock before enabling an automation. Some locks support `unlock` but not `open`.
+Fingerprint readers use the door default unless their event requests `open`, `unlock` or `lock`. Keypad credentials retain the specific code/tag and raw action-button combination captured during enrollment, so the same code may be enrolled separately with an unlock/open button and a lock button.
 
 ## Fingerprint reader firmware
 

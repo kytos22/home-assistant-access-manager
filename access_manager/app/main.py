@@ -73,11 +73,16 @@ logging.basicConfig(
 LOGGER = logging.getLogger("fingerprint_admin")
 DELETE_RETRY_SECONDS = 30
 DOOR_ACTIONS = {
-    "lock": ("open", "unlock"),
+    "lock": ("open", "unlock", "lock"),
     "switch": ("turn_on",),
     "button": ("press",),
     "input_button": ("press",),
     "cover": ("open_cover",),
+}
+LOCK_OPEN_FEATURE = 1
+READER_REQUESTED_ACTIONS = {"default", "open", "unlock", "lock"}
+ALL_DOOR_ACTIONS = {
+    action for domain_actions in DOOR_ACTIONS.values() for action in domain_actions
 }
 
 
@@ -646,11 +651,14 @@ class Registry:
             )
 
     def doors(self):
-        return [
-            dict(row) for row in self.connection.execute(
-                "SELECT * FROM doors ORDER BY name COLLATE NOCASE"
-            ).fetchall()
-        ]
+        doors = []
+        for row in self.connection.execute(
+            "SELECT * FROM doors ORDER BY name COLLATE NOCASE"
+        ).fetchall():
+            door = dict(row)
+            door["default_action"] = door["open_action"]
+            doors.append(door)
+        return doors
 
     def readers(self):
         readers = []
@@ -923,9 +931,13 @@ class HomeAssistant:
             access_id = self.reader_entity(reader["id"], "access_event", required=False)
             management_id = self.reader_entity(reader["id"], "management_event", required=False)
             if access_id and access_id in self.states:
-                await self.process_access_event(
-                    self.states[access_id].get("state", ""), reader["id"]
-                )
+                # Prime the deduplication value without executing a stale access
+                # event after an add-on restart.
+                current_access = self.states[access_id].get("state", "")
+                if current_access:
+                    self.registry.set_setting(
+                        f"last_access_event:{reader['id']}", current_access
+                    )
             if management_id and management_id in self.states:
                 await self.process_management_event(
                     self.states[management_id].get("state", ""), reader["id"]
@@ -953,6 +965,33 @@ class HomeAssistant:
 
     async def call_service(self, domain, service, payload):
         return await self.request("POST", f"/services/{domain}/{service}", payload)
+
+    def door_actions(self, entity_id):
+        domain = str(entity_id).split(".", 1)[0]
+        actions = list(DOOR_ACTIONS.get(domain, ()))
+        if domain != "lock" or "open" not in actions:
+            return actions
+        state = self.states.get(entity_id, {})
+        attributes = state.get("attributes", {})
+        try:
+            supported_features = int(attributes.get("supported_features", 0))
+        except (TypeError, ValueError):
+            supported_features = 0
+        if not supported_features & LOCK_OPEN_FEATURE:
+            actions.remove("open")
+        return actions
+
+    async def execute_door_action(self, door, action):
+        entity_id = door.get("entity_id") if door else None
+        if not entity_id or entity_id not in self.states:
+            raise RuntimeError("The configured door entity is unavailable")
+        allowed = self.door_actions(entity_id)
+        if action not in allowed:
+            raise RuntimeError(
+                f"Action {action or '(empty)'} is not supported by {entity_id}"
+            )
+        domain = entity_id.split(".", 1)[0]
+        await self.call_service(domain, action, {"entity_id": entity_id})
 
     async def fire_event(self, event_type, payload):
         return await self.request("POST", f"/events/{event_type}", payload)
@@ -996,7 +1035,7 @@ class HomeAssistant:
         result = []
         for entity_id, state in self.states.items():
             domain = entity_id.split(".", 1)[0]
-            actions = DOOR_ACTIONS.get(domain)
+            actions = self.door_actions(entity_id)
             if not actions:
                 continue
             result.append(
@@ -1084,13 +1123,43 @@ class HomeAssistant:
             (item for item in self.registry.doors() if item["id"] == reader["door_id"]),
             None,
         )
+        requested_action = str(action or "default").strip().lower()
+        default_action = door.get("default_action") if door else None
+        resolved_action = (
+            default_action if requested_action in {"", "default"} else requested_action
+        )
+        payload["requested_action"] = requested_action or "default"
+        payload["action"] = resolved_action
         payload["door_entity_id"] = door.get("entity_id") if door else None
-        payload["door_open_action"] = door.get("open_action") if door else None
+        payload["door_default_action"] = default_action
+        payload["door_open_action"] = default_action
+        payload["action_executed"] = False
+        payload["action_error"] = None
+        if authorized and door:
+            try:
+                await self.execute_door_action(door, resolved_action)
+                payload["action_executed"] = True
+                self.registry.add_event(
+                    "door_action_executed",
+                    detail=f"{door['name']} · {resolved_action}",
+                )
+            except Exception as error:
+                payload["action_error"] = str(error)[:240]
+                self.registry.add_event(
+                    "door_action_failed",
+                    detail=f"{door['name']} · {resolved_action} · {error}",
+                )
+                LOGGER.error(
+                    "Door action failed: door=%s entity=%s action=%s error=%s",
+                    door["id"], door.get("entity_id"), resolved_action, error,
+                )
         await self.fire_event("access_manager_credential", payload)
         LOGGER.info(
-            "Access event emitted: door=%s reader=%s person=%s action=%s",
-            payload["door_id"], reader_id, payload["person_name"], action,
+            "Access event emitted: door=%s reader=%s person=%s action=%s executed=%s",
+            payload["door_id"], reader_id, payload["person_name"],
+            resolved_action, payload["action_executed"],
         )
+        return payload
 
     def reader_entity(self, reader_id, key, required=True):
         reader = self.registry.reader(reader_id)
@@ -1268,6 +1337,10 @@ class HomeAssistant:
             result["value"] = int(parts[3]) if len(parts) > 3 else None
         except ValueError:
             result["value"] = None
+        requested_action = parts[4].strip().lower() if len(parts) > 4 else "default"
+        result["action"] = (
+            requested_action if requested_action in READER_REQUESTED_ACTIONS else "invalid"
+        )
         return result
 
     async def process_access_event(self, raw, reader_id="display1"):
@@ -1289,7 +1362,7 @@ class HomeAssistant:
             if user and user.get("person_id"):
                 person = self.registry.person(user["person_id"])
                 await self.emit_credential_event(
-                    reader_id, person, "fingerprint", slot, "open",
+                    reader_id, person, "fingerprint", slot, event["action"],
                     event["sequence"],
                 )
         elif kind in {"unmatched", "invalid", "misplaced"}:
@@ -1418,13 +1491,29 @@ class FingerprintAdmin:
                 reader, str(transaction_state), str(code), str(keypad_action)
             )
 
+    def validate_reader_door_action(self, reader, action):
+        door = next(
+            (item for item in self.registry.doors() if item["id"] == reader.get("door_id")),
+            None,
+        )
+        if not door:
+            raise ValueError("The reader has no door assigned")
+        if action not in self.ha.door_actions(door["entity_id"]):
+            raise ValueError(
+                f"Action {action or '(empty)'} is not supported by {door['entity_id']}"
+            )
+        return door
+
     async def process_keypad_event(self, reader, transaction, code, keypad_action):
         config = reader.get("config", {})
-        action_name = config.get("action_map", {}).get(keypad_action, keypad_action)
+        action_name = str(
+            config.get("action_map", {}).get(keypad_action, keypad_action)
+        ).strip().lower()
         captures = {item["reader_id"]: item for item in self.active_captures()}
         capture = captures.get(reader["id"])
         if capture:
             try:
+                self.validate_reader_door_action(reader, action_name)
                 credential_id = self.registry.add_keypad_credential(
                     capture["person_id"], reader["id"], code, keypad_action, action_name
                 )
@@ -1462,11 +1551,15 @@ class FingerprintAdmin:
         person = self.registry.person(credential["person_id"])
         if not person:
             return
+        credential_action = str(
+            credential.get("normalized_action") or action_name
+        ).strip().lower()
         self.registry.add_event(
-            "access_granted", detail=f"{person['name']} · {reader['name']} · {action_name}"
+            "access_granted",
+            detail=f"{person['name']} · {reader['name']} · {credential_action}",
         )
         await self.ha.emit_credential_event(
-            reader["id"], person, "keypad", credential["id"], action_name,
+            reader["id"], person, "keypad", credential["id"], credential_action,
             transaction, authorized=True,
         )
 
@@ -1912,25 +2005,29 @@ class FingerprintAdmin:
         requested_id = str(payload.get("id", "") or name)
         door_id = re.sub(r"[^a-z0-9_]+", "_", normalized(requested_id).replace(" ", "_"))
         entity_id = str(payload.get("entity_id", "")).strip()
-        open_action = str(payload.get("open_action", "")).strip()
-        self.validate_door(entity_id, open_action)
+        default_action = str(
+            payload.get("default_action", payload.get("open_action", ""))
+        ).strip()
+        self.validate_door(entity_id, default_action)
         if not door_id or not name:
             raise web.HTTPBadRequest(text="Door ID and name are required")
         try:
-            self.registry.create_door(door_id, name, entity_id, open_action)
+            self.registry.create_door(door_id, name, entity_id, default_action)
         except sqlite3.IntegrityError:
             raise web.HTTPConflict(text="A door with that ID already exists")
         return web.json_response({"ok": True, "door_id": door_id})
 
-    def validate_door(self, entity_id, open_action):
+    def validate_door(self, entity_id, default_action):
         state = self.ha.states.get(entity_id)
         if not state:
             raise web.HTTPBadRequest(text="Select an existing Home Assistant entity")
-        domain = entity_id.split(".", 1)[0]
-        allowed = DOOR_ACTIONS.get(domain, ())
-        if open_action not in allowed:
+        allowed = self.ha.door_actions(entity_id)
+        if default_action not in allowed:
             raise web.HTTPBadRequest(
-                text=f"Action {open_action or '(empty)'} is not valid for {domain}"
+                text=(
+                    f"Action {default_action or '(empty)'} is not supported by "
+                    f"{entity_id}"
+                )
             )
 
     async def update_door(self, request):
@@ -1939,12 +2036,14 @@ class FingerprintAdmin:
         payload = await request.json()
         name = str(payload.get("name", "")).strip()[:40]
         entity_id = str(payload.get("entity_id", "")).strip()
-        open_action = str(payload.get("open_action", "")).strip()
+        default_action = str(
+            payload.get("default_action", payload.get("open_action", ""))
+        ).strip()
         if not name:
             raise web.HTTPBadRequest(text="Door name is required")
-        self.validate_door(entity_id, open_action)
+        self.validate_door(entity_id, default_action)
         try:
-            self.registry.update_door(door_id, name, entity_id, open_action)
+            self.registry.update_door(door_id, name, entity_id, default_action)
         except ValueError as error:
             raise web.HTTPNotFound(text=str(error))
         return web.json_response({"ok": True})
@@ -1990,6 +2089,18 @@ class FingerprintAdmin:
             raise web.HTTPBadRequest(
                 text=f"Home Assistant entities not found: {', '.join(unknown)}"
             )
+        if reader_type == "keypad":
+            action_map = config.get("action_map", {})
+            if not isinstance(action_map, dict):
+                raise web.HTTPBadRequest(text="Keypad action mapping must be an object")
+            invalid_actions = sorted({
+                str(action).strip().lower() for action in action_map.values()
+                if str(action).strip().lower() not in ALL_DOOR_ACTIONS
+            })
+            if invalid_actions:
+                raise web.HTTPBadRequest(
+                    text=f"Invalid keypad door actions: {', '.join(invalid_actions)}"
+                )
 
     async def update_reader(self, request):
         self.require_admin_request(request)

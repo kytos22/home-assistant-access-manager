@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.0
+
+- Executes a door's configured Home Assistant service directly after successful authentication.
+- Adds capability-aware `open`, `unlock`, and `lock` actions for `lock` entities.
+- Uses a per-door default action for ordinary fingerprint authentication.
+- Lets keypad mappings bind raw action buttons to door actions; credentials remain scoped to `code/tag + button`.
+- Accepts an optional action in fingerprint reader events for readers with physical controls or touchscreens.
+- Prevents stale access sensor state from operating a door after an add-on restart.
+- Reports direct execution success or failure in normalized events and the bounded activity log.
+
 ## 0.5.1
 
 - Removes installation-specific users, doors, readers, entity IDs, and credentials from fresh databases.

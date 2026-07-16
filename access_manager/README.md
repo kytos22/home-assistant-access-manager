@@ -9,6 +9,8 @@ Access Manager is an administrator-only Home Assistant add-on for managing peopl
 - Captures keypad credentials as `code/tag + action button` combinations.
 - Stores keypad secrets as keyed HMAC digests, never as plaintext.
 - Requires each door to reference an actionable Home Assistant entity.
+- Directly executes the capability-checked door action after authorization.
+- Supports a per-door default plus fingerprint/keypad `open`, `unlock`, and `lock` requests.
 - Emits one normalized `access_manager_credential` event for automations.
 - Provides English and Spanish interfaces.
 - Applies configurable, time-based log retention and a 10,000-row safety cap.
