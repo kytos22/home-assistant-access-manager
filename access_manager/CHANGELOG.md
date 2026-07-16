@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0
+
+- Fixes keypad enrollment for devices that publish code/tag only together with an action by assembling transaction, code, and action before consuming the packet.
+- Adds an Automations tab for native Home Assistant auto-lock rules with 5, 10, 15, 20, 30, and 60 minute delays.
+- Limits auto-lock rules to `lock.*` door entities and verifies that the lock is still unlocked before calling `lock.lock`.
+- Protects unrelated Home Assistant automations with a local registry plus configuration ID, alias, and description ownership checks.
+- Adds bilingual automation editors, enable/disable controls, status, deletion confirmation, and bounded activity-log entries.
+
 ## 0.7.0
 
 - Replaces native browser dialogs with accessible, validated editors for people, readers, keypads, and doors.

@@ -10,6 +10,7 @@ It connects Home Assistant People to fingerprint IDs and Zigbee/MQTT keypad cred
 - Explicit links to Home Assistant `person.*` entities.
 - Multiple fingerprint readers with independent physical ID spaces.
 - Per-person keypad capture using `code/tag + physical action button`; the keypad itself does not know users.
+- Debounced keypad packet assembly that waits for transaction, code/tag, and action before consuming an attempt.
 - Keyed HMAC storage for keypad credentials; plaintext secrets are never persisted.
 - Doors backed by an existing Home Assistant `lock`, `switch`, `button`, `input_button` or `cover` entity.
 - Capability-aware direct door actions after successful authentication.
@@ -17,6 +18,8 @@ It connects Home Assistant People to fingerprint IDs and Zigbee/MQTT keypad cred
 - Capability-aware administrator door tests with an explicit confirmation step.
 - Two-tap local display lock requests from compatible readers; unauthenticated local open/unlock requests are rejected.
 - Configurable log retention with a 10,000-row hard safety limit.
+- Native Home Assistant auto-lock automations with 5, 10, 15, 20, 30, or 60 minute delays.
+- Strict automation ownership checks: Access Manager never edits or deletes unrelated Home Assistant automations.
 - Persistent SQLite data stored in the add-on `/data` directory.
 - Normalized `access_manager_credential` and `access_manager_door_action` Home Assistant events.
 
@@ -46,7 +49,7 @@ Access Manager intentionally starts with an empty database.
 2. Add a door in **Doors** and choose an existing Home Assistant entity plus its default authentication action.
 3. Add fingerprint readers or keypads and assign each one to a door.
 4. Enroll or link credentials.
-5. Optionally create Home Assistant automations that consume the normalized event for notifications or auditing.
+5. Optionally add native auto-lock rules in **Automations**.
 
 No Home Assistant automation is required to operate the door. Access Manager calls the configured entity service directly after an authorized credential. Disable older automations that also open the same door to avoid duplicate commands.
 
@@ -113,6 +116,14 @@ The keypad only reports a transaction, a code/tag, and the raw button value. It 
 
 Buttons with no current mapping are ignored and logged. They never fall through to an arbitrary Home Assistant service.
 
+The three Home Assistant entities may update a few milliseconds apart. Access Manager listens to all three, waits briefly for the packet to settle, and only marks a transaction as consumed after transaction, code/tag, and action are all present.
+
+## Managed Home Assistant automations
+
+The **Automations** tab creates ordinary Home Assistant automations for doors backed by `lock.*` entities. An auto-lock rule waits until the lock has remained `unlocked` for the selected delay, verifies that it is still unlocked, and then calls `lock.lock`.
+
+Access Manager records every automation it creates and gives it a dedicated `access_manager_*` configuration ID, an `[Access Manager]` alias, and an ownership description. Update and delete operations require the local record and those Home Assistant ownership markers to agree. The panel does not list, import, edit, or delete automations outside that scope.
+
 ### Door action event
 
 Local display lock requests and administrator door tests emit `access_manager_door_action`:
@@ -154,6 +165,7 @@ node tests/check_ui.mjs
 ```
 
 Versions follow semantic versioning and are published as GitHub releases matching the add-on version.
+The complete release checklist is in [RELEASING.md](RELEASING.md).
 
 ## License
 
