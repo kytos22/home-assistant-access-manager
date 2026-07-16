@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.1
+
+- Lets managed auto-lock rules use an optional door contact sensor: closing it starts the delay, and the door locks only if it remains closed and unlocked afterwards.
+- Shows the installed build version in the Access Manager header.
+- Reduces panel polling, pauses it while the page is hidden, and serves cached WebSocket state instead of requesting every Home Assistant state on each refresh.
+- Disables noisy HTTP access logs by default and adds a translated Home Assistant app option for `warning`, `info`, or `debug` application logging.
+- Migrates the app image to the current Home Assistant BuildKit-compatible Dockerfile format and updates `aiohttp` to 3.14.1.
+- Only offers `binary_sensor` entities whose Home Assistant device class is `door` for closed-door automations.
+- Adds one-click repository installation and clarifies Home Assistant OS updates and the exact reference hardware without claiming model-specific keypad compatibility.
+
 ## 0.8.0
 
 - Fixes keypad enrollment for devices that publish code/tag only together with an action by assembling transaction, code, and action before consuming the packet.

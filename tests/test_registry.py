@@ -1,4 +1,5 @@
 import importlib.util
+import inspect
 import re
 import sqlite3
 import tempfile
@@ -13,6 +14,66 @@ SPEC.loader.exec_module(APP)
 
 
 class RegistryTests(unittest.TestCase):
+    def test_readme_has_one_click_home_assistant_repository_button(self):
+        readme = (Path(__file__).parents[1] / "README.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg",
+            readme,
+        )
+        self.assertIn(
+            "repository_url=https%3A%2F%2Fgithub.com%2Fkytos22%2Fhome-assistant-access-manager",
+            readme,
+        )
+
+    def test_native_log_configuration_and_quiet_http_access_log(self):
+        root = Path(__file__).parents[1]
+        config = (root / "access_manager" / "config.yaml").read_text(
+            encoding="utf-8"
+        )
+        main = (root / "access_manager" / "app" / "main.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("log_level: info", config)
+        self.assertIn('log_level: "list(warning|info|debug)"', config)
+        self.assertIn("access_log=None", main)
+        self.assertNotIn(
+            "refresh_states", inspect.getsource(APP.FingerprintAdmin.state)
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            options_path = Path(directory) / "options.json"
+            options_path.write_text('{"log_level": "debug"}', encoding="utf-8")
+            self.assertEqual(APP.configured_log_level(options_path), "debug")
+            options_path.write_text('{"log_level": "invalid"}', encoding="utf-8")
+            self.assertEqual(APP.configured_log_level(options_path), "info")
+            options_path.write_text("[]", encoding="utf-8")
+            self.assertEqual(APP.configured_log_level(options_path), "info")
+
+    def test_installed_version_is_wired_from_the_build(self):
+        root = Path(__file__).parents[1]
+        dockerfile = (root / "access_manager" / "Dockerfile").read_text(
+            encoding="utf-8"
+        )
+        html = (root / "access_manager" / "app" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ARG BUILD_VERSION", dockerfile)
+        self.assertIn("ARG BUILD_ARCH", dockerfile)
+        self.assertIn("ACCESS_MANAGER_VERSION=${BUILD_VERSION}", dockerfile)
+        self.assertIn(
+            "FROM ghcr.io/home-assistant/base-python:3.13-alpine3.24",
+            dockerfile,
+        )
+        self.assertIn("io.hass.version", dockerfile)
+        self.assertIn("pip==26.1.2", dockerfile)
+        self.assertIn("aiohttp==3.14.1", dockerfile)
+        self.assertNotIn("BUILD_FROM", dockerfile)
+        self.assertFalse((root / "access_manager" / "build.yaml").exists())
+        self.assertIn('id="app-version"', html)
+        self.assertTrue(APP.APP_VERSION)
+
     def test_manifest_version_has_matching_changelog_entry(self):
         root = Path(__file__).parents[1]
         manifest = (root / "access_manager" / "config.yaml").read_text(
@@ -252,6 +313,19 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(config["triggers"][0]["trigger"], "state")
         self.assertEqual(config["triggers"][0]["to"], "unlocked")
         self.assertEqual(config["actions"][0]["action"], "lock.lock")
+        self.assertEqual(len(config["conditions"]), 1)
+        guarded = APP.FingerprintAdmin.build_auto_lock_config(
+            door, config_id, 10, "binary_sensor.front_door_contact"
+        )
+        self.assertEqual(guarded["triggers"][0], {
+            "trigger": "door.closed",
+            "target": {"entity_id": "binary_sensor.front_door_contact"},
+            "options": {},
+        })
+        self.assertEqual(guarded["actions"][0]["delay"]["minutes"], 10)
+        self.assertEqual(
+            guarded["actions"][1]["if"][1]["condition"], "door.is_closed"
+        )
         self.assertTrue(
             APP.FingerprintAdmin.owned_automation_config(config, config_id)
         )
@@ -259,6 +333,32 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(
             APP.FingerprintAdmin.owned_automation_config(config, config_id)
         )
+
+    async def test_door_sensor_entities_only_include_binary_sensors(self):
+        self.ha.states.update({
+            "binary_sensor.front_door_contact": {
+                "state": "off",
+                "attributes": {
+                    "friendly_name": "Front door",
+                    "device_class": "door",
+                },
+            },
+            "binary_sensor.hall_motion": {
+                "state": "off", "attributes": {"device_class": "motion"},
+            },
+            "binary_sensor.generic_contact": {"state": "off", "attributes": {}},
+            "sensor.front_door_position": {"state": "closed", "attributes": {}},
+        })
+        self.assertTrue(
+            self.ha.is_door_sensor("binary_sensor.front_door_contact")
+        )
+        self.assertFalse(self.ha.is_door_sensor("binary_sensor.hall_motion"))
+        self.assertFalse(self.ha.is_door_sensor("binary_sensor.generic_contact"))
+        self.assertEqual(self.ha.door_sensor_entities(), [{
+            "entity_id": "binary_sensor.front_door_contact",
+            "name": "Front door",
+            "state": "off",
+        }])
 
     async def test_delete_refuses_automation_if_ownership_marker_changed(self):
         config_id = "access_manager_auto_lock_front_door"

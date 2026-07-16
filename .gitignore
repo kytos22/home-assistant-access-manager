@@ -3,6 +3,13 @@ __pycache__/
 *.db
 *.db-shm
 *.db-wal
+.env
+.env.*
+*.log
+*.sqlite*
+*.bak
+options.json
+secrets.yaml
 .venv/
 .idea/
 .vscode/

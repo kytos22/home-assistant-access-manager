@@ -20,6 +20,28 @@ DB_PATH = DATA_DIR / "fingerprint_admin.db"
 HA_API = "http://supervisor/core/api"
 HA_WS = "ws://supervisor/core/websocket"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
+APP_VERSION = os.environ.get("ACCESS_MANAGER_VERSION") or "development"
+OPTIONS_PATH = DATA_DIR / "options.json"
+
+LOG_LEVELS = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+}
+
+
+def configured_log_level(path=OPTIONS_PATH):
+    try:
+        options = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return "info"
+    if not isinstance(options, dict):
+        return "info"
+    value = str(options.get("log_level", "info")).strip().lower()
+    return value if value in LOG_LEVELS else "info"
+
+
+LOG_LEVEL = configured_log_level()
 
 LABELS = {
     "slot": ("ID huella a registrar",),
@@ -67,7 +89,7 @@ FINGER_LABELS = {
 }
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=LOG_LEVELS[LOG_LEVEL],
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 LOGGER = logging.getLogger("fingerprint_admin")
@@ -1190,6 +1212,29 @@ class HomeAssistant:
             )
         return sorted(result, key=lambda item: normalized(item["name"]))
 
+    def is_door_sensor(self, entity_id):
+        state = self.states.get(entity_id)
+        return bool(
+            state
+            and str(entity_id).startswith("binary_sensor.")
+            and str(state.get("attributes", {}).get("device_class", "")).lower()
+            == "door"
+        )
+
+    def door_sensor_entities(self):
+        result = []
+        for entity_id, state in self.states.items():
+            if not self.is_door_sensor(entity_id):
+                continue
+            result.append(
+                {
+                    "entity_id": entity_id,
+                    "name": state.get("attributes", {}).get("friendly_name") or entity_id,
+                    "state": state.get("state"),
+                }
+            )
+        return sorted(result, key=lambda item: normalized(item["name"]))
+
     def manageable_entities(self):
         allowed = {"number", "button", "text", "sensor", "binary_sensor"}
         result = []
@@ -1889,16 +1934,13 @@ class FingerprintAdmin:
         return web.json_response(
             {
                 "status": "ok",
+                "version": APP_VERSION,
                 "home_assistant": self.ha.connected,
                 "ha_people_api": self.ha.people_api_ready,
             }
         )
 
     async def state(self, _request):
-        try:
-            await self.ha.refresh_states()
-        except Exception as error:
-            LOGGER.warning("Could not refresh Home Assistant states: %s", error)
         reader = {}
         for key in (
             "fingerprint_count",
@@ -1976,6 +2018,7 @@ class FingerprintAdmin:
         self.registry.auto_link_ha_people(ha_people)
         return web.json_response(
             {
+                "version": APP_VERSION,
                 "connected": self.ha.connected,
                 "reader_online": self.ha.device_online("display1"),
                 "ready": all(
@@ -1996,6 +2039,7 @@ class FingerprintAdmin:
                 "ha_people_api_ready": self.ha.people_api_ready,
                 "doors": doors,
                 "door_entities": self.ha.door_entities(),
+                "door_sensors": self.ha.door_sensor_entities(),
                 "access_readers": readers,
                 "managed_automations": managed_automations,
                 "auto_lock_delays": list(AUTO_LOCK_DELAYS),
@@ -2450,7 +2494,60 @@ class FingerprintAdmin:
         )
 
     @staticmethod
-    def build_auto_lock_config(door, config_id, delay_minutes):
+    def build_auto_lock_config(
+        door, config_id, delay_minutes, door_sensor_entity=""
+    ):
+        if door_sensor_entity:
+            return {
+                "id": config_id,
+                "alias": (
+                    f"{AUTOMATION_ALIAS_PREFIX} Auto-lock {door['name']} "
+                    f"after it closes for {delay_minutes} minutes"
+                ),
+                "description": (
+                    f"{AUTOMATION_DESCRIPTION_MARKER} "
+                    f"Auto-lock for Access Manager door {door['id']}."
+                ),
+                "triggers": [
+                    {
+                        "trigger": "door.closed",
+                        "target": {"entity_id": door_sensor_entity},
+                        "options": {},
+                    }
+                ],
+                "conditions": [],
+                "actions": [
+                    {
+                        "delay": {
+                            "hours": delay_minutes // 60,
+                            "minutes": delay_minutes % 60,
+                            "seconds": 0,
+                            "milliseconds": 0,
+                        }
+                    },
+                    {
+                        "if": [
+                            {
+                                "condition": "lock.is_unlocked",
+                                "target": {"entity_id": [door["entity_id"]]},
+                                "options": {},
+                            },
+                            {
+                                "condition": "door.is_closed",
+                                "target": {"entity_id": door_sensor_entity},
+                                "options": {},
+                            },
+                        ],
+                        "then": [
+                            {
+                                "action": "lock.lock",
+                                "target": {"entity_id": door["entity_id"]},
+                            }
+                        ],
+                    },
+                ],
+                "mode": "restart",
+            }
         return {
             "id": config_id,
             "alias": (
@@ -2508,6 +2605,11 @@ class FingerprintAdmin:
             raise web.HTTPBadRequest(text="Select a valid auto-lock delay")
         if delay_minutes not in AUTO_LOCK_DELAYS:
             raise web.HTTPBadRequest(text="Select a supported auto-lock delay")
+        door_sensor_entity = str(payload.get("door_sensor_entity", "")).strip()
+        if door_sensor_entity and not self.ha.is_door_sensor(door_sensor_entity):
+            raise web.HTTPBadRequest(
+                text="Select an available binary sensor with the door device class"
+            )
         enabled = bool(payload.get("enabled", True))
         door = next(
             (item for item in self.registry.doors() if item["id"] == door_id), None
@@ -2533,11 +2635,16 @@ class FingerprintAdmin:
             raise web.HTTPConflict(
                 text="The Home Assistant automation is no longer owned by Access Manager"
             )
-        config = self.build_auto_lock_config(door, config_id, delay_minutes)
+        config = self.build_auto_lock_config(
+            door, config_id, delay_minutes, door_sensor_entity
+        )
         await self.ha.save_automation_config(config_id, config)
         self.registry.upsert_managed_automation(
             config_id, "auto_lock", door_id, config_id, enabled,
-            {"delay_minutes": delay_minutes},
+            {
+                "delay_minutes": delay_minutes,
+                "door_sensor_entity": door_sensor_entity,
+            },
         )
         entity_id = await self.resolve_automation_entity(config_id)
         if not entity_id:
@@ -2636,4 +2743,12 @@ class FingerprintAdmin:
 
 if __name__ == "__main__":
     admin = FingerprintAdmin()
-    web.run_app(admin.application(), host="0.0.0.0", port=PORT, access_log=LOGGER)
+    LOGGER.info("Starting Access Manager %s with %s logging", APP_VERSION, LOG_LEVEL)
+    # Home Assistant Ingress reaches this process over the private app network;
+    # config.yaml deliberately exposes no host port.
+    web.run_app(
+        admin.application(),
+        host="0.0.0.0",  # nosec B104
+        port=PORT,
+        access_log=None,
+    )

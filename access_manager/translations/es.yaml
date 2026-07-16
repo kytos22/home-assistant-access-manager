@@ -1,0 +1,4 @@
+configuration:
+  log_level:
+    name: Nivel de registro
+    description: Controla los mensajes de la aplicación que aparecen en el registro de la app de Home Assistant. Usa debug solo para investigar un problema.
