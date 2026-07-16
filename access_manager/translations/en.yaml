@@ -1,0 +1,4 @@
+configuration:
+  log_level:
+    name: Log level
+    description: Controls the application messages shown in the Home Assistant app log. Use debug only when investigating a problem.

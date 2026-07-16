@@ -4,6 +4,26 @@ Access Manager is an administrator-only Home Assistant add-on for managing ident
 
 It connects Home Assistant People to fingerprint IDs and Zigbee/MQTT keypad credentials, associates readers with doors, directly controls the configured door after authorization, and emits a normalized event for observability and optional automations.
 
+## Supported devices
+
+Access Manager does not connect directly to physical hardware. Every reader, keypad, contact sensor and door actuator must already be available as Home Assistant entities.
+
+| Device type | Support level | Requirements |
+| --- | --- | --- |
+| Fingerprint terminal | Reference hardware | [ESPHome Fingerprint Access Reader](https://github.com/kytos22/esphome-fingerprint-access-reader) on a Waveshare ESP32-C6-Touch-LCD-1.47 with a Grow-compatible UART fingerprint sensor. |
+| Zigbee/MQTT keypad | Protocol compatible | Three Home Assistant entities that expose transaction, code/tag and physical action. There is no model whitelist. |
+| Door contact | Optional for auto-lock | A `binary_sensor.*` entity whose Home Assistant device class is `door`. |
+| Door actuator | Entity compatible | A supported `lock`, `switch`, `button`, `input_button` or `cover` entity. |
+
+<p align="center">
+  <a href="https://www.waveshare.com/product/esp32-c6-touch-lcd-1.47.htm">
+    <img src="https://www.waveshare.com/img/devkit/ESP32-C6-Touch-LCD-1.47/ESP32-C6-Touch-LCD-1.47-1_460.jpg" width="460" alt="Waveshare ESP32-C6-Touch-LCD-1.47 reference board">
+  </a><br>
+  <sub>Reference display/controller board. Product image and specifications: Waveshare.</sub>
+</p>
+
+The image identifies the exact display/controller used by the reference firmware. Keypads are intentionally not pictured because support depends on their Home Assistant entities, not on a certified hardware model.
+
 ## Features
 
 - English and Spanish interface.
@@ -18,7 +38,8 @@ It connects Home Assistant People to fingerprint IDs and Zigbee/MQTT keypad cred
 - Capability-aware administrator door tests with an explicit confirmation step.
 - Two-tap local display lock requests from compatible readers; unauthenticated local open/unlock requests are rejected.
 - Configurable log retention with a 10,000-row hard safety limit.
-- Native Home Assistant auto-lock automations with 5, 10, 15, 20, 30, or 60 minute delays.
+- Native Home Assistant app log-level configuration while routine HTTP request logging remains disabled.
+- Native Home Assistant auto-lock automations with 5, 10, 15, 20, 30, or 60 minute delays and an optional closed-door sensor check.
 - Strict automation ownership checks: Access Manager never edits or deletes unrelated Home Assistant automations.
 - Persistent SQLite data stored in the add-on `/data` directory.
 - Normalized `access_manager_credential` and `access_manager_door_action` Home Assistant events.
@@ -27,19 +48,44 @@ Fresh installations start empty. This repository contains no users, entity IDs, 
 
 ## Installation
 
-1. In Home Assistant, open **Settings → Apps → App store**.
-2. Open the app-store menu and choose **Repositories**.
-3. Add:
+Access Manager is distributed as a Home Assistant app and therefore requires [Home Assistant OS](https://www.home-assistant.io/apps/).
+
+[![Open your Home Assistant instance and add the Access Manager app repository.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkytos22%2Fhome-assistant-access-manager)
+
+Select the button above to open your Home Assistant instance with the Access Manager repository URL already filled in. Then install **Access Manager** from the app store.
+
+Alternatively, add the repository manually:
+
+1. In Home Assistant, open **Settings → Apps** and select **Install app**.
+2. Open the three-dot menu in the app store and choose **Repositories**.
+3. Add the repository URL:
 
    ```text
    https://github.com/kytos22/home-assistant-access-manager
    ```
 
-4. Install **Access Manager**.
-5. Start the add-on and enable its sidebar entry if Home Assistant does not do so automatically.
-6. Open **Access** from the Home Assistant sidebar.
+4. Close the repository dialog. Reload the app store if **Access Manager** does not appear immediately.
+5. Select **Access Manager** and choose **Install**.
+6. Start the app and enable **Show in sidebar** if Home Assistant does not do so automatically.
+7. Open **Access** from the Home Assistant sidebar.
+
+The header inside Access Manager shows the version of the installed build. A source checkout used outside an app build displays `development` instead.
 
 Supported architectures: `amd64`, `aarch64`, and `armv7`.
+
+### App configuration
+
+The Home Assistant app configuration page provides a **Log level** option:
+
+- `info` is the recommended default for normal operation.
+- `warning` only reports conditions that may need attention.
+- `debug` adds diagnostic detail when investigating a problem.
+
+Changing this option requires restarting the app. It controls the application log shown by Home Assistant, not the activity-history retention configured inside Access Manager. Routine HTTP requests are not written to the app log.
+
+### Updating
+
+Create a Home Assistant backup before updating. Then open **Settings → Apps → Access Manager** and select **Update** when a new version is offered. Existing identities, mappings, credentials and managed automation records remain in the app's `/data` volume. After the restart, verify the installed version in the Access Manager header.
 
 ## First-run setup
 
@@ -49,7 +95,7 @@ Access Manager intentionally starts with an empty database.
 2. Add a door in **Doors** and choose an existing Home Assistant entity plus its default authentication action.
 3. Add fingerprint readers or keypads and assign each one to a door.
 4. Enroll or link credentials.
-5. Optionally add native auto-lock rules in **Automations**.
+5. Optionally add native auto-lock rules in **Automations** and select a door contact sensor when the delay should start after the physical door closes.
 
 No Home Assistant automation is required to operate the door. Access Manager calls the configured entity service directly after an authorized credential. Disable older automations that also open the same door to avoid duplicate commands.
 
@@ -120,7 +166,7 @@ The three Home Assistant entities may update a few milliseconds apart. Access Ma
 
 ## Managed Home Assistant automations
 
-The **Automations** tab creates ordinary Home Assistant automations for doors backed by `lock.*` entities. An auto-lock rule waits until the lock has remained `unlocked` for the selected delay, verifies that it is still unlocked, and then calls `lock.lock`.
+The **Automations** tab creates ordinary Home Assistant automations for doors backed by `lock.*` entities. Without a contact sensor, an auto-lock rule waits until the lock has remained `unlocked` for the selected delay, verifies that it is still unlocked, and then calls `lock.lock`. When a `binary_sensor.*` with the `door` device class is selected, closing the contact starts the delay; at the end, the rule locks only if the lock is still unlocked and the door is still closed.
 
 Access Manager records every automation it creates and gives it a dedicated `access_manager_*` configuration ID, an `[Access Manager]` alias, and an ownership description. Update and delete operations require the local record and those Home Assistant ownership markers to agree. The panel does not list, import, edit, or delete automations outside that scope.
 
@@ -149,6 +195,8 @@ For `source: display`, Access Manager accepts only `lock`. Door tests are restri
 Fingerprint templates remain in the sensor. A compatible ESPHome example that stores the local ID/name/finger mapping in ESP memory is maintained separately:
 
 <https://github.com/kytos22/esphome-fingerprint-access-reader>
+
+The shared entity contract and setup sequence are documented in [INTEGRATION.md](INTEGRATION.md).
 
 ## Data and backups
 

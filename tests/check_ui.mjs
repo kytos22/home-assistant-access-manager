@@ -11,6 +11,7 @@ new Function(scripts[0][1]);
 
 for (const marker of [
   'id="language"',
+  'id="app-version"',
   'data-tab="people"',
   'data-tab="fingerprints"',
   'data-tab="keypads"',
@@ -23,6 +24,10 @@ for (const marker of [
   'startKeypadLearning',
   'openDoorTest',
   'openAutomationEditor',
+  'door_sensor_entity',
+  'door_sensor_hint',
+  'visibilitychange',
+  'REFRESH_INTERVAL_MS = 10000',
 ]) {
   if (!html.includes(marker)) throw new Error(`Missing UI marker: ${marker}`);
 }

@@ -173,6 +173,7 @@
       <p data-i18n="app_subtitle">Users · credentials · readers · doors</p>
     </div>
     <div class="header-actions">
+      <div id="app-version" class="badge" title="Installed version" aria-label="Installed version">v…</div>
       <label for="language" class="muted" data-i18n="language">Language</label>
       <select id="language" class="language-select" aria-label="Language">
         <option value="en">English</option>
@@ -460,7 +461,9 @@
   const $ = selector => document.querySelector(selector);
   let data = null;
   let busy = false;
+  let refreshPromise = null;
   let language = localStorage.getItem("access-manager-language") || "en";
+  const REFRESH_INTERVAL_MS = 10000;
   let activeTab = "people";
   let selectedReader = "";
   let fingerModal = null;
@@ -473,7 +476,7 @@
 
   const messages = {
     en: {
-      app_title:"Access Manager", app_subtitle:"Users · credentials · readers · doors", language:"Language",
+      app_title:"Access Manager", app_subtitle:"Users · credentials · readers · doors", language:"Language", installed_version:"Installed version",
       connecting:"Connecting…", connected:"Home Assistant connected", disconnected:"Home Assistant disconnected",
       tab_people:"Users & credentials", tab_fingerprints:"Fingerprint readers", tab_keypads:"Keypads", tab_doors:"Doors", tab_automations:"Automations", tab_logs:"Log",
       people:"People", credentials:"Credentials", readers:"Readers", doors:"Doors", automations:"Automations", users_credentials:"Users and credentials",
@@ -486,6 +489,7 @@
       ha_entities:"Home Assistant entities", add_door:"Add door", door_hint:"An authorized credential directly runs the selected default action. Lock entities expose open only when the device reports that capability.",
       add_automation:"Add automation", automation_hint:"These are native Home Assistant automations. Access Manager only updates or deletes automations that it created and still owns.",
       auto_lock:"Auto-lock", auto_lock_delay:"Lock after", edit_automation:"Edit automation", no_automations:"No managed automations", no_lock_doors:"Add a door backed by a lock entity first.",
+      door_sensor:"Door contact sensor", no_door_sensor:"No sensor (lock after unlock)", door_sensor_hint:"Optional. Closing the contact starts the delay; the lock runs only if the door remains closed.",
       minutes:"{count} minutes", one_hour:"1 hour", automation_native:"Native Home Assistant automation", confirm_delete_automation:"Delete this Access Manager automation from Home Assistant?",
       activity_log:"Activity log", retention:"Retention", retention_hint:"Expired entries are deleted automatically. A hard safety limit of 10,000 entries also applies.",
       date:"Date", event:"Event", confidence:"Confidence", detail:"Detail", no_users:"No users", no_credentials:"No credentials",
@@ -527,7 +531,7 @@
       left_hand:"LEFT HAND", right_hand:"RIGHT HAND"
     },
     es: {
-      app_title:"Gestor de accesos", app_subtitle:"Usuarios · credenciales · lectores · puertas", language:"Idioma",
+      app_title:"Gestor de accesos", app_subtitle:"Usuarios · credenciales · lectores · puertas", language:"Idioma", installed_version:"Versión instalada",
       connecting:"Conectando…", connected:"Home Assistant conectado", disconnected:"Home Assistant desconectado",
       tab_people:"Usuarios y credenciales", tab_fingerprints:"Lectores de huellas", tab_keypads:"Keypads", tab_doors:"Puertas", tab_automations:"Automatizaciones", tab_logs:"Registro",
       people:"Personas", credentials:"Credenciales", readers:"Lectores", doors:"Puertas", automations:"Automatizaciones", users_credentials:"Usuarios y credenciales",
@@ -540,6 +544,7 @@
       ha_entities:"Entidades de Home Assistant", add_door:"Añadir puerta", door_hint:"Una credencial autorizada ejecuta directamente la acción predeterminada. En entidades lock, open solo aparece si el dispositivo declara esa capacidad.",
       add_automation:"Añadir automatización", automation_hint:"Son automatizaciones nativas de Home Assistant. Access Manager solo actualiza o borra las que ha creado y siguen siendo de su propiedad.",
       auto_lock:"Cierre automático", auto_lock_delay:"Cerrar después de", edit_automation:"Editar automatización", no_automations:"No hay automatizaciones gestionadas", no_lock_doors:"Primero añade una puerta respaldada por una entidad lock.",
+      door_sensor:"Sensor de contacto de puerta", no_door_sensor:"Sin sensor (cerrar tras desbloquear)", door_sensor_hint:"Opcional. Al cerrar el contacto empieza la espera; solo cerrará si la puerta sigue cerrada.",
       minutes:"{count} minutos", one_hour:"1 hora", automation_native:"Automatización nativa de Home Assistant", confirm_delete_automation:"¿Borrar esta automatización de Access Manager en Home Assistant?",
       activity_log:"Registro de actividad", retention:"Retención", retention_hint:"Las entradas caducadas se borran automáticamente. También se aplica un límite de seguridad de 10.000 entradas.",
       date:"Fecha", event:"Evento", confidence:"Confianza", detail:"Detalle", no_users:"No hay usuarios", no_credentials:"Sin credenciales",
@@ -734,9 +739,13 @@
       const delay = Number(item.config?.delay_minutes || 0);
       const delayLabel = delay === 60 ? t("one_hour") : t("minutes", {count:delay});
       const stateClass = item.state === "on" ? "" : item.state === "off" ? "pending" : "missing";
+      const sensorId = item.config?.door_sensor_entity || "";
+      const sensor = (data.door_sensors || []).find(entry => entry.entity_id === sensorId);
+      const sensorName = sensor?.name || sensorId;
       return `<article class="door-card" data-automation="${esc(item.id)}">
         <div class="door-card-head"><div><h3>${t("auto_lock")} · ${esc(item.door_name)}</h3><span class="entity">${esc(item.ha_entity_id || item.ha_config_id)}</span></div><span class="status ${stateClass}">${esc(item.state || "missing")}</span></div>
         <div class="door-card-grid"><div><span>${t("door")}</span><strong>${esc(item.door_name)}</strong><span class="entity">${esc(item.door_entity_id || "—")}</span></div><div><span>${t("auto_lock_delay")}</span><strong>${esc(delayLabel)}</strong></div></div>
+        ${sensorId ? `<div class="door-card-grid"><div><span>${t("door_sensor")}</span><strong>${esc(sensorName)}</strong><span class="entity">${esc(sensorId)}</span></div></div>` : ""}
         <div class="door-card-actions"><span class="muted">${t("automation_native")}</span><button class="secondary" onclick="editAutomation('${item.id}')">${t("edit")}</button><button class="danger" onclick="deleteAutomation('${item.id}')">${t("delete")}</button></div>
       </article>`;
     }).join("") : `<div class="empty">${t("no_automations")}</div>`;
@@ -752,6 +761,10 @@
 
   function render() {
     const connection = $("#connection");
+    const version = data.version || "development";
+    $("#app-version").textContent = `v${version}`;
+    $("#app-version").title = t("installed_version");
+    $("#app-version").setAttribute("aria-label", `${t("installed_version")}: ${version}`);
     connection.classList.toggle("online", Boolean(data.connected));
     connection.querySelector("span:last-child").textContent = data.connected ? t("connected") : t("disconnected");
     const credentials = (data.people || []).reduce((sum, person) => sum + person.credentials.length, 0);
@@ -761,7 +774,14 @@
     $("#management").textContent = data.management_message || t("management_empty");
     renderPeople(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderAutomations(); renderLogs(); renderCapture(); renderKeypadLearning();
   }
-  async function refresh() { try { data = await request("state"); render(); showError(); } catch (error) { showError(error.message); } }
+  function refresh() {
+    if (refreshPromise) return refreshPromise;
+    refreshPromise = (async () => {
+      try { data = await request("state"); render(); showError(); }
+      catch (error) { showError(error.message); }
+    })().finally(() => { refreshPromise = null; });
+    return refreshPromise;
+  }
 
   function registeredFor(name, readerId, excludeSlot = null) {
     return (data.users || []).filter(user => user.reader_id === readerId && user.finger && normalize(user.name) === normalize(name) && Number(user.slot) !== Number(excludeSlot));
@@ -816,6 +836,7 @@
   const inputField=(label,name,value="",required=true,extra="")=>`<label>${esc(label)}<input name="${esc(name)}" value="${esc(value)}" ${required?"required":""} ${extra}></label>`;
   const selectField=(label,name,options,selected="",wide=false)=>`<label class="${wide?"wide":""}">${esc(label)}<select name="${esc(name)}">${options.map(item=>`<option value="${esc(item.value)}" ${item.value===selected?"selected":""}>${esc(item.label)}</option>`).join("")}</select></label>`;
   const doorSelectItems=()=>[{value:"",label:"—"},...(data.doors||[]).map(door=>({value:door.id,label:`${door.name} · ${door.id}`}))];
+  const doorSensorSelectItems=()=>[{value:"",label:t("no_door_sensor")},...(data.door_sensors||[]).map(sensor=>({value:sensor.entity_id,label:`${sensor.name} · ${sensor.entity_id} (${sensor.state})`}))];
   const haPersonSelectItems=()=>[{value:"",label:t("create_new_person")},...(data.ha_people||[]).map(person=>({value:person.entity_id,label:`${person.name} · ${person.entity_id}`}))];
 
   function openPersonEditor(id=null) {
@@ -860,9 +881,12 @@
     if(!doors.length){showError(t("no_lock_doors"));return;}
     const selectedDoor=item?.door_id||doors[0].id;
     const delays=(data.auto_lock_delays||[5,10,15,20,30,60]).map(value=>({value:String(value),label:Number(value)===60?t("one_hour"):t("minutes",{count:value})}));
-    const html=`<div class="form-grid">${selectField(t("door"),"door_id",doors.map(door=>({value:door.id,label:`${door.name} · ${door.entity_id}`})),selectedDoor,true)}${selectField(t("auto_lock_delay"),"delay_minutes",delays,String(item?.config?.delay_minutes||10),true)}${selectField(t("status"),"enabled",[{value:"true",label:t("enabled")},{value:"false",label:t("disabled")}],String(item?.enabled??true),true)}<div class="form-section"><p class="muted">${t("automation_hint")}</p></div></div>`;
+    const selectedSensor=String(item?.config?.door_sensor_entity||"");
+    const sensors=doorSensorSelectItems();
+    if(selectedSensor&&!sensors.some(sensor=>sensor.value===selectedSensor)) sensors.push({value:selectedSensor,label:selectedSensor});
+    const html=`<div class="form-grid">${selectField(t("door"),"door_id",doors.map(door=>({value:door.id,label:`${door.name} · ${door.entity_id}`})),selectedDoor,true)}${selectField(t("auto_lock_delay"),"delay_minutes",delays,String(item?.config?.delay_minutes||10),true)}${selectField(t("door_sensor"),"door_sensor_entity",sensors,selectedSensor,true)}${selectField(t("status"),"enabled",[{value:"true",label:t("enabled")},{value:"false",label:t("disabled")}],String(item?.enabled??true),true)}<div class="form-section"><p class="muted">${t("door_sensor_hint")}</p><p class="muted">${t("automation_hint")}</p></div></div>`;
     openEditor({title:t(item?"edit_automation":"add_automation"),subtitle:item?.ha_entity_id||t("automation_native"),html,onSubmit:async form=>{
-      const payload={door_id:String(form.get("door_id")||""),delay_minutes:Number(form.get("delay_minutes")),enabled:String(form.get("enabled"))==="true"};
+      const payload={door_id:String(form.get("door_id")||""),delay_minutes:Number(form.get("delay_minutes")),door_sensor_entity:String(form.get("door_sensor_entity")||""),enabled:String(form.get("enabled"))==="true"};
       const ok=await mutate("automations/auto-lock","PUT",payload,{inline:true});if(ok)await closeEditor();
     }});
   }
@@ -923,7 +947,10 @@
   $("#log-retention").addEventListener("change",event=>mutate("settings/log-retention","PUT",{days:Number(event.target.value)}));
   document.addEventListener("keydown",event=>{if(event.key!=="Escape")return;if(fingerModal)closeFingerModal();else if(keypadPerson)closeKeypadModal();else if($("#editor-modal").classList.contains("open"))closeEditor();else if($("#confirm-modal").classList.contains("open"))closeConfirm();});
 
-  applyLanguage(); refresh(); setInterval(refresh,3000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  applyLanguage();
+  refresh();
+  setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_INTERVAL_MS);
 })();
 </script>
 </body>

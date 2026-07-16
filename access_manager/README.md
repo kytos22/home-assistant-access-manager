@@ -13,10 +13,13 @@ Access Manager is an administrator-only Home Assistant add-on for managing peopl
 - Supports a per-door default plus fingerprint/keypad `open`, `unlock`, and `lock` requests.
 - Emits one normalized `access_manager_credential` event for automations.
 - Provides English and Spanish interfaces.
+- Shows the installed app version in the header.
+- Creates native auto-lock rules with an optional closed-door contact check.
+- Exposes `warning`, `info`, and `debug` application log levels in the Home Assistant app configuration; routine HTTP request logging remains disabled.
 - Applies configurable, time-based log retention and a 10,000-row safety cap.
 
 Fresh installations start empty. No user, reader, door, entity ID, network address or credential is bundled.
 
 Fingerprint templates remain inside each physical sensor. Access Manager stores only identity metadata, reader mappings and protected keypad credential digests in `/data`.
 
-Full installation and configuration documentation is available in the repository root.
+Full installation, supported-device and configuration documentation is available in the [repository README](https://github.com/kytos22/home-assistant-access-manager#readme).
