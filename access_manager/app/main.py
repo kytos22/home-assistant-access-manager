@@ -81,9 +81,7 @@ DOOR_ACTIONS = {
 }
 LOCK_OPEN_FEATURE = 1
 READER_REQUESTED_ACTIONS = {"default", "open", "unlock", "lock"}
-ALL_DOOR_ACTIONS = {
-    action for domain_actions in DOOR_ACTIONS.values() for action in domain_actions
-}
+LOCAL_UNAUTHENTICATED_ACTIONS = {"lock"}
 
 
 def now_iso():
@@ -728,7 +726,7 @@ class Registry:
             )
         self.connection.commit()
 
-    def create_reader(self, reader_id, name, reader_type, door_id, config):
+    def create_reader(self, reader_id, name, reader_type, door_id, config, enabled=True):
         if reader_type not in {"fingerprint", "keypad"}:
             raise ValueError("Invalid reader type")
         if door_id and not any(door["id"] == door_id for door in self.doors()):
@@ -739,9 +737,12 @@ class Registry:
             INSERT INTO readers(
                 id, name, reader_type, door_id, enabled, config_json,
                 created_at, updated_at
-            ) VALUES (?, ?, ?, ?, 1, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (reader_id, name, reader_type, door_id or None, json.dumps(config), timestamp, timestamp),
+            (
+                reader_id, name, reader_type, door_id or None,
+                1 if enabled else 0, json.dumps(config), timestamp, timestamp,
+            ),
         )
         self.connection.commit()
 
@@ -992,6 +993,52 @@ class HomeAssistant:
             )
         domain = entity_id.split(".", 1)[0]
         await self.call_service(domain, action, {"entity_id": entity_id})
+
+    async def emit_door_action_event(
+        self, door, action, source, event_id, reader=None, local_only=False,
+    ):
+        reader_id = reader.get("id") if reader else None
+        payload = {
+            "event_id": str(event_id),
+            "door_id": door.get("id") if door else None,
+            "door_entity_id": door.get("entity_id") if door else None,
+            "reader_id": reader_id,
+            "reader_type": reader.get("reader_type") if reader else None,
+            "source": source,
+            "action": str(action or "").strip().lower(),
+            "action_executed": False,
+            "action_error": None,
+        }
+        try:
+            if not door:
+                raise RuntimeError("The reader has no door assigned")
+            if local_only and payload["action"] not in LOCAL_UNAUTHENTICATED_ACTIONS:
+                raise RuntimeError("Unauthenticated local controls may only lock a door")
+            await self.execute_door_action(door, payload["action"])
+            payload["action_executed"] = True
+            event_type = (
+                "local_lock_succeeded" if source == "display" else "door_test_succeeded"
+            )
+            detail = f"{door['name']} · {payload['action']}"
+            if reader:
+                detail += f" · {reader['name']}"
+            self.registry.add_event(event_type, detail=detail)
+        except Exception as error:
+            payload["action_error"] = str(error)[:240]
+            event_type = (
+                "local_lock_failed" if source == "display" else "door_test_failed"
+            )
+            door_name = door.get("name") if door else "Unassigned door"
+            detail = f"{door_name} · {payload['action']} · {error}"
+            if reader:
+                detail += f" · {reader['name']}"
+            self.registry.add_event(event_type, detail=detail)
+            LOGGER.error(
+                "Door action failed: source=%s door=%s reader=%s action=%s error=%s",
+                source, payload["door_id"], reader_id, payload["action"], error,
+            )
+        await self.fire_event("access_manager_door_action", payload)
+        return payload
 
     async def fire_event(self, event_type, payload):
         return await self.request("POST", f"/events/{event_type}", payload)
@@ -1337,7 +1384,10 @@ class HomeAssistant:
             result["value"] = int(parts[3]) if len(parts) > 3 else None
         except ValueError:
             result["value"] = None
-        requested_action = parts[4].strip().lower() if len(parts) > 4 else "default"
+        if result["kind"] == "local_action":
+            requested_action = parts[2].strip().lower() if len(parts) > 2 else "invalid"
+        else:
+            requested_action = parts[4].strip().lower() if len(parts) > 4 else "default"
         result["action"] = (
             requested_action if requested_action in READER_REQUESTED_ACTIONS else "invalid"
         )
@@ -1350,10 +1400,27 @@ class HomeAssistant:
         event = self.parse_event(raw)
         if not event:
             return
+        # Claim the monotonic reader event before any side effect. If firing the
+        # HA audit event fails after the lock service succeeds, reconnecting must
+        # not execute the same physical action a second time.
+        self.registry.set_setting(setting_key, raw)
         kind = event["kind"]
         slot = event["slot"]
         confidence = event["value"]
-        if kind == "matched":
+        if kind == "local_action":
+            reader = self.registry.reader(reader_id)
+            door = next(
+                (
+                    item for item in self.registry.doors()
+                    if reader and item["id"] == reader.get("door_id")
+                ),
+                None,
+            )
+            await self.emit_door_action_event(
+                door, event["action"], "display",
+                f"{reader_id}:{event['sequence']}", reader=reader, local_only=True,
+            )
+        elif kind == "matched":
             user = self.registry.user(slot, reader_id)
             name = user["name"] if user else f"Unregistered ID {slot}"
             reader = self.registry.reader(reader_id)
@@ -1367,7 +1434,6 @@ class HomeAssistant:
                 )
         elif kind in {"unmatched", "invalid", "misplaced"}:
             self.registry.add_event(f"scan_{kind}", slot, confidence)
-        self.registry.set_setting(setting_key, raw)
 
     async def process_management_event(self, raw, reader_id="display1"):
         setting_key = f"last_management_event:{reader_id}"
@@ -1433,6 +1499,8 @@ class FingerprintAdmin:
         self.deletion_task = None
         self.deletion_lock = asyncio.Lock()
         self.capture_sessions = {}
+        self.keypad_learning_sessions = {}
+        self.last_keypad_actions = {}
 
     async def startup(self, _app):
         await self.ha.start()
@@ -1465,6 +1533,23 @@ class FingerprintAdmin:
             for reader_id, session in self.capture_sessions.items()
         ]
 
+    def active_keypad_learning(self):
+        now = asyncio.get_running_loop().time()
+        expired = [
+            reader_id for reader_id, session in self.keypad_learning_sessions.items()
+            if session["expires_at"] <= now
+        ]
+        for reader_id in expired:
+            self.keypad_learning_sessions.pop(reader_id, None)
+        return [
+            {
+                "reader_id": reader_id,
+                "raw_action": session.get("raw_action"),
+                "seconds_left": max(0, int(session["expires_at"] - now)),
+            }
+            for reader_id, session in self.keypad_learning_sessions.items()
+        ]
+
     async def handle_state_change(self, entity_id, _state):
         for reader in self.registry.readers():
             if not reader["enabled"] or reader["reader_type"] != "keypad":
@@ -1483,9 +1568,24 @@ class FingerprintAdmin:
             await self.ha.refresh_states()
             code = self.ha.states.get(config.get("code_entity"), {}).get("state")
             keypad_action = self.ha.states.get(config.get("action_entity"), {}).get("state")
-            if not code or code in {"unknown", "unavailable"}:
-                return
             if not keypad_action or keypad_action in {"unknown", "unavailable"}:
+                return
+            self.last_keypad_actions[reader["id"]] = {
+                "raw_action": str(keypad_action),
+                "observed_at": now_iso(),
+            }
+            learning = self.keypad_learning_sessions.get(reader["id"])
+            if learning and learning["expires_at"] > asyncio.get_running_loop().time():
+                learning["raw_action"] = str(keypad_action)
+                self.ha.management_message = (
+                    f"Detected keypad button {keypad_action} on {reader['name']}"
+                )
+                self.registry.add_event(
+                    "keypad_button_detected",
+                    detail=f"{reader['name']} · {keypad_action}",
+                )
+                return
+            if not code or code in {"unknown", "unavailable"}:
                 return
             await self.process_keypad_event(
                 reader, str(transaction_state), str(code), str(keypad_action)
@@ -1506,9 +1606,13 @@ class FingerprintAdmin:
 
     async def process_keypad_event(self, reader, transaction, code, keypad_action):
         config = reader.get("config", {})
-        action_name = str(
-            config.get("action_map", {}).get(keypad_action, keypad_action)
-        ).strip().lower()
+        action_map = config.get("action_map", {})
+        if keypad_action not in action_map:
+            self.registry.add_event(
+                "keypad_action_ignored", detail=f"{reader['name']} · {keypad_action}"
+            )
+            return
+        action_name = str(action_map[keypad_action]).strip().lower()
         captures = {item["reader_id"]: item for item in self.active_captures()}
         capture = captures.get(reader["id"])
         if capture:
@@ -1551,9 +1655,10 @@ class FingerprintAdmin:
         person = self.registry.person(credential["person_id"])
         if not person:
             return
-        credential_action = str(
-            credential.get("normalized_action") or action_name
-        ).strip().lower()
+        # The keypad is intentionally dumb: identity comes from the stored
+        # code+raw-action credential, while the current reader mapping decides
+        # what that physical button does now.
+        credential_action = action_name
         self.registry.add_event(
             "access_granted",
             detail=f"{person['name']} · {reader['name']} · {credential_action}",
@@ -1734,6 +1839,8 @@ class FingerprintAdmin:
                 "door_entities": self.ha.door_entities(),
                 "access_readers": readers,
                 "captures": self.active_captures(),
+                "keypad_action_learning": self.active_keypad_learning(),
+                "last_keypad_actions": self.last_keypad_actions,
                 "access_event_type": "access_manager_credential",
                 "finger_labels": FINGER_LABELS,
                 "events": self.registry.events(),
@@ -1990,6 +2097,24 @@ class FingerprintAdmin:
         self.capture_sessions.pop(reader_id, None)
         return web.json_response({"ok": True})
 
+    async def start_keypad_action_learning(self, request):
+        self.require_admin_request(request)
+        reader_id = str(request.match_info["reader_id"])
+        reader = self.registry.reader(reader_id)
+        if not reader or reader["reader_type"] != "keypad" or not reader["enabled"]:
+            raise web.HTTPBadRequest(text="Select an enabled keypad")
+        self.keypad_learning_sessions[reader_id] = {
+            "raw_action": None,
+            "expires_at": asyncio.get_running_loop().time() + 60,
+        }
+        return web.json_response({"ok": True, "expires_in": 60})
+
+    async def cancel_keypad_action_learning(self, request):
+        self.require_admin_request(request)
+        reader_id = str(request.match_info["reader_id"])
+        self.keypad_learning_sessions.pop(reader_id, None)
+        return web.json_response({"ok": True})
+
     async def delete_keypad_credential(self, request):
         self.require_admin_request(request)
         credential_id = int(request.match_info["credential_id"])
@@ -2048,6 +2173,24 @@ class FingerprintAdmin:
             raise web.HTTPNotFound(text=str(error))
         return web.json_response({"ok": True})
 
+    async def test_door_action(self, request):
+        self.require_admin_request(request)
+        door_id = str(request.match_info["door_id"])
+        payload = await request.json()
+        action = str(payload.get("action", "")).strip().lower()
+        door = next(
+            (item for item in self.registry.doors() if item["id"] == door_id), None
+        )
+        if not door:
+            raise web.HTTPNotFound(text="Door not found")
+        if action not in self.ha.door_actions(door["entity_id"]):
+            raise web.HTTPBadRequest(text="The selected action is not supported")
+        result = await self.ha.emit_door_action_event(
+            door, action, "admin_test", f"admin:{door_id}:{now_iso()}"
+        )
+        status = 200 if result["action_executed"] else 502
+        return web.json_response(result, status=status)
+
     async def create_reader(self, request):
         self.require_admin_request(request)
         payload = await request.json()
@@ -2062,7 +2205,10 @@ class FingerprintAdmin:
             raise web.HTTPBadRequest(text="Invalid reader data")
         self.validate_reader_config(reader_type, config)
         try:
-            self.registry.create_reader(reader_id, name, reader_type, door_id, config)
+            self.registry.create_reader(
+                reader_id, name, reader_type, door_id, config,
+                bool(payload.get("enabled", True)),
+            )
         except (ValueError, sqlite3.IntegrityError) as error:
             raise web.HTTPConflict(text=str(error))
         return web.json_response({"ok": True, "reader_id": reader_id})
@@ -2093,9 +2239,10 @@ class FingerprintAdmin:
             action_map = config.get("action_map", {})
             if not isinstance(action_map, dict):
                 raise web.HTTPBadRequest(text="Keypad action mapping must be an object")
+            keypad_actions = {"open", "unlock", "lock"}
             invalid_actions = sorted({
                 str(action).strip().lower() for action in action_map.values()
-                if str(action).strip().lower() not in ALL_DOOR_ACTIONS
+                if str(action).strip().lower() not in keypad_actions
             })
             if invalid_actions:
                 raise web.HTTPBadRequest(
@@ -2154,11 +2301,20 @@ class FingerprintAdmin:
         )
         app.router.add_post("/api/keypad/capture", self.start_keypad_capture)
         app.router.add_delete("/api/keypad/capture/{reader_id}", self.cancel_keypad_capture)
+        app.router.add_post(
+            "/api/keypads/{reader_id}/action-learning",
+            self.start_keypad_action_learning,
+        )
+        app.router.add_delete(
+            "/api/keypads/{reader_id}/action-learning",
+            self.cancel_keypad_action_learning,
+        )
         app.router.add_delete(
             "/api/keypad/credentials/{credential_id}", self.delete_keypad_credential
         )
         app.router.add_post("/api/doors", self.create_door)
         app.router.add_put("/api/doors/{door_id}", self.update_door)
+        app.router.add_post("/api/doors/{door_id}/test", self.test_door_action)
         app.router.add_post("/api/readers", self.create_reader)
         app.router.add_put("/api/readers/{reader_id}", self.update_reader)
         app.router.add_put("/api/settings/log-retention", self.set_log_retention)

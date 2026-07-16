@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.0
+
+- Replaces native browser dialogs with accessible, validated editors for people, readers, keypads, and doors.
+- Redesigns doors as aligned cards and adds capability-aware test actions with an explicit safety confirmation.
+- Adds visual keypad button mappings and a 60-second physical button detection mode.
+- Keeps identity in Access Manager: each keypad credential links a person to a specific `code/tag + raw button`, while the keypad remains a simple input device.
+- Makes the keypad's current button mapping authoritative, so remapping a button changes existing credentials immediately.
+- Ignores and logs unmapped keypad buttons without attempting an unknown door action.
+- Accepts unauthenticated display actions only for `lock`, executes them through the associated reader and door, and prevents duplicate sequence execution.
+- Emits `access_manager_door_action` and records local-lock and administrator-test outcomes in the bounded activity log.
+
 ## 0.6.0
 
 - Executes a door's configured Home Assistant service directly after successful authentication.
