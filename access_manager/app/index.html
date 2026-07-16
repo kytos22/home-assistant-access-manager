@@ -28,6 +28,7 @@
     h2 { font-size: 1.05rem; margin: 0 0 16px; }
     p { color: var(--muted); }
     .badge { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: #101923; padding: 8px 12px; border-radius: 999px; color: var(--muted); white-space: nowrap; }
+    .badge[hidden] { display: none !important; }
     .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--danger); box-shadow: 0 0 12px currentColor; }
     .online .dot { background: var(--accent); }
     .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
@@ -76,6 +77,11 @@
     .capture-box { margin: 10px 22px 4px; padding: 22px; border: 1px solid rgba(114,167,255,.35); border-radius: 16px; background: radial-gradient(circle at 50% 0, rgba(114,167,255,.15), transparent 65%), #09121b; text-align: center; }
     .capture-icon { font-size: 3rem; line-height: 1; margin-bottom: 10px; }
     .capture-box strong { display: block; margin: 8px 0; font-size: 1.05rem; }
+    .manual-credential { margin-top: 18px; padding: 15px; border-radius: 12px; background: rgba(8,15,22,.55); border: 1px solid rgba(61,83,105,.6); text-align: left; }
+    .manual-credential button { width: 100%; margin-top: 10px; }
+    .privacy-warning { color: #ffd27e; }
+    .capture-divider { display: flex; align-items: center; gap: 10px; margin: 18px 0 12px; color: var(--muted); font-size: .78rem; text-transform: uppercase; letter-spacing: .08em; }
+    .capture-divider::before, .capture-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
     .event-type { font-weight: 650; }
     .muted { color: var(--muted); }
     .empty { padding: 24px 8px; color: var(--muted); text-align: center; }
@@ -150,6 +156,9 @@
     .keymap-row button { padding: 9px 11px; }
     .learning-status { margin-top: 9px; min-height: 22px; color: #bad3ff; }
     .mini-stat { color: var(--muted); font-size: .82rem; }
+    .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(8,15,22,.45); }
+    .settings-row h3, .settings-row p { margin: 0; }
+    .settings-row p { margin-top: 6px; }
     body.modal-open { overflow: hidden; }
     @media (max-width: 840px) {
       main { width: min(100% - 20px, 700px); padding-top: 18px; }
@@ -161,6 +170,7 @@
       .door-card-grid, .form-grid, .keymap-row { grid-template-columns: 1fr; }
       .reader-selector { grid-template-columns: 1fr; }
       .finger-summary { grid-template-columns: 1fr; }
+      .settings-row { align-items: stretch; flex-direction: column; }
       .hand-stage { margin-inline: 10px; padding: 2px; }
     }
   </style>
@@ -174,6 +184,7 @@
     </div>
     <div class="header-actions">
       <div id="app-version" class="badge" title="Installed version" aria-label="Installed version">v…</div>
+      <div id="privacy-status" class="badge" hidden>Privacy off</div>
       <label for="language" class="muted" data-i18n="language">Language</label>
       <select id="language" class="language-select" aria-label="Language">
         <option value="en">English</option>
@@ -191,6 +202,7 @@
     <button class="tab-button" data-tab="keypads" data-i18n="tab_keypads">Keypads</button>
     <button class="tab-button" data-tab="doors" data-i18n="tab_doors">Doors</button>
     <button class="tab-button" data-tab="automations" data-i18n="tab_automations">Automations</button>
+    <button class="tab-button" data-tab="settings" data-i18n="tab_settings">Settings</button>
     <button class="tab-button" data-tab="logs" data-i18n="tab_logs">Log</button>
   </nav>
 
@@ -282,6 +294,16 @@
       <div class="section-head"><h2 data-i18n="automations">Automations</h2><button id="add-automation" class="secondary" data-i18n="add_automation">Add automation</button></div>
       <p class="hint" data-i18n="automation_hint">These are native Home Assistant automations. Access Manager only updates or deletes automations that it created and still owns.</p>
       <div id="automations-body"></div>
+    </section>
+  </section>
+
+  <section id="tab-settings" class="tab-panel" role="tabpanel">
+    <section class="card infrastructure">
+      <div class="section-head"><h2 data-i18n="settings">Settings</h2></div>
+      <div class="settings-row">
+        <div><h3 data-i18n="privacy_mode">Privacy mode</h3><p id="privacy-description" class="hint"></p></div>
+        <button id="privacy-toggle" class="secondary" type="button"></button>
+      </div>
     </section>
   </section>
 
@@ -415,8 +437,15 @@
       <div class="capture-icon">⌨</div>
       <label for="keypad-reader">Keypad</label>
       <select id="keypad-reader"></select>
-      <strong>Enter the code or scan the tag, then press the action button</strong>
-      <p id="keypad-status">The code/tag + action button combination will be linked to this user.</p>
+      <div class="manual-credential">
+        <label for="keypad-manual-code" data-i18n="manual_code_or_tag">Enter code or tag manually</label>
+        <input id="keypad-manual-code" type="password" maxlength="128" autocomplete="new-password" autocapitalize="off" spellcheck="false" placeholder="+0A1B2C3 or 1234">
+        <p id="keypad-privacy-hint" class="hint" data-i18n="manual_credential_hint">PINs and tags are stored only as a protected digest.</p>
+        <button id="keypad-manual-save" class="secondary" type="button" data-i18n="save_manual">Save manually</button>
+      </div>
+      <div class="capture-divider"><span data-i18n="or_capture">or capture from keypad</span></div>
+      <strong>Complete any keypad action with the code or tag</strong>
+      <p id="keypad-status">The code or tag will be linked to this user; the keypad action is handled separately.</p>
     </div>
     <div class="modal-actions">
       <button id="keypad-cancel" class="secondary" type="button">Cancel</button>
@@ -473,13 +502,14 @@
   let editorSubmit = null;
   let confirmSubmit = null;
   let learningReaderId = null;
+  const revealedCredentials = new Map();
 
   const messages = {
     en: {
       app_title:"Access Manager", app_subtitle:"Users · credentials · readers · doors", language:"Language", installed_version:"Installed version",
       connecting:"Connecting…", connected:"Home Assistant connected", disconnected:"Home Assistant disconnected",
-      tab_people:"Users & credentials", tab_fingerprints:"Fingerprint readers", tab_keypads:"Keypads", tab_doors:"Doors", tab_automations:"Automations", tab_logs:"Log",
-      people:"People", credentials:"Credentials", readers:"Readers", doors:"Doors", automations:"Automations", users_credentials:"Users and credentials",
+      tab_people:"Users & credentials", tab_fingerprints:"Fingerprint readers", tab_keypads:"Keypads", tab_doors:"Doors", tab_automations:"Automations", tab_settings:"Settings", tab_logs:"Log",
+      people:"People", credentials:"Credentials", readers:"Readers", doors:"Doors", automations:"Automations", settings:"Settings", users_credentials:"Users and credentials",
       add_user:"Add user", user:"User", linked_credentials:"Linked credentials", fingerprint_readers:"Fingerprint readers",
       add_fingerprint_reader:"Add fingerprint reader", reader:"Reader", name:"Name", door:"Door", availability:"Availability",
       sensor_id:"Sensor ID", person_name:"Person name", enroll_new:"Enroll new", link_existing:"Link existing ID", cancel:"Cancel",
@@ -496,13 +526,19 @@
       associate_people:"Link to Home Assistant People…", create_in_ha:"Create in HA", add_fingerprint:"Add fingerprint", add_code:"Add code/tag",
       rename:"Rename", delete:"Delete", save:"Save", edit:"Edit", configured:"Configured", available:"Available", unavailable:"Unavailable", missing:"Entity missing",
       active:"Active", pending:"Enrolling", deleting:"Pending deletion", delete_pending:"Deleting", unassigned:"Unassigned finger", assign_finger:"Assign finger", no_records:"No records",
-      fingerprint:"Fingerprint", keypad:"Keypad", code:"Code", action:"Action", default_action:"Default authentication action", action_map:"Key mapping", days:"{count} days", one_day:"1 day",
+      fingerprint:"Fingerprint", keypad:"Keypad", code:"Code", action:"Action", default_action:"Default authentication action", action_map:"Action mapping", days:"{count} days", one_day:"1 day",
       reader_summary:"{count} / {capacity} templates · {status}", choose_reader:"Select a fingerprint reader", reader_not_ready:"The selected reader is not ready.",
       select_finger:"Select the finger to enroll", identify_finger:"Identify the existing fingerprint", assign_finger:"Assign a finger to this credential",
       person_id:"{name} · ID {id} · {reader}", selected:"Selected", already_registered:"Already registered for this person", none:"None", continue:"Continue",
       start_enrollment:"Start enrollment", save_link:"Save link", close:"Close", register_keypad:"Register code or tag", start_capture:"Start capture",
-      capture_intro:"The code/tag + action button combination will be linked to this user.", capture_wait:"Enter the code or scan the tag, then press the action button.",
+      capture_intro:"The code or tag will be linked to this user; the keypad action is handled separately.", capture_wait:"Complete any keypad action with the code or tag.",
       capture_countdown:"Waiting for the keypad · {seconds}s", no_keypad:"No configured keypad is available.", confirm_delete_keypad:"Delete this keypad credential?",
+      manual_code_or_tag:"Enter code or tag manually", manual_credential_hint:"PINs and tags are encrypted at rest and hidden by default.", save_manual:"Save manually", or_capture:"or capture from keypad", credential_value_placeholder:"+0A1B2C3 or 1234",
+      manual_credential_hint_unprotected:"Credentials remain encrypted at rest but are always visible in the panel.", privacy_disabled:"Privacy off",
+      privacy_mode:"Privacy mode", privacy_enabled_desc:"Credentials are encrypted and hidden. Administrators can reveal one temporarily with the view button.", privacy_disabled_desc:"Credentials remain encrypted at rest but are always visible to panel administrators.", disable_privacy:"Disable privacy", enable_privacy:"Enable privacy",
+      disable_privacy_title:"Disable privacy mode?", disable_privacy_warning:"{current} current encrypted credentials will become always visible in the panel. {legacy} older HMAC-only credentials will remain masked until registered again. Future credentials will still be encrypted at rest, but shown automatically to every panel administrator.", confirm_disable_privacy:"DISABLE PRIVACY",
+      enable_privacy_title:"Enable privacy mode?", enable_privacy_warning:"All recoverable credentials will be hidden again. They remain encrypted and can still be revealed temporarily by an administrator.", confirm_enable_privacy:"ENABLE PRIVACY", show_credential:"View credential", credential_hidden:"Hidden credential",
+      enter_code_or_tag:"Enter a code or tag.",
       confirm_delete_fingerprint:"Delete ID {id} from {reader}?", confirm_create_person:"Create {name} in Home Assistant People and link it?",
       prompt_person:"Person name:", prompt_rename:"New name in Access Manager and Home Assistant:", prompt_door_name:"Door name:", prompt_door_id:"Internal door ID:",
       prompt_reader_name:"Reader name:", prompt_reader_id:"Internal reader ID:", prompt_door_link:"Door ID ({doors}):", prompt_transaction:"Transaction entity:",
@@ -520,9 +556,9 @@
       keypad_credential_deleted:"Keypad credential deleted", keypad_capture_failed:"Keypad capture failed", keypad_denied:"Keypad credential denied",
       door_action_executed:"Door action executed", door_action_failed:"Door action failed", local_lock_succeeded:"Local lock succeeded", local_lock_failed:"Local lock failed",
       door_test_succeeded:"Door test succeeded", door_test_failed:"Door test failed", keypad_button_detected:"Keypad button detected", keypad_action_ignored:"Keypad button ignored",
-      automation_saved:"Automation saved", automation_deleted:"Automation deleted",
-      test_actions:"Test actions", edit_door:"Edit door", add_mapping:"Add mapping", detect_button:"Detect button", detecting_button:"Press the physical keypad action button · {seconds}s",
-      raw_action:"Raw keypad action", mapped_action:"Door action", ignore:"Ignore", enabled:"Enabled", disabled:"Disabled", internal_id:"Internal ID", save_changes:"Save changes",
+      automation_saved:"Automation saved", automation_deleted:"Automation deleted", privacy_mode_changed:"Privacy mode changed",
+      test_actions:"Test actions", edit_door:"Edit door", add_mapping:"Add mapping", detect_button:"Detect action", detecting_button:"Complete a keypad action · {seconds}s",
+      raw_action:"Keypad action", mapped_action:"Door action", ignore:"Ignore", enabled:"Enabled", disabled:"Disabled", internal_id:"Internal ID", save_changes:"Save changes",
       confirm:"Confirm", important_warning:"Important warning", test_warning:"This sends a real command to {door}. Check the selected action before confirming.",
       confirm_action:"CONFIRM {action}", edit_keypad:"Edit keypad", edit_fingerprint_reader:"Edit fingerprint reader", add_person_title:"Add user", edit_person_title:"Edit user",
       link_person:"Home Assistant person", create_new_person:"Create a new Home Assistant Person", reader_settings:"Reader settings", entity_settings:"Home Assistant entities",
@@ -533,8 +569,8 @@
     es: {
       app_title:"Gestor de accesos", app_subtitle:"Usuarios · credenciales · lectores · puertas", language:"Idioma", installed_version:"Versión instalada",
       connecting:"Conectando…", connected:"Home Assistant conectado", disconnected:"Home Assistant desconectado",
-      tab_people:"Usuarios y credenciales", tab_fingerprints:"Lectores de huellas", tab_keypads:"Keypads", tab_doors:"Puertas", tab_automations:"Automatizaciones", tab_logs:"Registro",
-      people:"Personas", credentials:"Credenciales", readers:"Lectores", doors:"Puertas", automations:"Automatizaciones", users_credentials:"Usuarios y credenciales",
+      tab_people:"Usuarios y credenciales", tab_fingerprints:"Lectores de huellas", tab_keypads:"Keypads", tab_doors:"Puertas", tab_automations:"Automatizaciones", tab_settings:"Ajustes", tab_logs:"Registro",
+      people:"Personas", credentials:"Credenciales", readers:"Lectores", doors:"Puertas", automations:"Automatizaciones", settings:"Ajustes", users_credentials:"Usuarios y credenciales",
       add_user:"Añadir usuario", user:"Usuario", linked_credentials:"Credenciales asociadas", fingerprint_readers:"Lectores de huellas",
       add_fingerprint_reader:"Añadir lector de huellas", reader:"Lector", name:"Nombre", door:"Puerta", availability:"Disponibilidad",
       sensor_id:"ID del sensor", person_name:"Nombre de la persona", enroll_new:"Registrar nueva", link_existing:"Vincular ID existente", cancel:"Cancelar",
@@ -551,13 +587,19 @@
       associate_people:"Asociar con People…", create_in_ha:"Crear en HA", add_fingerprint:"Añadir huella", add_code:"Añadir código/tag",
       rename:"Renombrar", delete:"Borrar", save:"Guardar", edit:"Editar", configured:"Configurado", available:"Disponible", unavailable:"No disponible", missing:"Falta la entidad",
       active:"Activa", pending:"Registrando", deleting:"Pendiente de borrar", delete_pending:"Borrando", unassigned:"Dedo sin asignar", assign_finger:"Asignar dedo", no_records:"No hay registros",
-      fingerprint:"Huella", keypad:"Keypad", code:"Código", action:"Acción", default_action:"Acción predeterminada al autenticar", action_map:"Mapa de teclas", days:"{count} días", one_day:"1 día",
+      fingerprint:"Huella", keypad:"Keypad", code:"Código", action:"Acción", default_action:"Acción predeterminada al autenticar", action_map:"Mapa de acciones", days:"{count} días", one_day:"1 día",
       reader_summary:"{count} / {capacity} plantillas · {status}", choose_reader:"Selecciona un lector de huellas", reader_not_ready:"El lector seleccionado no está preparado.",
       select_finger:"Selecciona el dedo a registrar", identify_finger:"Identifica la huella existente", assign_finger:"Asigna un dedo a esta credencial",
       person_id:"{name} · ID {id} · {reader}", selected:"Seleccionado", already_registered:"Ya registrados para esta persona", none:"Ninguno", continue:"Continuar",
       start_enrollment:"Iniciar registro", save_link:"Guardar vínculo", close:"Cerrar", register_keypad:"Registrar código o tag", start_capture:"Empezar captura",
-      capture_intro:"La combinación código/tag + tecla de acción quedará asociada a este usuario.", capture_wait:"Introduce el código o pasa el tag y pulsa la tecla de acción.",
+      capture_intro:"El código o tag quedará asociado a este usuario; la acción del keypad se gestiona por separado.", capture_wait:"Completa cualquier acción del keypad usando el código o tag.",
       capture_countdown:"Esperando en el keypad · {seconds}s", no_keypad:"No hay ningún keypad configurado.", confirm_delete_keypad:"¿Borrar esta credencial de keypad?",
+      manual_code_or_tag:"Introducir código o tag manualmente", manual_credential_hint:"Los PIN y tags se almacenan cifrados y permanecen ocultos por defecto.", save_manual:"Guardar manualmente", or_capture:"o capturar desde el keypad", credential_value_placeholder:"+0A1B2C3 o 1234",
+      manual_credential_hint_unprotected:"Las credenciales siguen cifradas, pero permanecen visibles en el panel.", privacy_disabled:"Privacidad desactivada",
+      privacy_mode:"Modo de privacidad", privacy_enabled_desc:"Las credenciales están cifradas y ocultas. Un administrador puede visualizar una temporalmente con el botón de vista.", privacy_disabled_desc:"Las credenciales siguen cifradas, pero permanecen visibles para los administradores del panel.", disable_privacy:"Desactivar privacidad", enable_privacy:"Activar privacidad",
+      disable_privacy_title:"¿Desactivar el modo de privacidad?", disable_privacy_warning:"{current} credenciales actuales cifradas pasarán a mostrarse siempre en el panel. {legacy} credenciales antiguas que solo tienen HMAC seguirán ocultas hasta que se registren de nuevo. Las credenciales futuras continuarán cifradas, pero se mostrarán automáticamente a todos los administradores del panel.", confirm_disable_privacy:"DESACTIVAR PRIVACIDAD",
+      enable_privacy_title:"¿Activar el modo de privacidad?", enable_privacy_warning:"Todas las credenciales recuperables volverán a ocultarse. Seguirán cifradas y un administrador podrá visualizarlas temporalmente.", confirm_enable_privacy:"ACTIVAR PRIVACIDAD", show_credential:"Visualizar credencial", credential_hidden:"Credencial oculta",
+      enter_code_or_tag:"Introduce un código o tag.",
       confirm_delete_fingerprint:"¿Borrar el ID {id} de {reader}?", confirm_create_person:"¿Crear a {name} en People de Home Assistant y asociarlo?",
       prompt_person:"Nombre de la persona:", prompt_rename:"Nuevo nombre en Access Manager y Home Assistant:", prompt_door_name:"Nombre de la puerta:", prompt_door_id:"ID interno de la puerta:",
       prompt_reader_name:"Nombre del lector:", prompt_reader_id:"ID interno del lector:", prompt_door_link:"ID de puerta ({doors}):", prompt_transaction:"Entidad de transacción:",
@@ -575,9 +617,9 @@
       keypad_credential_deleted:"Credencial keypad borrada", keypad_capture_failed:"Captura keypad fallida", keypad_denied:"Credencial keypad denegada",
       door_action_executed:"Acción de puerta ejecutada", door_action_failed:"Acción de puerta fallida", local_lock_succeeded:"Bloqueo local completado", local_lock_failed:"Bloqueo local fallido",
       door_test_succeeded:"Prueba de puerta completada", door_test_failed:"Prueba de puerta fallida", keypad_button_detected:"Tecla de keypad detectada", keypad_action_ignored:"Tecla de keypad ignorada",
-      automation_saved:"Automatización guardada", automation_deleted:"Automatización borrada",
-      test_actions:"Probar acciones", edit_door:"Editar puerta", add_mapping:"Añadir asignación", detect_button:"Detectar tecla", detecting_button:"Pulsa la tecla de acción física del keypad · {seconds}s",
-      raw_action:"Acción bruta del keypad", mapped_action:"Acción de puerta", ignore:"Ignorar", enabled:"Activado", disabled:"Desactivado", internal_id:"ID interno", save_changes:"Guardar cambios",
+      automation_saved:"Automatización guardada", automation_deleted:"Automatización borrada", privacy_mode_changed:"Modo de privacidad cambiado",
+      test_actions:"Probar acciones", edit_door:"Editar puerta", add_mapping:"Añadir asignación", detect_button:"Detectar acción", detecting_button:"Completa una acción en el keypad · {seconds}s",
+      raw_action:"Acción del keypad", mapped_action:"Acción de puerta", ignore:"Ignorar", enabled:"Activado", disabled:"Desactivado", internal_id:"ID interno", save_changes:"Guardar cambios",
       confirm:"Confirmar", important_warning:"Aviso importante", test_warning:"Esto enviará una orden real a {door}. Comprueba la acción seleccionada antes de confirmar.",
       confirm_action:"CONFIRMAR {action}", edit_keypad:"Editar keypad", edit_fingerprint_reader:"Editar lector de huellas", add_person_title:"Añadir usuario", edit_person_title:"Editar usuario",
       link_person:"Persona de Home Assistant", create_new_person:"Crear una nueva persona en Home Assistant", reader_settings:"Configuración del lector", entity_settings:"Entidades de Home Assistant",
@@ -622,6 +664,7 @@
     $("#keypad-cancel").textContent = t("cancel");
     $("#keypad-title").textContent = t("register_keypad");
     $("#keypad-start").textContent = t("start_capture");
+    $("#keypad-manual-code").placeholder = t("credential_value_placeholder");
     const summaries = document.querySelectorAll(".finger-summary span");
     if (summaries[0]) summaries[0].textContent = t("selected");
     if (summaries[1]) summaries[1].textContent = t("already_registered");
@@ -653,6 +696,11 @@
   function statusLabel(value) { return t(value === "configured" ? "configured" : value === "available" ? "available" : value === "missing" ? "missing" : "unavailable"); }
   function fingerLabel(code) { return code ? t(code) : t("unassigned"); }
   function codeHint(credential) {
+    if (credential.display_value) return credential.display_value;
+    const credentialId = String(credential.id || "").split(":")[1];
+    const revealed = revealedCredentials.get(credentialId);
+    if (revealed && revealed.expiresAt > Date.now()) return revealed.value;
+    if (revealed) revealedCredentials.delete(credentialId);
     const hint = credential.code_hint || credential.label || t("code");
     return language === "es" ? hint.replace(/^Code/, "Código") : hint.replace(/^Código/, "Code");
   }
@@ -667,11 +715,11 @@
     const body = $("#people-body");
     body.innerHTML = (data.people || []).length ? data.people.map(person => {
       const credentials = person.credentials.length ? person.credentials.map(credential => {
-        const label = credential.type === "fingerprint"
-          ? `${t("fingerprint")} · ${esc(readerName(credential.reader_id))} · ${esc(fingerLabel(credential.finger))} · ID ${credential.slot}`
-          : `${t("keypad")} · ${esc(readerName(credential.reader_id))} · ${esc(codeHint(credential))} · ${esc(credential.normalized_action)}`;
-        const remove = credential.type === "keypad" ? `<button title="${t("delete")}" onclick="deleteKeypadCredential(${String(credential.id).split(":")[1]})">×</button>` : "";
-        return `<span class="credential ${credential.type}">${label}${remove}</span>`;
+        if (credential.type === "fingerprint") return `<span class="credential fingerprint">${t("fingerprint")} · ${esc(readerName(credential.reader_id))} · ${esc(fingerLabel(credential.finger))} · ID ${credential.slot}</span>`;
+        const credentialId = String(credential.id).split(":")[1];
+        const legacyAction = credential.legacy_action_scope ? ` · ${esc(credential.keypad_action)}` : "";
+        const reveal = data.privacy_mode && credential.revealable ? `<button title="${t("show_credential")}" aria-label="${t("show_credential")}" onclick="revealKeypadCredential(${credentialId})">👁</button>` : "";
+        return `<span class="credential keypad">${t("keypad")} · ${esc(readerName(credential.reader_id))} · <span id="credential-value-${credentialId}">${esc(codeHint(credential))}</span>${legacyAction}${reveal}<button title="${t("delete")}" aria-label="${t("delete")}" onclick="deleteKeypadCredential(${credentialId})">×</button></span>`;
       }).join("") : `<span class="muted">${t("no_credentials")}</span>`;
       const association = person.ha_person_entity_id
         ? `<span class="status">${esc(person.ha_person_entity_id)}</span>`
@@ -759,9 +807,22 @@
     $("#events-body").innerHTML = (data.events || []).length ? data.events.map(event => `<tr><td class="muted">${new Date(event.occurred_at).toLocaleString(language)}</td><td class="event-type">${esc(t(event.event_type))}</td><td>${event.slot ?? "—"}</td><td>${event.confidence ?? "—"}</td><td class="muted">${esc(event.detail || "")}</td></tr>`).join("") : `<tr><td colspan="5" class="empty">${t("no_records")}</td></tr>`;
   }
 
+  function renderSettings() {
+    const privacyMode = data.privacy_mode !== false;
+    $("#privacy-description").textContent = t(privacyMode ? "privacy_enabled_desc" : "privacy_disabled_desc");
+    $("#privacy-toggle").textContent = t(privacyMode ? "disable_privacy" : "enable_privacy");
+    $("#privacy-toggle").className = privacyMode ? "danger" : "secondary";
+  }
+
   function render() {
     const connection = $("#connection");
     const version = data.version || "development";
+    const privacyMode = data.privacy_mode !== false;
+    const privacyStatus = $("#privacy-status"), privacyHint = $("#keypad-privacy-hint"), manualCode = $("#keypad-manual-code");
+    privacyStatus.hidden = privacyMode; privacyStatus.textContent = t("privacy_disabled");
+    manualCode.type = privacyMode ? "password" : "text";
+    privacyHint.textContent = t(privacyMode ? "manual_credential_hint" : "manual_credential_hint_unprotected");
+    privacyHint.classList.toggle("privacy-warning", !privacyMode);
     $("#app-version").textContent = `v${version}`;
     $("#app-version").title = t("installed_version");
     $("#app-version").setAttribute("aria-label", `${t("installed_version")}: ${version}`);
@@ -772,7 +833,7 @@
     $("#access-reader-count").textContent = data.access_readers?.length ?? 0; $("#door-count").textContent = data.doors?.length ?? 0;
     $("#people-list").innerHTML = (data.people || []).map(person => `<option value="${esc(person.name)}"></option>`).join("");
     $("#management").textContent = data.management_message || t("management_empty");
-    renderPeople(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderAutomations(); renderLogs(); renderCapture(); renderKeypadLearning();
+    renderPeople(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderAutomations(); renderSettings(); renderLogs(); renderCapture(); renderKeypadLearning();
   }
   function refresh() {
     if (refreshPromise) return refreshPromise;
@@ -814,7 +875,7 @@
     if (capture) { keypadCapturing=true; $("#keypad-status").textContent=t("capture_countdown",{seconds:capture.seconds_left}); $("#keypad-start").disabled=true; }
     else if (keypadCapturing) closeKeypadModal(false);
   }
-  async function closeKeypadModal(cancelRemote=true) { const readerId=$("#keypad-reader").value; if(cancelRemote&&keypadCapturing&&readerId) await request(`keypad/capture/${readerId}`,{method:"DELETE"}).catch(()=>{}); $("#keypad-modal").classList.remove("open"); $("#keypad-modal").setAttribute("aria-hidden","true"); document.body.classList.remove("modal-open"); keypadPerson=null; keypadCapturing=false; }
+  async function closeKeypadModal(cancelRemote=true) { const readerId=$("#keypad-reader").value; if(cancelRemote&&keypadCapturing&&readerId) await request(`keypad/capture/${readerId}`,{method:"DELETE"}).catch(()=>{}); $("#keypad-manual-code").value=""; $("#keypad-modal").classList.remove("open"); $("#keypad-modal").setAttribute("aria-hidden","true"); document.body.classList.remove("modal-open"); keypadPerson=null; keypadCapturing=false; }
 
   function openEditor({title,subtitle="",html,saveLabel=null,onSubmit}) {
     editorSubmit=onSubmit;
@@ -916,8 +977,10 @@
   window.createHaPerson = id => { const person=data.people.find(item=>item.id===id); if(person)openConfirm({title:t("create_in_ha"),message:t("confirm_create_person",{name:person.name}),onConfirm:async()=>{if(await mutate(`people/${id}/create-ha-person`,"POST"))closeConfirm();}}); };
   window.renamePerson = id => openPersonEditor(id);
   window.prepareFingerprint = id => { const person=data.people.find(item=>item.id===id); if(!person)return; switchTab("fingerprints"); $("#name").value=person.name; $("#slot").focus(); };
-  window.openKeypadModal = id => { const person=data.people.find(item=>item.id===id), keypads=data.access_readers.filter(reader=>reader.reader_type==="keypad"&&reader.enabled&&reader.availability!=="missing"); if(!person||!keypads.length){showError(t("no_keypad"));return;} keypadPerson=person;keypadCapturing=false;$("#keypad-person").textContent=`${person.name} · ${person.ha_person_entity_id}`;$("#keypad-reader").innerHTML=keypads.map(reader=>`<option value="${esc(reader.id)}">${esc(reader.name)}</option>`).join("");$("#keypad-status").textContent=t("capture_intro");$("#keypad-start").disabled=false;$("#keypad-modal").classList.add("open");$("#keypad-modal").setAttribute("aria-hidden","false");document.body.classList.add("modal-open"); };
+  window.openKeypadModal = id => { const person=data.people.find(item=>item.id===id), keypads=data.access_readers.filter(reader=>reader.reader_type==="keypad"&&reader.enabled&&reader.availability!=="missing"); if(!person||!keypads.length){showError(t("no_keypad"));return;} keypadPerson=person;keypadCapturing=false;$("#keypad-person").textContent=`${person.name} · ${person.ha_person_entity_id}`;$("#keypad-reader").innerHTML=keypads.map(reader=>`<option value="${esc(reader.id)}">${esc(reader.name)}</option>`).join("");$("#keypad-manual-code").value="";$("#keypad-status").textContent=t("capture_intro");$("#keypad-start").disabled=false;$("#keypad-modal").classList.add("open");$("#keypad-modal").setAttribute("aria-hidden","false");document.body.classList.add("modal-open"); };
+  window.revealKeypadCredential = async id => { try { const key=String(id),result=await request(`keypad/credentials/${id}/reveal`,{method:"POST",body:"{}"}),expiresAt=Date.now()+15000;revealedCredentials.set(key,{value:result.value,expiresAt});renderPeople();setTimeout(()=>{const current=revealedCredentials.get(key);if(current&&current.expiresAt<=Date.now()){revealedCredentials.delete(key);if(data?.privacy_mode)renderPeople();}},15100);}catch(error){showError(error.message);} };
   window.deleteKeypadCredential = id => openConfirm({title:t("delete"),message:t("confirm_delete_keypad"),onConfirm:async()=>{if(await mutate(`keypad/credentials/${id}`,"DELETE"))closeConfirm();}});
+  window.changePrivacyMode = () => { const enabled=data.privacy_mode!==false;if(enabled){const credentials=(data.people||[]).flatMap(person=>person.credentials||[]).filter(item=>item.type==="keypad"),current=credentials.filter(item=>item.revealable).length,legacy=credentials.length-current;openConfirm({title:t("disable_privacy_title"),message:t("disable_privacy_warning",{current,legacy}),confirmLabel:t("confirm_disable_privacy"),danger:true,onConfirm:async()=>{if(await mutate("settings/privacy","PUT",{enabled:false,acknowledge:true})){revealedCredentials.clear();closeConfirm();}}});}else openConfirm({title:t("enable_privacy_title"),message:t("enable_privacy_warning"),confirmLabel:t("confirm_enable_privacy"),danger:false,onConfirm:async()=>{if(await mutate("settings/privacy","PUT",{enabled:true})){revealedCredentials.clear();renderPeople();closeConfirm();}}}); };
   window.associateReader = (id,doorId) => { const reader=data.access_readers.find(item=>item.id===id); if(reader) mutate(`readers/${id}`,"PUT",{name:reader.name,door_id:doorId,enabled:reader.enabled}); };
   window.assignFinger = (readerId,slot) => { selectedReader=readerId; $("#fingerprint-reader").value=readerId; const user=data.users.find(item=>item.reader_id===readerId&&Number(item.slot)===Number(slot)); if(user) openFingerModal("assign",user); };
   window.deleteFingerprint = (readerId,slot) => openConfirm({title:t("delete"),message:t("confirm_delete_fingerprint",{id:slot,reader:readerName(readerId)}),onConfirm:async()=>{if(await mutate(`users/${slot}?reader_id=${encodeURIComponent(readerId)}`,"DELETE"))closeConfirm();}});
@@ -935,6 +998,8 @@
   document.querySelectorAll(".hand-finger").forEach(el=>{el.addEventListener("click",()=>selectFinger(el.dataset.finger));el.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();selectFinger(el.dataset.finger);}});});
   ["#finger-close","#finger-cancel"].forEach(id=>$(id).addEventListener("click",closeFingerModal)); $("#finger-modal").addEventListener("click",event=>event.target===$("#finger-modal")&&closeFingerModal());
   $("#keypad-start").addEventListener("click",async()=>{if(!keypadPerson)return;const reader_id=$("#keypad-reader").value;const ok=await mutate("keypad/capture","POST",{person_id:keypadPerson.id,reader_id});if(ok){keypadCapturing=true;$("#keypad-start").disabled=true;$("#keypad-status").textContent=t("capture_wait");}});
+  $("#keypad-manual-save").addEventListener("click",async()=>{if(!keypadPerson)return;const code=$("#keypad-manual-code").value.trim(),reader_id=$("#keypad-reader").value;if(!code){$("#keypad-status").textContent=t("enter_code_or_tag");$("#keypad-manual-code").focus();return;}try{if(await mutate("keypad/credentials","POST",{person_id:keypadPerson.id,reader_id,code},{inline:true}))await closeKeypadModal();}catch(error){$("#keypad-status").textContent=error.message;}});
+  $("#keypad-manual-code").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();$("#keypad-manual-save").click();}});
   ["#keypad-close","#keypad-cancel"].forEach(id=>$(id).addEventListener("click",()=>closeKeypadModal())); $("#keypad-modal").addEventListener("click",event=>event.target===$("#keypad-modal")&&closeKeypadModal());
   $("#editor-form").addEventListener("submit",async event=>{event.preventDefault();if(!editorSubmit||busy)return;const error=$("#editor-error");error.classList.remove("visible");try{await editorSubmit(new FormData(event.currentTarget));}catch(reason){error.textContent=reason.message;error.classList.add("visible");}});
   ["#editor-close","#editor-cancel"].forEach(id=>$(id).addEventListener("click",closeEditor)); $("#editor-modal").addEventListener("click",event=>event.target===$("#editor-modal")&&closeEditor());
@@ -945,9 +1010,15 @@
   $("#add-keypad").addEventListener("click",()=>openReaderEditor(null,"keypad"));
   $("#add-fingerprint-reader").addEventListener("click",()=>openReaderEditor(null,"fingerprint"));
   $("#log-retention").addEventListener("change",event=>mutate("settings/log-retention","PUT",{days:Number(event.target.value)}));
+  $("#privacy-toggle").addEventListener("click",()=>window.changePrivacyMode());
   document.addEventListener("keydown",event=>{if(event.key!=="Escape")return;if(fingerModal)closeFingerModal();else if(keypadPerson)closeKeypadModal();else if($("#editor-modal").classList.contains("open"))closeEditor();else if($("#confirm-modal").classList.contains("open"))closeConfirm();});
 
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      revealedCredentials.clear();
+      if (data?.privacy_mode) renderPeople();
+    } else refresh();
+  });
   applyLanguage();
   refresh();
   setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_INTERVAL_MS);

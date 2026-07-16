@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Treats a keypad code or tag as the credential and keeps the accompanying semantic action separate, so one credential works with every mapped keypad action.
+- Adds protected manual code/tag entry while preserving leading zeroes and opaque tag values such as `+0A1B2C3`.
+- Keeps existing action-scoped keypad credentials working until they are replaced with the new credential format.
+- Encrypts recoverable keypad credentials at rest and adds privacy-by-default temporary reveal plus a warned no-privacy panel mode that keeps them visible to administrators.
+
 ## 0.8.1
 
 - Lets managed auto-lock rules use an optional door contact sensor: closing it starts the delay, and the door locks only if it remains closed and unlocked afterwards.

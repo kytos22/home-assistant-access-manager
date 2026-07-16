@@ -69,6 +69,7 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("io.hass.version", dockerfile)
         self.assertIn("pip==26.1.2", dockerfile)
         self.assertIn("aiohttp==3.14.1", dockerfile)
+        self.assertIn("cryptography==49.0.0", dockerfile)
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
@@ -243,7 +244,7 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
             }
         )
         self.registry.add_keypad_credential(
-            self.person_id, "front_keypad", "1234", "disarm", "open"
+            self.person_id, "front_keypad", "1234"
         )
         admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
         admin.registry = self.registry
@@ -257,11 +258,118 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["person_name"], "Example Person")
         self.assertEqual(payload["action"], "lock")
 
+        self.registry.update_reader(
+            "front_keypad", "Front keypad", "front_door", config={
+                "transaction_entity": "sensor.keypad_transaction",
+                "code_entity": "sensor.keypad_code",
+                "action_entity": "sensor.keypad_action",
+                "action_map": {"arm_all_zones": "unlock"},
+            }
+        )
         self.service_calls.clear()
         await admin.process_keypad_event(
-            self.registry.reader("front_keypad"), "2", "1234", "unknown_button"
+            self.registry.reader("front_keypad"), "2", "1234", "arm_all_zones"
+        )
+        self.assertEqual(self.service_calls[0][1], "unlock")
+
+        self.service_calls.clear()
+        await admin.process_keypad_event(
+            self.registry.reader("front_keypad"), "3", "1234", "unknown_button"
         )
         self.assertEqual(self.service_calls, [])
+
+    async def test_keypad_capture_accepts_unmapped_action(self):
+        self.registry.create_reader(
+            "capture_keypad", "Capture keypad", "keypad", "front_door", {
+                "transaction_entity": "sensor.capture_transaction",
+                "code_entity": "sensor.capture_code",
+                "action_entity": "sensor.capture_action",
+                "action_map": {},
+            }
+        )
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+        admin.capture_sessions = {
+            "capture_keypad": {
+                "person_id": self.person_id,
+                "person_name": "Example Person",
+                "expires_at": APP.asyncio.get_running_loop().time() + 60,
+            }
+        }
+        await admin.process_keypad_event(
+            self.registry.reader("capture_keypad"),
+            "1", "+0A1B2C3", "arm_day_zones",
+        )
+        credential = self.registry.find_keypad_credential(
+            "capture_keypad", "+0A1B2C3", "disarm"
+        )
+        self.assertIsNotNone(credential)
+        self.assertEqual(credential["hash_version"], 2)
+        self.assertNotIn("capture_keypad", admin.capture_sessions)
+
+    async def test_manual_keypad_credential_endpoint_accepts_tag(self):
+        self.registry.create_reader(
+            "manual_keypad", "Manual keypad", "keypad", "front_door", {}
+        )
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+
+        class Request:
+            headers = {"X-Fingerprint-Admin": "1"}
+
+            async def json(self):
+                return {
+                    "person_id": self_person_id,
+                    "reader_id": "manual_keypad",
+                    "code": "+0A1B2C3",
+                }
+
+        self_person_id = self.person_id
+        response = await admin.create_keypad_credential(Request())
+        self.assertEqual(response.status, 200)
+        self.assertNotIn("+0A1B2C3", response.text)
+        credential = self.registry.find_keypad_credential(
+            "manual_keypad", "+0A1B2C3", "arm_all_zones"
+        )
+        self.assertIsNotNone(credential)
+        self.assertEqual(credential["hash_version"], 2)
+
+        class RevealRequest:
+            headers = {"X-Fingerprint-Admin": "1"}
+            match_info = {"credential_id": str(credential["id"])}
+
+        revealed = await admin.reveal_keypad_credential(RevealRequest())
+        self.assertEqual(APP.json.loads(revealed.text)["value"], "+0A1B2C3")
+        self.assertEqual(revealed.headers["Cache-Control"], "no-store, max-age=0")
+
+        with self.assertRaises(APP.web.HTTPConflict):
+            await admin.create_keypad_credential(Request())
+
+    async def test_disabling_privacy_requires_explicit_acknowledgement(self):
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+
+        class Request:
+            headers = {"X-Fingerprint-Admin": "1"}
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            async def json(self):
+                return self.payload
+
+        with self.assertRaises(APP.web.HTTPBadRequest):
+            await admin.set_privacy_mode(Request({"enabled": False}))
+        response = await admin.set_privacy_mode(
+            Request({"enabled": False, "acknowledge": True})
+        )
+        self.assertEqual(response.status, 200)
+        self.assertFalse(self.registry.privacy_mode())
+        await admin.set_privacy_mode(Request({"enabled": True}))
+        self.assertTrue(self.registry.privacy_mode())
 
     async def test_keypad_transaction_is_not_consumed_until_code_and_action_arrive(self):
         self.registry.create_reader(
@@ -413,6 +521,101 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RegistryMigrationTests(unittest.TestCase):
+    def test_pre_release_plaintext_credentials_are_encrypted_and_scrubbed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            path = Path(directory) / "plaintext-keypad-schema.db"
+            raw_secret = "+0A1B2C3"
+            connection = sqlite3.connect(path)
+            connection.executescript(
+                """
+                CREATE TABLE keypad_credentials (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    person_id INTEGER NOT NULL,
+                    reader_id TEXT NOT NULL,
+                    secret_hash TEXT NOT NULL,
+                    code_hint TEXT NOT NULL,
+                    keypad_action TEXT NOT NULL,
+                    normalized_action TEXT NOT NULL,
+                    secret_value TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(reader_id, secret_hash)
+                );
+                INSERT INTO keypad_credentials(
+                    person_id, reader_id, secret_hash, code_hint, keypad_action,
+                    normalized_action, secret_value, status, created_at, updated_at
+                ) VALUES (
+                    1, 'old_keypad', 'old-digest', 'Tag masked', 'disarm',
+                    'open', '+0A1B2C3', 'active',
+                    '2026-01-01T00:00:00+00:00',
+                    '2026-01-01T00:00:00+00:00'
+                );
+                """
+            )
+            connection.commit()
+            connection.close()
+
+            registry = APP.Registry(path)
+            row = registry.connection.execute(
+                "SELECT secret_value, secret_ciphertext "
+                "FROM keypad_credentials WHERE id = 1"
+            ).fetchone()
+            self.assertIsNone(row["secret_value"])
+            self.assertNotEqual(row["secret_ciphertext"], raw_secret)
+            self.assertEqual(
+                registry.decrypt_keypad_secret(row["secret_ciphertext"]), raw_secret
+            )
+            registry.connection.close()
+            self.assertNotIn(raw_secret.encode(), path.read_bytes())
+
+    def test_existing_keypad_credentials_are_marked_as_legacy(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            path = Path(directory) / "legacy-keypad-schema.db"
+            connection = sqlite3.connect(path)
+            connection.executescript(
+                """
+                CREATE TABLE keypad_credentials (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    person_id INTEGER NOT NULL,
+                    reader_id TEXT NOT NULL,
+                    secret_hash TEXT NOT NULL,
+                    code_hint TEXT NOT NULL,
+                    keypad_action TEXT NOT NULL,
+                    normalized_action TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(reader_id, secret_hash)
+                );
+                INSERT INTO keypad_credentials(
+                    person_id, reader_id, secret_hash, code_hint, keypad_action,
+                    normalized_action, status, created_at, updated_at
+                ) VALUES (
+                    1, 'old_keypad', 'old-digest', 'Code ••34', 'disarm',
+                    'open', 'active', '2026-01-01T00:00:00+00:00',
+                    '2026-01-01T00:00:00+00:00'
+                );
+                """
+            )
+            connection.commit()
+            connection.close()
+
+            registry = APP.Registry(path)
+            columns = {
+                row[1]: row for row in registry.connection.execute(
+                    "PRAGMA table_info(keypad_credentials)"
+                ).fetchall()
+            }
+            self.assertIn("hash_version", columns)
+            row = registry.connection.execute(
+                "SELECT hash_version FROM keypad_credentials WHERE id = 1"
+            ).fetchone()
+            self.assertEqual(row["hash_version"], 1)
+            registry.connection.close()
+
     def test_legacy_fingerprint_ids_migrate_to_original_reader(self):
         with tempfile.TemporaryDirectory() as directory:
             APP.DATA_DIR = Path(directory)
@@ -480,22 +683,135 @@ class RegistryMigrationTests(unittest.TestCase):
                     "action_entity": "sensor.example_action",
                 },
             )
-            raw_secret = "example-secret-that-must-not-appear"
+            raw_secret = "+0A1B2C3"
             registry.add_keypad_credential(
-                person_id, "example_keypad", raw_secret, "disarm", "open"
-            )
-            registry.add_keypad_credential(
-                person_id, "example_keypad", raw_secret, "arm_all_zones", "lock"
+                person_id, "example_keypad", raw_secret
             )
             self.assertNotIn(raw_secret, str(registry.people()))
-            open_credential = registry.find_keypad_credential(
+            disarm_credential = registry.find_keypad_credential(
                 "example_keypad", raw_secret, "disarm"
             )
-            lock_credential = registry.find_keypad_credential(
+            arm_credential = registry.find_keypad_credential(
                 "example_keypad", raw_secret, "arm_all_zones"
             )
-            self.assertEqual(open_credential["normalized_action"], "open")
-            self.assertEqual(lock_credential["normalized_action"], "lock")
+            self.assertEqual(disarm_credential["id"], arm_credential["id"])
+            self.assertEqual(disarm_credential["hash_version"], 2)
+            self.assertEqual(disarm_credential["code_hint"], "Tag •••2C3")
+            with self.assertRaisesRegex(ValueError, "already linked"):
+                registry.add_keypad_credential(
+                    person_id, "example_keypad", raw_secret
+                )
+            registry.connection.close()
+
+    def test_encrypted_secret_can_be_revealed_without_plaintext_storage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            path = Path(directory) / "privacy.db"
+            registry = APP.Registry(path)
+            person_id = registry.create_person("Example Person")
+            registry.create_reader(
+                "example_keypad", "Example Keypad", "keypad", "", {}
+            )
+            registry.add_keypad_credential(
+                person_id, "example_keypad", "+0A1B2C3"
+            )
+            hidden = registry.people()[0]["credentials"][0]
+            self.assertIsNone(hidden["display_value"])
+            self.assertTrue(hidden["revealable"])
+            self.assertEqual(
+                registry.reveal_keypad_credential(1), "+0A1B2C3"
+            )
+            stored = registry.connection.execute(
+                "SELECT secret_ciphertext FROM keypad_credentials WHERE id = 1"
+            ).fetchone()["secret_ciphertext"]
+            self.assertNotEqual(stored, "+0A1B2C3")
+            self.assertNotIn(
+                b"+0A1B2C3", path.read_bytes()
+            )
+            self.assertIsNotNone(
+                registry.find_keypad_credential(
+                    "example_keypad", "+0A1B2C3", "disarm"
+                )
+            )
+            registry.set_privacy_mode(False)
+            visible = registry.people()[0]["credentials"][0]
+            self.assertEqual(visible["display_value"], "+0A1B2C3")
+            registry.set_privacy_mode(True)
+            self.assertIsNone(
+                registry.people()[0]["credentials"][0]["display_value"]
+            )
+            self.assertTrue((Path(directory) / "credential_encryption.key").is_file())
+            registry.connection.close()
+
+    def test_keypad_pin_is_opaque_and_preserves_leading_zeroes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            registry = APP.Registry(Path(directory) / "pins.db")
+            person_id = registry.create_person("Example Person")
+            registry.create_reader(
+                "example_keypad", "Example Keypad", "keypad", "", {}
+            )
+            short_id = registry.add_keypad_credential(
+                person_id, "example_keypad", "0123"
+            )
+            long_id = registry.add_keypad_credential(
+                person_id, "example_keypad", "00123456"
+            )
+            self.assertNotEqual(short_id, long_id)
+            self.assertIsNotNone(
+                registry.find_keypad_credential(
+                    "example_keypad", "0123", "disarm"
+                )
+            )
+            self.assertIsNone(
+                registry.find_keypad_credential(
+                    "example_keypad", "123", "disarm"
+                )
+            )
+            for invalid in ("", "unknown", "unavailable", "x" * 129, "12\n34"):
+                with self.assertRaises(ValueError):
+                    registry.add_keypad_credential(
+                        person_id, "example_keypad", invalid
+                    )
+            registry.connection.close()
+
+    def test_legacy_action_scoped_keypad_credential_still_matches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            registry = APP.Registry(Path(directory) / "legacy-keypad.db")
+            person_id = registry.create_person("Example Person")
+            registry.create_reader(
+                "example_keypad", "Example Keypad", "keypad", "", {}
+            )
+            digest = registry.legacy_credential_hash(
+                "example_keypad", "1234", "disarm"
+            )
+            timestamp = APP.now_iso()
+            registry.connection.execute(
+                """
+                INSERT INTO keypad_credentials(
+                    person_id, reader_id, secret_hash, hash_version, code_hint,
+                    keypad_action, normalized_action, status, created_at, updated_at
+                ) VALUES (?, ?, ?, 1, ?, ?, ?, 'active', ?, ?)
+                """,
+                (
+                    person_id, "example_keypad", digest, "Code ••34",
+                    "disarm", "open", timestamp, timestamp,
+                ),
+            )
+            registry.connection.commit()
+            self.assertIsNotNone(
+                registry.find_keypad_credential(
+                    "example_keypad", "1234", "disarm"
+                )
+            )
+            self.assertIsNone(
+                registry.find_keypad_credential(
+                    "example_keypad", "1234", "arm_all_zones"
+                )
+            )
+            credential = registry.people()[0]["credentials"][0]
+            self.assertTrue(credential["legacy_action_scope"])
             registry.connection.close()
 
 

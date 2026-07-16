@@ -11,7 +11,7 @@ Access Manager does not connect directly to physical hardware. Every reader, key
 | Device type | Support level | Requirements |
 | --- | --- | --- |
 | Fingerprint terminal | Reference hardware | [ESPHome Fingerprint Access Reader](https://github.com/kytos22/esphome-fingerprint-access-reader) on a Waveshare ESP32-C6-Touch-LCD-1.47 with a Grow-compatible UART fingerprint sensor. |
-| Zigbee/MQTT keypad | Protocol compatible | Three Home Assistant entities that expose transaction, code/tag and physical action. There is no model whitelist. |
+| Zigbee/MQTT keypad | Protocol compatible | Three Home Assistant entities that expose transaction, code/tag and semantic action. There is no model whitelist. |
 | Door contact | Optional for auto-lock | A `binary_sensor.*` entity whose Home Assistant device class is `door`. |
 | Door actuator | Entity compatible | A supported `lock`, `switch`, `button`, `input_button` or `cover` entity. |
 
@@ -29,7 +29,7 @@ The image identifies the exact display/controller used by the reference firmware
 - English and Spanish interface.
 - Explicit links to Home Assistant `person.*` entities.
 - Multiple fingerprint readers with independent physical ID spaces.
-- Per-person keypad capture using `code/tag + physical action button`; the keypad itself does not know users.
+- Per-person keypad credentials identified by `code/tag`, with physical capture or protected manual entry; the keypad itself does not know users.
 - Debounced keypad packet assembly that waits for transaction, code/tag, and action before consuming an attempt.
 - Keyed HMAC storage for keypad credentials; plaintext secrets are never persisted.
 - Doors backed by an existing Home Assistant `lock`, `switch`, `button`, `input_button` or `cover` entity.
@@ -82,6 +82,17 @@ The Home Assistant app configuration page provides a **Log level** option:
 - `debug` adds diagnostic detail when investigating a problem.
 
 Changing this option requires restarting the app. It controls the application log shown by Home Assistant, not the activity-history retention configured inside Access Manager. Routine HTTP requests are not written to the app log.
+
+### Panel settings
+
+The administrator-only **Settings** tab provides **Privacy mode**, enabled by default:
+
+- Every newly registered code and tag is encrypted at rest, independently from the privacy display setting. Keyed HMAC remains the authentication mechanism.
+- With privacy enabled, credentials are masked and an administrator can reveal one for 15 seconds with the view button.
+- Before disabling privacy, Access Manager warns how many current encrypted credentials will become continuously visible, how many legacy HMAC-only credentials cannot be revealed, and that future credentials will also be shown automatically.
+- With privacy disabled, recoverable credentials remain encrypted in storage but are continuously visible to panel administrators.
+
+The panel never writes decrypted values to application or activity logs. A value must exist briefly in the administrator's browser memory and page when it is displayed.
 
 ### Updating
 
@@ -154,13 +165,15 @@ actions:
       message: "{{ trigger.event.data.action_error }}"
 ```
 
-Fingerprint readers use the door default unless their event requests `open`, `unlock` or `lock`. Keypad credentials retain the specific code/tag and raw action-button combination captured during enrollment, so the same code may be enrolled separately with an unlock/open button and a lock button.
+Fingerprint readers use the door default unless their event requests `open`, `unlock` or `lock`. A keypad code or tag is enrolled once per keypad. The separate keypad action determines whether Access Manager requests `open`, `unlock`, `lock`, or ignores the attempt according to the current action mapping.
 
 ### Dumb keypad model
 
-The keypad only reports a transaction, a code/tag, and the raw button value. It never stores or resolves a user. Access Manager stores a keyed HMAC for the `reader + code/tag + raw button` combination and links that credential to a person. At authentication time the credential identifies the person, while the keypad reader's current button mapping determines the requested door action. Changing `disarm` from `open` to `lock`, for example, immediately changes the behavior of credentials already captured with that button.
+The keypad reports a transaction, a code/tag, and a semantic action such as `disarm` or `arm_all_zones`. It never stores or resolves an Access Manager user. Access Manager stores a keyed HMAC for the `reader + code/tag` combination and links that credential to a person. At authentication time the code/tag identifies the person, while the keypad reader's current action mapping determines the requested door action. Changing `disarm` from `open` to `lock`, for example, immediately changes the behavior of every credential on that keypad.
 
-Buttons with no current mapping are ignored and logged. They never fall through to an arbitrary Home Assistant service.
+Codes and tags can be captured from the physical keypad or entered manually from the user credential dialog. Values are treated as opaque strings, preserving leading zeroes in PINs and supporting tag values such as `+0A1B2C3`. Access Manager does not impose a four-digit PIN limit; the physical keypad and Zigbee/MQTT integration determine which PIN lengths they can emit.
+
+Actions with no current mapping are ignored and logged. They never fall through to an arbitrary Home Assistant service.
 
 The three Home Assistant entities may update a few milliseconds apart. Access Manager listens to all three, waits briefly for the packet to settle, and only marks a transaction as consumed after transaction, code/tag, and action are all present.
 
@@ -200,14 +213,14 @@ The shared entity contract and setup sequence are documented in [INTEGRATION.md]
 
 ## Data and backups
 
-The add-on stores its SQLite database in `/data`, which is included in Home Assistant add-on backups. Keypad credential matching uses a random installation-local HMAC key stored in that same data directory.
+The add-on stores its SQLite database in `/data`, which is included in Home Assistant add-on backups. Keypad credential matching uses a random installation-local HMAC key. Recoverable credential values are stored only as authenticated ciphertext, using a separate installation-local encryption key with restrictive file permissions. Both keys are held in `/data` so backups can restore the installation; protect Home Assistant backups accordingly.
 
-Deleting the add-on data also deletes identity mappings and keypad credential digests. It does not delete templates held by fingerprint sensors.
+Deleting the add-on data also deletes identity mappings, credential digests, encrypted values, and the encryption key. It does not delete templates held by fingerprint sensors.
 
 ## Development
 
 ```bash
-python -m pip install aiohttp==3.12.15 pyyaml
+python -m pip install aiohttp==3.14.1 cryptography==49.0.0 pyyaml
 python -m unittest discover -s tests -v
 node tests/check_ui.mjs
 ```
