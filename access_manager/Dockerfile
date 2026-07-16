@@ -9,9 +9,14 @@ LABEL \
     io.hass.type="app" \
     io.hass.arch="${BUILD_ARCH}"
 
-RUN python3 -m pip install --no-cache-dir --upgrade \
-    pip==26.1.2 \
-    aiohttp==3.14.1
+RUN apk add --no-cache libffi \
+    && apk add --no-cache --virtual .credential-build-deps \
+        cargo gcc libffi-dev musl-dev openssl-dev pkgconfig python3-dev \
+    && python3 -m pip install --no-cache-dir --upgrade \
+        pip==26.1.2 \
+        aiohttp==3.14.1 \
+        cryptography==49.0.0 \
+    && apk del .credential-build-deps
 
 COPY app /app
 COPY run.sh /run.sh

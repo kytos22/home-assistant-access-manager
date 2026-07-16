@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
+from cryptography.fernet import Fernet, InvalidToken
 
 
 PORT = 8099
@@ -30,13 +31,16 @@ LOG_LEVELS = {
 }
 
 
-def configured_log_level(path=OPTIONS_PATH):
+def configured_options(path=OPTIONS_PATH):
     try:
         options = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return "info"
-    if not isinstance(options, dict):
-        return "info"
+        return {}
+    return options if isinstance(options, dict) else {}
+
+
+def configured_log_level(path=OPTIONS_PATH):
+    options = configured_options(path)
     value = str(options.get("log_level", "info")).strip().lower()
     return value if value in LOG_LEVELS else "info"
 
@@ -121,6 +125,7 @@ def normalized(value):
 
 class Registry:
     def __init__(self, path):
+        self._credential_cipher = None
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.connection = sqlite3.connect(path)
         self.connection.row_factory = sqlite3.Row
@@ -193,6 +198,8 @@ class Registry:
                 person_id INTEGER NOT NULL REFERENCES people(id),
                 reader_id TEXT NOT NULL REFERENCES readers(id),
                 secret_hash TEXT NOT NULL,
+                hash_version INTEGER NOT NULL DEFAULT 2,
+                secret_ciphertext TEXT,
                 code_hint TEXT NOT NULL,
                 keypad_action TEXT NOT NULL,
                 normalized_action TEXT NOT NULL,
@@ -301,9 +308,48 @@ class Registry:
             self.connection.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_people_ha_person ON people(ha_person_entity_id)"
             )
+        keypad_credential_columns = {
+            row[1] for row in self.connection.execute(
+                "PRAGMA table_info(keypad_credentials)"
+            ).fetchall()
+        }
+        migrated_plaintext_credentials = False
+        if "hash_version" not in keypad_credential_columns:
+            # Version 1 credentials included the keypad action in the HMAC.
+            # Keep that scope so existing installations remain usable.
+            self.connection.execute(
+                "ALTER TABLE keypad_credentials "
+                "ADD COLUMN hash_version INTEGER NOT NULL DEFAULT 1"
+            )
+        if "secret_ciphertext" not in keypad_credential_columns:
+            self.connection.execute(
+                "ALTER TABLE keypad_credentials ADD COLUMN secret_ciphertext TEXT"
+            )
+        if "secret_value" in keypad_credential_columns:
+            # Migrate databases created by the pre-release plaintext draft.
+            self.connection.execute("PRAGMA secure_delete = ON")
+            rows = self.connection.execute(
+                "SELECT id, secret_value FROM keypad_credentials "
+                "WHERE secret_value IS NOT NULL AND secret_value != ''"
+            ).fetchall()
+            for row in rows:
+                self.connection.execute(
+                    "UPDATE keypad_credentials SET secret_ciphertext = ? WHERE id = ?",
+                    (self.encrypt_keypad_secret(row["secret_value"]), row["id"]),
+                )
+            self.connection.execute(
+                "UPDATE keypad_credentials SET secret_value = NULL"
+            )
+            migrated_plaintext_credentials = bool(rows)
         self.connection.execute(
             """
             INSERT INTO settings(key, value) VALUES ('initial_seed_complete', '1')
+            ON CONFLICT(key) DO NOTHING
+            """
+        )
+        self.connection.execute(
+            """
+            INSERT INTO settings(key, value) VALUES ('privacy_mode', '1')
             ON CONFLICT(key) DO NOTHING
             """
         )
@@ -327,6 +373,11 @@ class Registry:
             "UPDATE deletion_queue SET state = 'queued' WHERE state = 'sent'"
         )
         self.connection.commit()
+        if migrated_plaintext_credentials:
+            # Remove both old database pages and WAL frames that could retain
+            # values from the pre-release plaintext draft.
+            self.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            self.connection.execute("VACUUM")
         self.bootstrap_access_model()
         self.purge_events()
 
@@ -612,15 +663,26 @@ class Registry:
             for credential in keypad_credentials:
                 if credential["person_id"] != person["id"]:
                     continue
+                legacy_action_scope = int(credential.get("hash_version", 1)) == 1
+                ciphertext = credential.get("secret_ciphertext")
+                display_value = None
+                if ciphertext and not self.privacy_mode():
+                    try:
+                        display_value = self.decrypt_keypad_secret(ciphertext)
+                    except ValueError:
+                        display_value = None
                 person["credentials"].append(
                     {
                         "id": f"keypad:{credential['id']}",
                         "type": "keypad",
                         "reader_id": credential["reader_id"],
                         "code_hint": credential["code_hint"],
-                        "label": f"{credential['code_hint']} · {credential['normalized_action']}",
+                        "display_value": display_value,
+                        "revealable": bool(ciphertext),
+                        "label": credential["code_hint"],
                         "keypad_action": credential["keypad_action"],
                         "normalized_action": credential["normalized_action"],
+                        "legacy_action_scope": legacy_action_scope,
                         "status": credential["status"],
                     }
                 )
@@ -843,13 +905,88 @@ class Registry:
             self.set_setting("credential_hmac_key", key)
         return bytes.fromhex(key)
 
-    def credential_hash(self, reader_id, code, keypad_action):
-        message = f"{reader_id}\0{str(code).strip()}\0{keypad_action}".encode("utf-8")
+    def credential_cipher(self):
+        if self._credential_cipher is not None:
+            return self._credential_cipher
+        key_path = DATA_DIR / "credential_encryption.key"
+        try:
+            key = key_path.read_bytes().strip()
+        except FileNotFoundError:
+            generated = Fernet.generate_key()
+            try:
+                descriptor = os.open(
+                    key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                )
+            except FileExistsError:
+                key = key_path.read_bytes().strip()
+            else:
+                try:
+                    os.write(descriptor, generated + b"\n")
+                finally:
+                    os.close(descriptor)
+                key = generated
+        try:
+            os.chmod(key_path, 0o600)
+            self._credential_cipher = Fernet(key)
+        except (OSError, ValueError) as error:
+            raise RuntimeError("Credential encryption key is invalid") from error
+        return self._credential_cipher
+
+    def encrypt_keypad_secret(self, code):
+        value = self.clean_keypad_secret(code)
+        return self.credential_cipher().encrypt(value.encode("utf-8")).decode("ascii")
+
+    def decrypt_keypad_secret(self, ciphertext):
+        if not ciphertext:
+            raise ValueError("This credential must be registered again before it can be viewed")
+        try:
+            return self.credential_cipher().decrypt(
+                str(ciphertext).encode("ascii")
+            ).decode("utf-8")
+        except (InvalidToken, UnicodeDecodeError, ValueError) as error:
+            raise ValueError("The encrypted credential could not be read") from error
+
+    def reveal_keypad_credential(self, credential_id):
+        row = self.connection.execute(
+            "SELECT secret_ciphertext FROM keypad_credentials "
+            "WHERE id = ? AND status = 'active'",
+            (credential_id,),
+        ).fetchone()
+        if not row:
+            raise LookupError("Credential not found")
+        return self.decrypt_keypad_secret(row["secret_ciphertext"])
+
+    def privacy_mode(self):
+        return self.setting("privacy_mode") != "0"
+
+    def set_privacy_mode(self, enabled):
+        self.set_setting("privacy_mode", "1" if enabled else "0")
+
+    @staticmethod
+    def clean_keypad_secret(code):
+        value = "" if code is None else str(code).strip()
+        if (
+            not value
+            or value.lower() in {"unknown", "unavailable"}
+            or len(value) > 128
+            or any(ord(char) < 32 or ord(char) == 127 for char in value)
+        ):
+            raise ValueError("Enter a valid code or tag up to 128 characters")
+        return value
+
+    def credential_hash(self, reader_id, code):
+        value = self.clean_keypad_secret(code)
+        message = f"v2\0{reader_id}\0{value}".encode("utf-8")
+        return hmac.new(self.credential_key(), message, hashlib.sha256).hexdigest()
+
+    def legacy_credential_hash(self, reader_id, code, keypad_action):
+        value = self.clean_keypad_secret(code)
+        message = f"{reader_id}\0{value}\0{keypad_action}".encode("utf-8")
         return hmac.new(self.credential_key(), message, hashlib.sha256).hexdigest()
 
     @staticmethod
     def code_hint(code):
-        value = str(code or "").strip()
+        value = "" if code is None else str(code).strip()
         if value.startswith("+"):
             return f"Tag •••{value[-3:]}"
         return f"Code ••{value[-2:]}" if value else "Code"
@@ -864,40 +1001,58 @@ class Registry:
             ).fetchall()
         ]
 
-    def add_keypad_credential(self, person_id, reader_id, code, keypad_action, action_name):
+    def add_keypad_credential(self, person_id, reader_id, code):
         if not self.person(person_id):
             raise ValueError("Person not found")
         reader = self.reader(reader_id)
         if not reader or reader["reader_type"] != "keypad":
             raise ValueError("Keypad not found")
-        digest = self.credential_hash(reader_id, code, keypad_action)
+        value = self.clean_keypad_secret(code)
+        digest = self.credential_hash(reader_id, value)
         timestamp = now_iso()
         try:
             cursor = self.connection.execute(
                 """
                 INSERT INTO keypad_credentials(
-                    person_id, reader_id, secret_hash, code_hint, keypad_action,
-                    normalized_action, status, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?)
+                    person_id, reader_id, secret_hash, hash_version, secret_ciphertext,
+                    code_hint, keypad_action, normalized_action, status,
+                    created_at, updated_at
+                ) VALUES (?, ?, ?, 2, ?, ?, '', '', 'active', ?, ?)
                 """,
                 (
-                    person_id, reader_id, digest, self.code_hint(code), keypad_action,
-                    action_name, timestamp, timestamp,
+                    person_id, reader_id, digest,
+                    self.encrypt_keypad_secret(value),
+                    self.code_hint(value),
+                    timestamp, timestamp,
                 ),
             )
             self.connection.commit()
             return cursor.lastrowid
         except sqlite3.IntegrityError as error:
-            raise ValueError("That code and action button are already linked") from error
+            raise ValueError("That code or tag is already linked to this keypad") from error
 
     def find_keypad_credential(self, reader_id, code, keypad_action):
-        digest = self.credential_hash(reader_id, code, keypad_action)
+        digest = self.credential_hash(reader_id, code)
         row = self.connection.execute(
             """
             SELECT * FROM keypad_credentials
-            WHERE reader_id = ? AND secret_hash = ? AND status = 'active'
+            WHERE reader_id = ? AND secret_hash = ? AND hash_version = 2
+              AND status = 'active'
             """,
             (reader_id, digest),
+        ).fetchone()
+        if row:
+            return dict(row)
+        legacy_digest = self.legacy_credential_hash(
+            reader_id, code, keypad_action
+        )
+        row = self.connection.execute(
+            """
+            SELECT * FROM keypad_credentials
+            WHERE reader_id = ? AND secret_hash = ? AND hash_version = 1
+              AND status = 'active'
+            """,
+            (reader_id, legacy_digest),
         ).fetchone()
         return dict(row) if row else None
 
@@ -1801,30 +1956,23 @@ class FingerprintAdmin:
     async def process_keypad_event(self, reader, transaction, code, keypad_action):
         config = reader.get("config", {})
         action_map = config.get("action_map", {})
-        if keypad_action not in action_map:
-            self.registry.add_event(
-                "keypad_action_ignored", detail=f"{reader['name']} · {keypad_action}"
-            )
-            return
-        action_name = str(action_map[keypad_action]).strip().lower()
         captures = {item["reader_id"]: item for item in self.active_captures()}
         capture = captures.get(reader["id"])
         if capture:
             try:
-                self.validate_reader_door_action(reader, action_name)
                 credential_id = self.registry.add_keypad_credential(
-                    capture["person_id"], reader["id"], code, keypad_action, action_name
+                    capture["person_id"], reader["id"], code
                 )
                 self.registry.add_event(
                     "keypad_credential_added", detail=(
-                        f"{capture['person_name']} · {reader['name']} · {action_name}"
+                        f"{capture['person_name']} · {reader['name']} · captured"
                     ),
                 )
                 self.ha.management_message = (
                         f"Credential saved for {capture['person_name']} on {reader['name']}"
                 )
                 LOGGER.info(
-                    "Credencial keypad %d capturada para persona %d",
+                    "Keypad credential %d captured for person %d",
                     credential_id, capture["person_id"],
                 )
             except ValueError as error:
@@ -1833,6 +1981,13 @@ class FingerprintAdmin:
             finally:
                 self.capture_sessions.pop(reader["id"], None)
             return
+
+        if keypad_action not in action_map:
+            self.registry.add_event(
+                "keypad_action_ignored", detail=f"{reader['name']} · {keypad_action}"
+            )
+            return
+        action_name = str(action_map[keypad_action]).strip().lower()
 
         credential = self.registry.find_keypad_credential(
             reader["id"], code, keypad_action
@@ -1931,7 +2086,7 @@ class FingerprintAdmin:
         return web.FileResponse("/app/index.html")
 
     async def health(self, _request):
-        return web.json_response(
+        response = web.json_response(
             {
                 "status": "ok",
                 "version": APP_VERSION,
@@ -1939,6 +2094,9 @@ class FingerprintAdmin:
                 "ha_people_api": self.ha.people_api_ready,
             }
         )
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
 
     async def state(self, _request):
         reader = {}
@@ -2016,9 +2174,10 @@ class FingerprintAdmin:
             automation["state"] = entity_state.get("state", "missing")
         ha_people = self.ha.ha_people()
         self.registry.auto_link_ha_people(ha_people)
-        return web.json_response(
+        response = web.json_response(
             {
                 "version": APP_VERSION,
+                "privacy_mode": self.registry.privacy_mode(),
                 "connected": self.ha.connected,
                 "reader_online": self.ha.device_online("display1"),
                 "ready": all(
@@ -2054,6 +2213,9 @@ class FingerprintAdmin:
                 "management_message": self.ha.management_message,
             }
         )
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
 
     async def enroll(self, request):
         self.require_admin_request(request)
@@ -2292,9 +2454,41 @@ class FingerprintAdmin:
             "expires_at": asyncio.get_running_loop().time() + 90,
         }
         self.ha.management_message = (
-            f"Waiting for a code or tag and action button on {reader['name']}"
+            f"Waiting for a code or tag from {reader['name']}"
         )
         return web.json_response({"ok": True, "expires_in": 90})
+
+    async def create_keypad_credential(self, request):
+        self.require_admin_request(request)
+        payload = await request.json()
+        try:
+            person_id = int(payload.get("person_id"))
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text="Invalid person")
+        reader_id = str(payload.get("reader_id", ""))
+        person = self.registry.person(person_id)
+        reader = self.registry.reader(reader_id)
+        if not person:
+            raise web.HTTPNotFound(text="Person not found")
+        if not reader or reader["reader_type"] != "keypad" or not reader["enabled"]:
+            raise web.HTTPBadRequest(text="Select an enabled keypad")
+        try:
+            code = self.registry.clean_keypad_secret(payload.get("code"))
+            credential_id = self.registry.add_keypad_credential(
+                person_id, reader_id, code
+            )
+        except ValueError as error:
+            if "already linked" in str(error):
+                raise web.HTTPConflict(text=str(error))
+            raise web.HTTPBadRequest(text=str(error))
+        self.registry.add_event(
+            "keypad_credential_added",
+            detail=f"{person['name']} · {reader['name']} · manual",
+        )
+        self.ha.management_message = (
+            f"Credential saved for {person['name']} on {reader['name']}"
+        )
+        return web.json_response({"ok": True, "credential_id": credential_id})
 
     async def cancel_keypad_capture(self, request):
         self.require_admin_request(request)
@@ -2325,8 +2519,41 @@ class FingerprintAdmin:
         credential_id = int(request.match_info["credential_id"])
         if not self.registry.delete_keypad_credential(credential_id):
             raise web.HTTPNotFound(text="Credential not found")
-        self.registry.add_event("keypad_credential_deleted", detail=f"Credencial {credential_id}")
+        self.registry.add_event(
+            "keypad_credential_deleted", detail=f"Keypad credential {credential_id}"
+        )
         return web.json_response({"ok": True})
+
+    async def reveal_keypad_credential(self, request):
+        self.require_admin_request(request)
+        try:
+            credential_id = int(request.match_info["credential_id"])
+            value = self.registry.reveal_keypad_credential(credential_id)
+        except (TypeError, ValueError) as error:
+            raise web.HTTPConflict(text=str(error))
+        except LookupError as error:
+            raise web.HTTPNotFound(text=str(error))
+        response = web.json_response({"value": value})
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        return response
+
+    async def set_privacy_mode(self, request):
+        self.require_admin_request(request)
+        payload = await request.json()
+        enabled = payload.get("enabled")
+        if not isinstance(enabled, bool):
+            raise web.HTTPBadRequest(text="Privacy mode must be true or false")
+        if not enabled and payload.get("acknowledge") is not True:
+            raise web.HTTPBadRequest(
+                text="Disabling privacy requires explicit acknowledgement"
+            )
+        self.registry.set_privacy_mode(enabled)
+        self.registry.add_event(
+            "privacy_mode_changed",
+            detail="enabled" if enabled else "disabled",
+        )
+        return web.json_response({"ok": True, "privacy_mode": enabled})
 
     async def create_door(self, request):
         self.require_admin_request(request)
@@ -2714,6 +2941,9 @@ class FingerprintAdmin:
             self.create_ha_person_for_local,
         )
         app.router.add_post("/api/keypad/capture", self.start_keypad_capture)
+        app.router.add_post(
+            "/api/keypad/credentials", self.create_keypad_credential
+        )
         app.router.add_delete("/api/keypad/capture/{reader_id}", self.cancel_keypad_capture)
         app.router.add_post(
             "/api/keypads/{reader_id}/action-learning",
@@ -2726,6 +2956,10 @@ class FingerprintAdmin:
         app.router.add_delete(
             "/api/keypad/credentials/{credential_id}", self.delete_keypad_credential
         )
+        app.router.add_post(
+            "/api/keypad/credentials/{credential_id}/reveal",
+            self.reveal_keypad_credential,
+        )
         app.router.add_post("/api/doors", self.create_door)
         app.router.add_put("/api/doors/{door_id}", self.update_door)
         app.router.add_post("/api/doors/{door_id}/test", self.test_door_action)
@@ -2736,6 +2970,7 @@ class FingerprintAdmin:
             "/api/automations/{automation_id}", self.delete_managed_automation
         )
         app.router.add_put("/api/settings/log-retention", self.set_log_retention)
+        app.router.add_put("/api/settings/privacy", self.set_privacy_mode)
         app.on_startup.append(self.startup)
         app.on_cleanup.append(self.cleanup)
         return app
@@ -2743,7 +2978,11 @@ class FingerprintAdmin:
 
 if __name__ == "__main__":
     admin = FingerprintAdmin()
-    LOGGER.info("Starting Access Manager %s with %s logging", APP_VERSION, LOG_LEVEL)
+    LOGGER.info(
+        "Starting Access Manager %s with %s logging and privacy mode %s",
+        APP_VERSION, LOG_LEVEL,
+        "enabled" if admin.registry.privacy_mode() else "disabled",
+    )
     # Home Assistant Ingress reaches this process over the private app network;
     # config.yaml deliberately exposes no host port.
     web.run_app(

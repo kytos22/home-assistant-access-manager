@@ -1,30 +1,30 @@
-# Integración con ESPHome Fingerprint Access Reader
+# ESPHome Fingerprint Access Reader integration
 
-Este add-on se integra con el firmware [ESPHome Fingerprint Access Reader](https://github.com/kytos22/esphome-fingerprint-access-reader) a través de entidades que Home Assistant descubre desde ESPHome. No hay conexión directa por IP ni secretos compartidos entre ambos proyectos.
+This app integrates with [ESPHome Fingerprint Access Reader](https://github.com/kytos22/esphome-fingerprint-access-reader) through entities discovered by Home Assistant from ESPHome. The two projects do not use a direct IP connection or shared secrets.
 
-## Configuración
+## Configuration
 
-1. Instala y adopta el firmware en Home Assistant.
-2. Crea un lector de tipo **Fingerprint** en Access Manager.
-3. Asigna las entidades del lector: evento de acceso, evento de gestión, registro de nombres y controles de enrolamiento/borrado.
-4. Asocia el lector a una puerta y registra usuarios y huellas desde Access Manager.
+1. Install and adopt the firmware in Home Assistant.
+2. Create a **Fingerprint** reader in Access Manager.
+3. Assign the reader entities: access event, management event, name registry, and enrollment/deletion controls.
+4. Associate the reader with a door and manage users and fingerprints from Access Manager.
 
-## Contrato de eventos
+## Event contract
 
-El firmware publica en la entidad de evento de acceso:
+The firmware publishes the following values through its access-event entity:
 
 ```text
 matched|<sequence>|<fingerprint id>|<confidence>|<requested action>
 local_action|<sequence>|lock
 ```
 
-`requested action` solo puede ser `default`, `open`, `unlock` o `lock`. Las acciones locales de la pantalla solo pueden solicitar `lock`. Access Manager comprueba la relación lector-puerta, las capacidades de la entidad de puerta y la asociación de la huella antes de ejecutar una acción.
+`requested action` can only be `default`, `open`, `unlock`, or `lock`. Local display controls can only request `lock`. Before executing an action, Access Manager verifies the reader-to-door association, the capabilities reported by the door entity, and the fingerprint identity mapping.
 
-Para mostrar el nombre localmente, el add-on escribe en la entidad de registro:
+Access Manager writes the following commands to the name-registry entity so the reader can display local identity information:
 
 ```text
 set|<id>|<person name>|<finger key>
 delete|<id>
 ```
 
-Los cambios incompatibles en esos nombres de entidades o en estos formatos requieren una versión coordinada de ambos proyectos.
+Incompatible changes to these entity mappings or event formats require coordinated versions of both projects.

@@ -6,8 +6,9 @@ Access Manager is an administrator-only Home Assistant add-on for managing peopl
 
 - Links every local identity to a Home Assistant `person.*` entity.
 - Manages several fingerprint readers with independent physical ID spaces.
-- Captures keypad credentials as `code/tag + action button` combinations.
-- Stores keypad secrets as keyed HMAC digests, never as plaintext.
+- Registers keypad `code/tag` credentials through physical capture or protected manual entry, independently from the requested keypad action.
+- Uses keyed HMAC digests for keypad matching and authenticated encryption for recoverable credential display.
+- Offers privacy-by-default temporary reveal and a warned administrator-only mode that keeps credentials visible without storing them as plaintext.
 - Requires each door to reference an actionable Home Assistant entity.
 - Directly executes the capability-checked door action after authorization.
 - Supports a per-door default plus fingerprint/keypad `open`, `unlock`, and `lock` requests.
@@ -20,6 +21,6 @@ Access Manager is an administrator-only Home Assistant add-on for managing peopl
 
 Fresh installations start empty. No user, reader, door, entity ID, network address or credential is bundled.
 
-Fingerprint templates remain inside each physical sensor. Access Manager stores only identity metadata, reader mappings and protected keypad credential digests in `/data`.
+Fingerprint templates remain inside each physical sensor. Access Manager stores identity metadata, reader mappings, protected keypad credential digests, and encrypted recoverable credential values in `/data`.
 
 Full installation, supported-device and configuration documentation is available in the [repository README](https://github.com/kytos22/home-assistant-access-manager#readme).
