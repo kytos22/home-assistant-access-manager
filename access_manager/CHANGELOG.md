@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.2
 
 - Treats a keypad code or tag as the credential and keeps the accompanying semantic action separate, so one credential works with every mapped keypad action.
 - Adds protected manual code/tag entry while preserving leading zeroes and opaque tag values such as `+0A1B2C3`.
