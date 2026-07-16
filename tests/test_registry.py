@@ -1,4 +1,5 @@
 import importlib.util
+import re
 import sqlite3
 import tempfile
 import unittest
@@ -12,6 +13,18 @@ SPEC.loader.exec_module(APP)
 
 
 class RegistryTests(unittest.TestCase):
+    def test_manifest_version_has_matching_changelog_entry(self):
+        root = Path(__file__).parents[1]
+        manifest = (root / "access_manager" / "config.yaml").read_text(
+            encoding="utf-8"
+        )
+        changelog = (root / "access_manager" / "CHANGELOG.md").read_text(
+            encoding="utf-8"
+        )
+        match = re.search(r'^version:\s*"([0-9]+\.[0-9]+\.[0-9]+)"$', manifest, re.M)
+        self.assertIsNotNone(match)
+        self.assertIn(f"## {match.group(1)}", changelog)
+
     def test_clean_install_starts_empty(self):
         with tempfile.TemporaryDirectory() as directory:
             APP.DATA_DIR = Path(directory)
@@ -20,6 +33,7 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(registry.people(), [])
             self.assertEqual(registry.readers(), [])
             self.assertEqual(registry.doors(), [])
+            self.assertEqual(registry.managed_automations(), [])
             self.assertEqual(registry.events(), [])
             self.assertEqual(registry.log_retention_days(), 30)
             registry.connection.close()
@@ -187,6 +201,97 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
             self.registry.reader("front_keypad"), "2", "1234", "unknown_button"
         )
         self.assertEqual(self.service_calls, [])
+
+    async def test_keypad_transaction_is_not_consumed_until_code_and_action_arrive(self):
+        self.registry.create_reader(
+            "packet_keypad", "Packet keypad", "keypad", "front_door", {
+                "transaction_entity": "sensor.packet_transaction",
+                "code_entity": "sensor.packet_code",
+                "action_entity": "sensor.packet_action",
+                "action_map": {"disarm": "open"},
+            }
+        )
+        self.ha.states.update({
+            "sensor.packet_transaction": {"state": "17"},
+            "sensor.packet_code": {"state": ""},
+            "sensor.packet_action": {"state": "disarm"},
+        })
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+        admin.capture_sessions = {}
+        admin.keypad_learning_sessions = {}
+        admin.last_keypad_actions = {}
+        processed = []
+
+        async def process(reader, transaction, code, action):
+            processed.append((reader["id"], transaction, code, action))
+
+        admin.process_keypad_event = process
+        self.assertFalse(await admin.process_keypad_packet("packet_keypad"))
+        self.assertIsNone(self.registry.setting("reader_transaction:packet_keypad"))
+
+        self.ha.states["sensor.packet_code"]["state"] = "1234"
+        self.assertTrue(await admin.process_keypad_packet("packet_keypad"))
+        self.assertEqual(
+            processed, [("packet_keypad", "17", "1234", "disarm")]
+        )
+        self.assertEqual(
+            self.registry.setting("reader_transaction:packet_keypad"), "17"
+        )
+        self.assertFalse(await admin.process_keypad_packet("packet_keypad"))
+        self.assertEqual(len(processed), 1)
+
+    async def test_auto_lock_config_is_native_and_ownership_marked(self):
+        door = self.registry.doors()[0]
+        config_id = APP.FingerprintAdmin.auto_lock_automation_id(door["id"])
+        config = APP.FingerprintAdmin.build_auto_lock_config(
+            door, config_id, 10
+        )
+        self.assertEqual(config["id"], "access_manager_auto_lock_front_door")
+        self.assertEqual(config["triggers"][0]["trigger"], "state")
+        self.assertEqual(config["triggers"][0]["to"], "unlocked")
+        self.assertEqual(config["actions"][0]["action"], "lock.lock")
+        self.assertTrue(
+            APP.FingerprintAdmin.owned_automation_config(config, config_id)
+        )
+        config["description"] = "Changed outside Access Manager"
+        self.assertFalse(
+            APP.FingerprintAdmin.owned_automation_config(config, config_id)
+        )
+
+    async def test_delete_refuses_automation_if_ownership_marker_changed(self):
+        config_id = "access_manager_auto_lock_front_door"
+        self.registry.upsert_managed_automation(
+            config_id, "auto_lock", "front_door", config_id, True,
+            {"delay_minutes": 10},
+        )
+        deleted = []
+
+        async def automation_config(_config_id):
+            return {
+                "id": config_id,
+                "alias": "Unrelated automation",
+                "description": "Edited outside Access Manager",
+            }
+
+        async def delete_automation_config(config_id_to_delete):
+            deleted.append(config_id_to_delete)
+
+        self.ha.automation_config = automation_config
+        self.ha.delete_automation_config = delete_automation_config
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+
+        class Request:
+            headers = {"X-Fingerprint-Admin": "1"}
+            match_info = {"automation_id": config_id}
+
+        with self.assertRaises(APP.web.HTTPConflict):
+            await admin.delete_managed_automation(Request())
+        self.assertEqual(deleted, [])
+        self.assertIsNotNone(self.registry.managed_automation(config_id))
 
     async def test_restart_primes_stale_access_event_without_executing_it(self):
         self.registry.update_reader(

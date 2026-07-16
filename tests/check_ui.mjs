@@ -15,12 +15,14 @@ for (const marker of [
   'data-tab="fingerprints"',
   'data-tab="keypads"',
   'data-tab="doors"',
+  'data-tab="automations"',
   'data-tab="logs"',
   'default_action',
   'id="editor-modal"',
   'id="confirm-modal"',
   'startKeypadLearning',
   'openDoorTest',
+  'openAutomationEditor',
 ]) {
   if (!html.includes(marker)) throw new Error(`Missing UI marker: ${marker}`);
 }

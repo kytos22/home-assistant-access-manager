@@ -189,6 +189,7 @@
     <button class="tab-button" data-tab="fingerprints" data-i18n="tab_fingerprints">Fingerprint readers</button>
     <button class="tab-button" data-tab="keypads" data-i18n="tab_keypads">Keypads</button>
     <button class="tab-button" data-tab="doors" data-i18n="tab_doors">Doors</button>
+    <button class="tab-button" data-tab="automations" data-i18n="tab_automations">Automations</button>
     <button class="tab-button" data-tab="logs" data-i18n="tab_logs">Log</button>
   </nav>
 
@@ -272,6 +273,14 @@
       <div class="section-head"><h2 data-i18n="doors">Doors</h2><button id="add-door" class="secondary" data-i18n="add_door">Add door</button></div>
       <p class="hint" data-i18n="door_hint">Every door must use an existing Home Assistant lock, switch, button, input button or cover and a compatible open action.</p>
       <div id="doors-body"></div>
+    </section>
+  </section>
+
+  <section id="tab-automations" class="tab-panel" role="tabpanel">
+    <section class="card infrastructure">
+      <div class="section-head"><h2 data-i18n="automations">Automations</h2><button id="add-automation" class="secondary" data-i18n="add_automation">Add automation</button></div>
+      <p class="hint" data-i18n="automation_hint">These are native Home Assistant automations. Access Manager only updates or deletes automations that it created and still owns.</p>
+      <div id="automations-body"></div>
     </section>
   </section>
 
@@ -466,8 +475,8 @@
     en: {
       app_title:"Access Manager", app_subtitle:"Users · credentials · readers · doors", language:"Language",
       connecting:"Connecting…", connected:"Home Assistant connected", disconnected:"Home Assistant disconnected",
-      tab_people:"Users & credentials", tab_fingerprints:"Fingerprint readers", tab_keypads:"Keypads", tab_doors:"Doors", tab_logs:"Log",
-      people:"People", credentials:"Credentials", readers:"Readers", doors:"Doors", users_credentials:"Users and credentials",
+      tab_people:"Users & credentials", tab_fingerprints:"Fingerprint readers", tab_keypads:"Keypads", tab_doors:"Doors", tab_automations:"Automations", tab_logs:"Log",
+      people:"People", credentials:"Credentials", readers:"Readers", doors:"Doors", automations:"Automations", users_credentials:"Users and credentials",
       add_user:"Add user", user:"User", linked_credentials:"Linked credentials", fingerprint_readers:"Fingerprint readers",
       add_fingerprint_reader:"Add fingerprint reader", reader:"Reader", name:"Name", door:"Door", availability:"Availability",
       sensor_id:"Sensor ID", person_name:"Person name", enroll_new:"Enroll new", link_existing:"Link existing ID", cancel:"Cancel",
@@ -475,6 +484,9 @@
       physical_ids:"Physical fingerprint IDs", finger:"Finger", status:"Status", updated:"Updated", keypads:"Keypads", add_keypad:"Add keypad",
       zigbee_hint:"Zigbee keypads normally sleep. Their status shows whether they are configured in Home Assistant, not whether they are continuously online.",
       ha_entities:"Home Assistant entities", add_door:"Add door", door_hint:"An authorized credential directly runs the selected default action. Lock entities expose open only when the device reports that capability.",
+      add_automation:"Add automation", automation_hint:"These are native Home Assistant automations. Access Manager only updates or deletes automations that it created and still owns.",
+      auto_lock:"Auto-lock", auto_lock_delay:"Lock after", edit_automation:"Edit automation", no_automations:"No managed automations", no_lock_doors:"Add a door backed by a lock entity first.",
+      minutes:"{count} minutes", one_hour:"1 hour", automation_native:"Native Home Assistant automation", confirm_delete_automation:"Delete this Access Manager automation from Home Assistant?",
       activity_log:"Activity log", retention:"Retention", retention_hint:"Expired entries are deleted automatically. A hard safety limit of 10,000 entries also applies.",
       date:"Date", event:"Event", confidence:"Confidence", detail:"Detail", no_users:"No users", no_credentials:"No credentials",
       associate_people:"Link to Home Assistant People…", create_in_ha:"Create in HA", add_fingerprint:"Add fingerprint", add_code:"Add code/tag",
@@ -504,6 +516,7 @@
       keypad_credential_deleted:"Keypad credential deleted", keypad_capture_failed:"Keypad capture failed", keypad_denied:"Keypad credential denied",
       door_action_executed:"Door action executed", door_action_failed:"Door action failed", local_lock_succeeded:"Local lock succeeded", local_lock_failed:"Local lock failed",
       door_test_succeeded:"Door test succeeded", door_test_failed:"Door test failed", keypad_button_detected:"Keypad button detected", keypad_action_ignored:"Keypad button ignored",
+      automation_saved:"Automation saved", automation_deleted:"Automation deleted",
       test_actions:"Test actions", edit_door:"Edit door", add_mapping:"Add mapping", detect_button:"Detect button", detecting_button:"Press the physical keypad action button · {seconds}s",
       raw_action:"Raw keypad action", mapped_action:"Door action", ignore:"Ignore", enabled:"Enabled", disabled:"Disabled", internal_id:"Internal ID", save_changes:"Save changes",
       confirm:"Confirm", important_warning:"Important warning", test_warning:"This sends a real command to {door}. Check the selected action before confirming.",
@@ -516,8 +529,8 @@
     es: {
       app_title:"Gestor de accesos", app_subtitle:"Usuarios · credenciales · lectores · puertas", language:"Idioma",
       connecting:"Conectando…", connected:"Home Assistant conectado", disconnected:"Home Assistant desconectado",
-      tab_people:"Usuarios y credenciales", tab_fingerprints:"Lectores de huellas", tab_keypads:"Keypads", tab_doors:"Puertas", tab_logs:"Registro",
-      people:"Personas", credentials:"Credenciales", readers:"Lectores", doors:"Puertas", users_credentials:"Usuarios y credenciales",
+      tab_people:"Usuarios y credenciales", tab_fingerprints:"Lectores de huellas", tab_keypads:"Keypads", tab_doors:"Puertas", tab_automations:"Automatizaciones", tab_logs:"Registro",
+      people:"Personas", credentials:"Credenciales", readers:"Lectores", doors:"Puertas", automations:"Automatizaciones", users_credentials:"Usuarios y credenciales",
       add_user:"Añadir usuario", user:"Usuario", linked_credentials:"Credenciales asociadas", fingerprint_readers:"Lectores de huellas",
       add_fingerprint_reader:"Añadir lector de huellas", reader:"Lector", name:"Nombre", door:"Puerta", availability:"Disponibilidad",
       sensor_id:"ID del sensor", person_name:"Nombre de la persona", enroll_new:"Registrar nueva", link_existing:"Vincular ID existente", cancel:"Cancelar",
@@ -525,6 +538,9 @@
       physical_ids:"IDs físicos de huella", finger:"Dedo", status:"Estado", updated:"Actualización", keypads:"Keypads", add_keypad:"Añadir keypad",
       zigbee_hint:"Los keypads Zigbee suelen dormir. El estado indica si están configurados en Home Assistant, no si permanecen continuamente online.",
       ha_entities:"Entidades de Home Assistant", add_door:"Añadir puerta", door_hint:"Una credencial autorizada ejecuta directamente la acción predeterminada. En entidades lock, open solo aparece si el dispositivo declara esa capacidad.",
+      add_automation:"Añadir automatización", automation_hint:"Son automatizaciones nativas de Home Assistant. Access Manager solo actualiza o borra las que ha creado y siguen siendo de su propiedad.",
+      auto_lock:"Cierre automático", auto_lock_delay:"Cerrar después de", edit_automation:"Editar automatización", no_automations:"No hay automatizaciones gestionadas", no_lock_doors:"Primero añade una puerta respaldada por una entidad lock.",
+      minutes:"{count} minutos", one_hour:"1 hora", automation_native:"Automatización nativa de Home Assistant", confirm_delete_automation:"¿Borrar esta automatización de Access Manager en Home Assistant?",
       activity_log:"Registro de actividad", retention:"Retención", retention_hint:"Las entradas caducadas se borran automáticamente. También se aplica un límite de seguridad de 10.000 entradas.",
       date:"Fecha", event:"Evento", confidence:"Confianza", detail:"Detalle", no_users:"No hay usuarios", no_credentials:"Sin credenciales",
       associate_people:"Asociar con People…", create_in_ha:"Crear en HA", add_fingerprint:"Añadir huella", add_code:"Añadir código/tag",
@@ -554,6 +570,7 @@
       keypad_credential_deleted:"Credencial keypad borrada", keypad_capture_failed:"Captura keypad fallida", keypad_denied:"Credencial keypad denegada",
       door_action_executed:"Acción de puerta ejecutada", door_action_failed:"Acción de puerta fallida", local_lock_succeeded:"Bloqueo local completado", local_lock_failed:"Bloqueo local fallido",
       door_test_succeeded:"Prueba de puerta completada", door_test_failed:"Prueba de puerta fallida", keypad_button_detected:"Tecla de keypad detectada", keypad_action_ignored:"Tecla de keypad ignorada",
+      automation_saved:"Automatización guardada", automation_deleted:"Automatización borrada",
       test_actions:"Probar acciones", edit_door:"Editar puerta", add_mapping:"Añadir asignación", detect_button:"Detectar tecla", detecting_button:"Pulsa la tecla de acción física del keypad · {seconds}s",
       raw_action:"Acción bruta del keypad", mapped_action:"Acción de puerta", ignore:"Ignorar", enabled:"Activado", disabled:"Desactivado", internal_id:"ID interno", save_changes:"Guardar cambios",
       confirm:"Confirmar", important_warning:"Aviso importante", test_warning:"Esto enviará una orden real a {door}. Comprueba la acción seleccionada antes de confirmar.",
@@ -711,6 +728,23 @@
     }).join("");
   }
 
+  function renderAutomations() {
+    const items = data.managed_automations || [];
+    $("#automations-body").innerHTML = items.length ? items.map(item => {
+      const delay = Number(item.config?.delay_minutes || 0);
+      const delayLabel = delay === 60 ? t("one_hour") : t("minutes", {count:delay});
+      const stateClass = item.state === "on" ? "" : item.state === "off" ? "pending" : "missing";
+      return `<article class="door-card" data-automation="${esc(item.id)}">
+        <div class="door-card-head"><div><h3>${t("auto_lock")} · ${esc(item.door_name)}</h3><span class="entity">${esc(item.ha_entity_id || item.ha_config_id)}</span></div><span class="status ${stateClass}">${esc(item.state || "missing")}</span></div>
+        <div class="door-card-grid"><div><span>${t("door")}</span><strong>${esc(item.door_name)}</strong><span class="entity">${esc(item.door_entity_id || "—")}</span></div><div><span>${t("auto_lock_delay")}</span><strong>${esc(delayLabel)}</strong></div></div>
+        <div class="door-card-actions"><span class="muted">${t("automation_native")}</span><button class="secondary" onclick="editAutomation('${item.id}')">${t("edit")}</button><button class="danger" onclick="deleteAutomation('${item.id}')">${t("delete")}</button></div>
+      </article>`;
+    }).join("") : `<div class="empty">${t("no_automations")}</div>`;
+    const usedDoors = new Set(items.map(item => item.door_id));
+    const available = (data.doors || []).some(door => door.entity_id?.startsWith("lock.") && !usedDoors.has(door.id));
+    $("#add-automation").disabled = !available;
+  }
+
   function renderLogs() {
     $("#log-retention").innerHTML = (data.log_retention_options || []).map(days => `<option value="${days}" ${days === data.log_retention_days ? "selected" : ""}>${days === 1 ? t("one_day") : t("days",{count:days})}</option>`).join("");
     $("#events-body").innerHTML = (data.events || []).length ? data.events.map(event => `<tr><td class="muted">${new Date(event.occurred_at).toLocaleString(language)}</td><td class="event-type">${esc(t(event.event_type))}</td><td>${event.slot ?? "—"}</td><td>${event.confidence ?? "—"}</td><td class="muted">${esc(event.detail || "")}</td></tr>`).join("") : `<tr><td colspan="5" class="empty">${t("no_records")}</td></tr>`;
@@ -725,7 +759,7 @@
     $("#access-reader-count").textContent = data.access_readers?.length ?? 0; $("#door-count").textContent = data.doors?.length ?? 0;
     $("#people-list").innerHTML = (data.people || []).map(person => `<option value="${esc(person.name)}"></option>`).join("");
     $("#management").textContent = data.management_message || t("management_empty");
-    renderPeople(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderLogs(); renderCapture(); renderKeypadLearning();
+    renderPeople(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderAutomations(); renderLogs(); renderCapture(); renderKeypadLearning();
   }
   async function refresh() { try { data = await request("state"); render(); showError(); } catch (error) { showError(error.message); } }
 
@@ -819,6 +853,20 @@
     const update=()=>{const dangerous=select.value!=="lock";warning.textContent=t("test_warning",{door:door.name});warning.className=`warning-box wide${dangerous?" danger":""}`;save.className=dangerous?"danger":"";save.textContent=t("confirm_action",{action:select.value.toUpperCase()});}; select.addEventListener("change",update);update();
   }
 
+  function openAutomationEditor(id=null) {
+    const item=id?(data.managed_automations||[]).find(entry=>entry.id===id):null;
+    const used=new Set((data.managed_automations||[]).filter(entry=>entry.id!==id).map(entry=>entry.door_id));
+    const doors=(data.doors||[]).filter(door=>door.entity_id?.startsWith("lock.")&&!used.has(door.id)&&(item?door.id===item.door_id:true));
+    if(!doors.length){showError(t("no_lock_doors"));return;}
+    const selectedDoor=item?.door_id||doors[0].id;
+    const delays=(data.auto_lock_delays||[5,10,15,20,30,60]).map(value=>({value:String(value),label:Number(value)===60?t("one_hour"):t("minutes",{count:value})}));
+    const html=`<div class="form-grid">${selectField(t("door"),"door_id",doors.map(door=>({value:door.id,label:`${door.name} · ${door.entity_id}`})),selectedDoor,true)}${selectField(t("auto_lock_delay"),"delay_minutes",delays,String(item?.config?.delay_minutes||10),true)}${selectField(t("status"),"enabled",[{value:"true",label:t("enabled")},{value:"false",label:t("disabled")}],String(item?.enabled??true),true)}<div class="form-section"><p class="muted">${t("automation_hint")}</p></div></div>`;
+    openEditor({title:t(item?"edit_automation":"add_automation"),subtitle:item?.ha_entity_id||t("automation_native"),html,onSubmit:async form=>{
+      const payload={door_id:String(form.get("door_id")||""),delay_minutes:Number(form.get("delay_minutes")),enabled:String(form.get("enabled"))==="true"};
+      const ok=await mutate("automations/auto-lock","PUT",payload,{inline:true});if(ok)await closeEditor();
+    }});
+  }
+
   function keymapRow(raw="",action="open") { return `<div class="keymap-row"><input class="keymap-raw" value="${esc(raw)}" placeholder="disarm"><select class="keymap-action">${["open","unlock","lock","ignore"].map(value=>`<option value="${value}" ${value===action?"selected":""}>${t(value).toUpperCase()}</option>`).join("")}</select><button type="button" class="danger" onclick="this.closest('.keymap-row').remove()">${t("delete")}</button></div>`; }
   window.addKeymapRow=(raw="",action="open")=>$("#keymap-list").insertAdjacentHTML("beforeend",keymapRow(raw,action));
   function collectKeymap(){const result={};document.querySelectorAll("#keymap-list .keymap-row").forEach(row=>{const raw=row.querySelector(".keymap-raw").value.trim(),action=row.querySelector(".keymap-action").value;if(raw&&action!=="ignore")result[raw]=action;});return result;}
@@ -850,6 +898,8 @@
   window.assignFinger = (readerId,slot) => { selectedReader=readerId; $("#fingerprint-reader").value=readerId; const user=data.users.find(item=>item.reader_id===readerId&&Number(item.slot)===Number(slot)); if(user) openFingerModal("assign",user); };
   window.deleteFingerprint = (readerId,slot) => openConfirm({title:t("delete"),message:t("confirm_delete_fingerprint",{id:slot,reader:readerName(readerId)}),onConfirm:async()=>{if(await mutate(`users/${slot}?reader_id=${encodeURIComponent(readerId)}`,"DELETE"))closeConfirm();}});
   window.openDoorEditor=openDoorEditor; window.openDoorTest=openDoorTest;
+  window.editAutomation = id => openAutomationEditor(id);
+  window.deleteAutomation = id => openConfirm({title:t("delete"),message:t("confirm_delete_automation"),onConfirm:async()=>{if(await mutate(`automations/${id}`,"DELETE"))closeConfirm();}});
   window.editReader = id => openReaderEditor(id);
 
   $("#language").addEventListener("change",event=>{language=event.target.value;applyLanguage();});
@@ -867,6 +917,7 @@
   ["#confirm-close","#confirm-cancel"].forEach(id=>$(id).addEventListener("click",closeConfirm)); $("#confirm-modal").addEventListener("click",event=>event.target===$("#confirm-modal")&&closeConfirm()); $("#confirm-action").addEventListener("click",async()=>{if(confirmSubmit&&!busy)await confirmSubmit();});
   $("#add-person").addEventListener("click",()=>openPersonEditor());
   $("#add-door").addEventListener("click",()=>openDoorEditor());
+  $("#add-automation").addEventListener("click",()=>openAutomationEditor());
   $("#add-keypad").addEventListener("click",()=>openReaderEditor(null,"keypad"));
   $("#add-fingerprint-reader").addEventListener("click",()=>openReaderEditor(null,"fingerprint"));
   $("#log-retention").addEventListener("change",event=>mutate("settings/log-retention","PUT",{days:Number(event.target.value)}));

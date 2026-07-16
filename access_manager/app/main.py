@@ -82,6 +82,10 @@ DOOR_ACTIONS = {
 LOCK_OPEN_FEATURE = 1
 READER_REQUESTED_ACTIONS = {"default", "open", "unlock", "lock"}
 LOCAL_UNAUTHENTICATED_ACTIONS = {"lock"}
+AUTOMATION_ID_PREFIX = "access_manager_"
+AUTOMATION_ALIAS_PREFIX = "[Access Manager]"
+AUTOMATION_DESCRIPTION_MARKER = "Managed by Access Manager."
+AUTO_LOCK_DELAYS = (5, 10, 15, 20, 30, 60)
 
 
 def now_iso():
@@ -174,6 +178,17 @@ class Registry:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(reader_id, secret_hash)
+            );
+            CREATE TABLE IF NOT EXISTS managed_automations (
+                id TEXT PRIMARY KEY,
+                automation_type TEXT NOT NULL,
+                door_id TEXT NOT NULL REFERENCES doors(id),
+                ha_config_id TEXT NOT NULL UNIQUE,
+                enabled INTEGER NOT NULL DEFAULT 1,
+                config_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(automation_type, door_id)
             );
             """
         )
@@ -699,6 +714,59 @@ class Registry:
         if cursor.rowcount == 0:
             raise ValueError("Door not found")
 
+    def managed_automations(self):
+        items = []
+        rows = self.connection.execute(
+            "SELECT * FROM managed_automations ORDER BY id"
+        ).fetchall()
+        for row in rows:
+            item = dict(row)
+            try:
+                item["config"] = json.loads(item.pop("config_json"))
+            except (TypeError, json.JSONDecodeError):
+                item["config"] = {}
+            item["enabled"] = bool(item["enabled"])
+            items.append(item)
+        return items
+
+    def managed_automation(self, automation_id):
+        return next(
+            (item for item in self.managed_automations() if item["id"] == automation_id),
+            None,
+        )
+
+    def upsert_managed_automation(
+        self, automation_id, automation_type, door_id, ha_config_id, enabled, config,
+    ):
+        timestamp = now_iso()
+        self.connection.execute(
+            """
+            INSERT INTO managed_automations(
+                id, automation_type, door_id, ha_config_id, enabled, config_json,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                automation_type = excluded.automation_type,
+                door_id = excluded.door_id,
+                ha_config_id = excluded.ha_config_id,
+                enabled = excluded.enabled,
+                config_json = excluded.config_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                automation_id, automation_type, door_id, ha_config_id,
+                1 if enabled else 0, json.dumps(config), timestamp, timestamp,
+            ),
+        )
+        self.connection.commit()
+
+    def delete_managed_automation(self, automation_id):
+        cursor = self.connection.execute(
+            "DELETE FROM managed_automations WHERE id = ?", (automation_id,)
+        )
+        self.connection.commit()
+        return cursor.rowcount > 0
+
     def update_reader(self, reader_id, name, door_id, enabled=True, config=None):
         if not self.reader(reader_id):
             raise ValueError("Reader not found")
@@ -907,9 +975,11 @@ class HomeAssistant:
         if self.session:
             await self.session.close()
 
-    async def request(self, method, path, payload=None):
+    async def request(self, method, path, payload=None, allow_not_found=False):
         async with self.session.request(method, f"{HA_API}{path}", json=payload) as response:
             body = await response.text()
+            if allow_not_found and response.status == 404:
+                return None
             if response.status >= 400:
                 raise RuntimeError(f"Home Assistant returned {response.status}: {body[:300]}")
             if not body:
@@ -966,6 +1036,30 @@ class HomeAssistant:
 
     async def call_service(self, domain, service, payload):
         return await self.request("POST", f"/services/{domain}/{service}", payload)
+
+    async def automation_config(self, config_id):
+        return await self.request(
+            "GET", f"/config/automation/config/{config_id}",
+            allow_not_found=True,
+        )
+
+    async def save_automation_config(self, config_id, config):
+        return await self.request(
+            "POST", f"/config/automation/config/{config_id}", config
+        )
+
+    async def delete_automation_config(self, config_id):
+        return await self.request(
+            "DELETE", f"/config/automation/config/{config_id}"
+        )
+
+    def automation_entity_id(self, config_id):
+        for entity_id, state in self.states.items():
+            if not entity_id.startswith("automation."):
+                continue
+            if str(state.get("attributes", {}).get("id", "")) == str(config_id):
+                return entity_id
+        return None
 
     def door_actions(self, entity_id):
         domain = str(entity_id).split(".", 1)[0]
@@ -1501,6 +1595,7 @@ class FingerprintAdmin:
         self.capture_sessions = {}
         self.keypad_learning_sessions = {}
         self.last_keypad_actions = {}
+        self.keypad_packet_tasks = {}
 
     async def startup(self, _app):
         await self.ha.start()
@@ -1509,6 +1604,7 @@ class FingerprintAdmin:
 
     async def cleanup(self, _app):
         tasks = [task for task in (self.websocket_task, self.deletion_task) if task]
+        tasks.extend(self.keypad_packet_tasks.values())
         for task in tasks:
             task.cancel()
         if tasks:
@@ -1550,46 +1646,99 @@ class FingerprintAdmin:
             for reader_id, session in self.keypad_learning_sessions.items()
         ]
 
-    async def handle_state_change(self, entity_id, _state):
+    async def handle_state_change(self, entity_id, state):
         for reader in self.registry.readers():
             if not reader["enabled"] or reader["reader_type"] != "keypad":
                 continue
             config = reader.get("config", {})
-            if entity_id != config.get("transaction_entity"):
-                continue
-            transaction_state = self.ha.states.get(entity_id, {}).get("state")
-            if not transaction_state or transaction_state in {"unknown", "unavailable"}:
-                return
-            setting_key = f"reader_transaction:{reader['id']}"
-            if self.registry.setting(setting_key) == transaction_state:
-                return
-            self.registry.set_setting(setting_key, transaction_state)
-            await asyncio.sleep(0.35)
-            await self.ha.refresh_states()
-            code = self.ha.states.get(config.get("code_entity"), {}).get("state")
-            keypad_action = self.ha.states.get(config.get("action_entity"), {}).get("state")
-            if not keypad_action or keypad_action in {"unknown", "unavailable"}:
-                return
-            self.last_keypad_actions[reader["id"]] = {
-                "raw_action": str(keypad_action),
-                "observed_at": now_iso(),
+            packet_entities = {
+                config.get("transaction_entity"),
+                config.get("code_entity"),
+                config.get("action_entity"),
             }
-            learning = self.keypad_learning_sessions.get(reader["id"])
-            if learning and learning["expires_at"] > asyncio.get_running_loop().time():
-                learning["raw_action"] = str(keypad_action)
-                self.ha.management_message = (
-                    f"Detected keypad button {keypad_action} on {reader['name']}"
-                )
-                self.registry.add_event(
-                    "keypad_button_detected",
-                    detail=f"{reader['name']} · {keypad_action}",
-                )
-                return
-            if not code or code in {"unknown", "unavailable"}:
-                return
-            await self.process_keypad_event(
-                reader, str(transaction_state), str(code), str(keypad_action)
+            if entity_id not in packet_entities:
+                continue
+            if entity_id == config.get("action_entity"):
+                raw_action = str((state or {}).get("state", ""))
+                learning = self.keypad_learning_sessions.get(reader["id"])
+                if (
+                    learning
+                    and learning["expires_at"] > asyncio.get_running_loop().time()
+                    and self.valid_keypad_value(raw_action)
+                ):
+                    self.record_learned_keypad_action(reader, raw_action, learning)
+                    continue
+            previous = self.keypad_packet_tasks.pop(reader["id"], None)
+            if previous and not previous.done():
+                previous.cancel()
+            self.keypad_packet_tasks[reader["id"]] = asyncio.create_task(
+                self.consume_keypad_packet(reader["id"])
             )
+
+    def record_learned_keypad_action(self, reader, raw_action, learning):
+        learning["raw_action"] = str(raw_action)
+        self.ha.management_message = (
+            f"Detected keypad button {raw_action} on {reader['name']}"
+        )
+        self.registry.add_event(
+            "keypad_button_detected", detail=f"{reader['name']} · {raw_action}"
+        )
+
+    @staticmethod
+    def valid_keypad_value(value):
+        return str(value or "") not in {"", "unknown", "unavailable"}
+
+    async def consume_keypad_packet(self, reader_id):
+        try:
+            # Zigbee/MQTT integrations commonly update transaction, code and
+            # action in quick succession. Read them only after the packet settles.
+            await asyncio.sleep(0.5)
+            await self.ha.refresh_states()
+            await self.process_keypad_packet(reader_id)
+        except asyncio.CancelledError:
+            return
+        except Exception as error:
+            LOGGER.warning("Could not assemble keypad packet for %s: %s", reader_id, error)
+        finally:
+            current = asyncio.current_task()
+            if self.keypad_packet_tasks.get(reader_id) is current:
+                self.keypad_packet_tasks.pop(reader_id, None)
+
+    async def process_keypad_packet(self, reader_id):
+        reader = self.registry.reader(reader_id)
+        if not reader or not reader["enabled"] or reader["reader_type"] != "keypad":
+            return False
+        config = reader.get("config", {})
+        transaction = self.ha.states.get(
+            config.get("transaction_entity"), {}
+        ).get("state")
+        code = self.ha.states.get(config.get("code_entity"), {}).get("state")
+        keypad_action = self.ha.states.get(
+            config.get("action_entity"), {}
+        ).get("state")
+        if not all(
+            self.valid_keypad_value(value)
+            for value in (transaction, code, keypad_action)
+        ):
+            return False
+        setting_key = f"reader_transaction:{reader_id}"
+        if self.registry.setting(setting_key) == str(transaction):
+            return False
+        # Do not consume an incomplete transaction. A later code/action state
+        # change must still be able to complete this exact keypad packet.
+        self.registry.set_setting(setting_key, str(transaction))
+        self.last_keypad_actions[reader_id] = {
+            "raw_action": str(keypad_action),
+            "observed_at": now_iso(),
+        }
+        learning = self.keypad_learning_sessions.get(reader_id)
+        if learning and learning["expires_at"] > asyncio.get_running_loop().time():
+            self.record_learned_keypad_action(reader, str(keypad_action), learning)
+            return True
+        await self.process_keypad_event(
+            reader, str(transaction), str(code), str(keypad_action)
+        )
+        return True
 
     def validate_reader_door_action(self, reader, action):
         door = next(
@@ -1813,6 +1962,16 @@ class FingerprintAdmin:
         for door in doors:
             entity_state = self.ha.states.get(door.get("entity_id"), {})
             door["state"] = entity_state.get("state")
+        managed_automations = self.registry.managed_automations()
+        doors_by_id = {door["id"]: door for door in doors}
+        for automation in managed_automations:
+            door = doors_by_id.get(automation["door_id"])
+            entity_id = self.ha.automation_entity_id(automation["ha_config_id"])
+            entity_state = self.ha.states.get(entity_id, {}) if entity_id else {}
+            automation["door_name"] = door["name"] if door else automation["door_id"]
+            automation["door_entity_id"] = door.get("entity_id") if door else None
+            automation["ha_entity_id"] = entity_id
+            automation["state"] = entity_state.get("state", "missing")
         ha_people = self.ha.ha_people()
         self.registry.auto_link_ha_people(ha_people)
         return web.json_response(
@@ -1838,6 +1997,8 @@ class FingerprintAdmin:
                 "doors": doors,
                 "door_entities": self.ha.door_entities(),
                 "access_readers": readers,
+                "managed_automations": managed_automations,
+                "auto_lock_delays": list(AUTO_LOCK_DELAYS),
                 "captures": self.active_captures(),
                 "keypad_action_learning": self.active_keypad_learning(),
                 "last_keypad_actions": self.last_keypad_actions,
@@ -2271,6 +2432,152 @@ class FingerprintAdmin:
             raise web.HTTPBadRequest(text=str(error))
         return web.json_response({"ok": True})
 
+    @staticmethod
+    def auto_lock_automation_id(door_id):
+        return f"{AUTOMATION_ID_PREFIX}auto_lock_{door_id}"
+
+    @staticmethod
+    def owned_automation_config(config, expected_id):
+        if not isinstance(config, dict):
+            return False
+        config_id = str(config.get("id") or expected_id)
+        return (
+            config_id == expected_id
+            and str(config.get("alias", "")).startswith(AUTOMATION_ALIAS_PREFIX)
+            and str(config.get("description", "")).startswith(
+                AUTOMATION_DESCRIPTION_MARKER
+            )
+        )
+
+    @staticmethod
+    def build_auto_lock_config(door, config_id, delay_minutes):
+        return {
+            "id": config_id,
+            "alias": (
+                f"{AUTOMATION_ALIAS_PREFIX} Auto-lock {door['name']} "
+                f"after {delay_minutes} minutes"
+            ),
+            "description": (
+                f"{AUTOMATION_DESCRIPTION_MARKER} "
+                f"Auto-lock for Access Manager door {door['id']}."
+            ),
+            "triggers": [
+                {
+                    "trigger": "state",
+                    "entity_id": door["entity_id"],
+                    "to": "unlocked",
+                    "for": {
+                        "hours": delay_minutes // 60,
+                        "minutes": delay_minutes % 60,
+                        "seconds": 0,
+                    },
+                }
+            ],
+            "conditions": [
+                {
+                    "condition": "state",
+                    "entity_id": door["entity_id"],
+                    "state": "unlocked",
+                }
+            ],
+            "actions": [
+                {
+                    "action": "lock.lock",
+                    "target": {"entity_id": door["entity_id"]},
+                }
+            ],
+            "mode": "restart",
+        }
+
+    async def resolve_automation_entity(self, config_id):
+        for _attempt in range(4):
+            await self.ha.refresh_states()
+            entity_id = self.ha.automation_entity_id(config_id)
+            if entity_id:
+                return entity_id
+            await asyncio.sleep(0.25)
+        return None
+
+    async def save_auto_lock_automation(self, request):
+        self.require_admin_request(request)
+        payload = await request.json()
+        door_id = str(payload.get("door_id", "")).strip()
+        try:
+            delay_minutes = int(payload.get("delay_minutes"))
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text="Select a valid auto-lock delay")
+        if delay_minutes not in AUTO_LOCK_DELAYS:
+            raise web.HTTPBadRequest(text="Select a supported auto-lock delay")
+        enabled = bool(payload.get("enabled", True))
+        door = next(
+            (item for item in self.registry.doors() if item["id"] == door_id), None
+        )
+        if not door:
+            raise web.HTTPNotFound(text="Door not found")
+        if not str(door.get("entity_id", "")).startswith("lock."):
+            raise web.HTTPBadRequest(
+                text="Native auto-lock is available only for Home Assistant lock entities"
+            )
+        if "lock" not in self.ha.door_actions(door["entity_id"]):
+            raise web.HTTPBadRequest(text="This entity does not support locking")
+        config_id = self.auto_lock_automation_id(door_id)
+        local = self.registry.managed_automation(config_id)
+        current = await self.ha.automation_config(config_id)
+        if not local and current:
+            raise web.HTTPConflict(
+                text="That Home Assistant automation ID already exists outside Access Manager"
+            )
+        if local and local["ha_config_id"] != config_id:
+            raise web.HTTPConflict(text="The managed automation identity does not match")
+        if current and not self.owned_automation_config(current, config_id):
+            raise web.HTTPConflict(
+                text="The Home Assistant automation is no longer owned by Access Manager"
+            )
+        config = self.build_auto_lock_config(door, config_id, delay_minutes)
+        await self.ha.save_automation_config(config_id, config)
+        self.registry.upsert_managed_automation(
+            config_id, "auto_lock", door_id, config_id, enabled,
+            {"delay_minutes": delay_minutes},
+        )
+        entity_id = await self.resolve_automation_entity(config_id)
+        if not entity_id:
+            raise web.HTTPBadGateway(
+                text="Home Assistant saved the automation but did not expose its entity"
+            )
+        await self.ha.call_service(
+            "automation", "turn_on" if enabled else "turn_off",
+            {"entity_id": entity_id},
+        )
+        self.registry.add_event(
+            "automation_saved",
+            detail=f"{door['name']} · auto-lock · {delay_minutes} min",
+        )
+        return web.json_response(
+            {"ok": True, "automation_id": config_id, "entity_id": entity_id}
+        )
+
+    async def delete_managed_automation(self, request):
+        self.require_admin_request(request)
+        automation_id = str(request.match_info["automation_id"])
+        local = self.registry.managed_automation(automation_id)
+        if not local:
+            raise web.HTTPNotFound(text="Managed automation not found")
+        current = await self.ha.automation_config(local["ha_config_id"])
+        if current and not self.owned_automation_config(
+            current, local["ha_config_id"]
+        ):
+            raise web.HTTPConflict(
+                text="Refusing to delete an automation not owned by Access Manager"
+            )
+        if current:
+            await self.ha.delete_automation_config(local["ha_config_id"])
+        self.registry.delete_managed_automation(automation_id)
+        self.registry.add_event(
+            "automation_deleted",
+            detail=f"{local['door_id']} · {local['automation_type']}",
+        )
+        return web.json_response({"ok": True})
+
     async def set_log_retention(self, request):
         self.require_admin_request(request)
         payload = await request.json()
@@ -2317,6 +2624,10 @@ class FingerprintAdmin:
         app.router.add_post("/api/doors/{door_id}/test", self.test_door_action)
         app.router.add_post("/api/readers", self.create_reader)
         app.router.add_put("/api/readers/{reader_id}", self.update_reader)
+        app.router.add_put("/api/automations/auto-lock", self.save_auto_lock_automation)
+        app.router.add_delete(
+            "/api/automations/{automation_id}", self.delete_managed_automation
+        )
         app.router.add_put("/api/settings/log-retention", self.set_log_retention)
         app.on_startup.append(self.startup)
         app.on_cleanup.append(self.cleanup)
