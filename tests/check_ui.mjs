@@ -17,9 +17,16 @@ for (const marker of [
   'data-tab="doors"',
   'data-tab="logs"',
   'default_action',
-  'configureKeypadActionMap',
+  'id="editor-modal"',
+  'id="confirm-modal"',
+  'startKeypadLearning',
+  'openDoorTest',
 ]) {
   if (!html.includes(marker)) throw new Error(`Missing UI marker: ${marker}`);
+}
+
+for (const forbidden of ['prompt(', 'confirm(']) {
+  if (html.includes(forbidden)) throw new Error(`Native dialog is forbidden: ${forbidden}`);
 }
 
 console.log("UI script and tab structure are valid");

@@ -9,14 +9,16 @@ It connects Home Assistant People to fingerprint IDs and Zigbee/MQTT keypad cred
 - English and Spanish interface.
 - Explicit links to Home Assistant `person.*` entities.
 - Multiple fingerprint readers with independent physical ID spaces.
-- Keypad capture using `code/tag + action button`.
+- Per-person keypad capture using `code/tag + physical action button`; the keypad itself does not know users.
 - Keyed HMAC storage for keypad credentials; plaintext secrets are never persisted.
 - Doors backed by an existing Home Assistant `lock`, `switch`, `button`, `input_button` or `cover` entity.
 - Capability-aware direct door actions after successful authentication.
-- Per-door default action plus `code/tag + action button` overrides from keypads.
+- Per-door default action plus centrally managed keypad button mappings.
+- Capability-aware administrator door tests with an explicit confirmation step.
+- Two-tap local display lock requests from compatible readers; unauthenticated local open/unlock requests are rejected.
 - Configurable log retention with a 10,000-row hard safety limit.
 - Persistent SQLite data stored in the add-on `/data` directory.
-- Normalized `access_manager_credential` Home Assistant events.
+- Normalized `access_manager_credential` and `access_manager_door_action` Home Assistant events.
 
 Fresh installations start empty. This repository contains no users, entity IDs, network addresses, access codes or device credentials.
 
@@ -104,6 +106,32 @@ actions:
 ```
 
 Fingerprint readers use the door default unless their event requests `open`, `unlock` or `lock`. Keypad credentials retain the specific code/tag and raw action-button combination captured during enrollment, so the same code may be enrolled separately with an unlock/open button and a lock button.
+
+### Dumb keypad model
+
+The keypad only reports a transaction, a code/tag, and the raw button value. It never stores or resolves a user. Access Manager stores a keyed HMAC for the `reader + code/tag + raw button` combination and links that credential to a person. At authentication time the credential identifies the person, while the keypad reader's current button mapping determines the requested door action. Changing `disarm` from `open` to `lock`, for example, immediately changes the behavior of credentials already captured with that button.
+
+Buttons with no current mapping are ignored and logged. They never fall through to an arbitrary Home Assistant service.
+
+### Door action event
+
+Local display lock requests and administrator door tests emit `access_manager_door_action`:
+
+```yaml
+event_type: access_manager_door_action
+data:
+  event_id: front_reader:124
+  door_id: front_door
+  door_entity_id: lock.front_door
+  reader_id: front_reader
+  reader_type: fingerprint
+  source: display
+  action: lock
+  action_executed: true
+  action_error: null
+```
+
+For `source: display`, Access Manager accepts only `lock`. Door tests are restricted to the administrator panel and checked against the entity's advertised capabilities.
 
 ## Fingerprint reader firmware
 

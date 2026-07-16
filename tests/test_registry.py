@@ -119,6 +119,74 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             self.ha.parse_event("matched|3|7|90|unsupported")["action"], "invalid"
         )
+        self.assertEqual(
+            self.ha.parse_event("local_action|4|lock")["action"], "lock"
+        )
+        self.assertEqual(
+            self.ha.parse_event("local_action|5|open")["action"], "open"
+        )
+
+    async def test_unauthenticated_local_control_can_only_lock(self):
+        door = self.registry.doors()[0]
+        reader = self.registry.reader("front_reader")
+        locked = await self.ha.emit_door_action_event(
+            door, "lock", "display", "front_reader:1",
+            reader=reader, local_only=True,
+        )
+        self.assertTrue(locked["action_executed"])
+        self.assertEqual(self.service_calls[0][1], "lock")
+        self.assertEqual(self.events[-1][0], "access_manager_door_action")
+
+        self.service_calls.clear()
+        rejected = await self.ha.emit_door_action_event(
+            door, "open", "display", "front_reader:2",
+            reader=reader, local_only=True,
+        )
+        self.assertFalse(rejected["action_executed"])
+        self.assertIn("only lock", rejected["action_error"])
+        self.assertEqual(self.service_calls, [])
+
+    async def test_local_reader_sequence_executes_only_once(self):
+        raw = "local_action|42|lock"
+        await self.ha.process_access_event(raw, "front_reader")
+        await self.ha.process_access_event(raw, "front_reader")
+        self.assertEqual(
+            self.service_calls,
+            [("lock", "lock", {"entity_id": "lock.front_door"})],
+        )
+        self.assertEqual(
+            self.registry.setting("last_access_event:front_reader"), raw
+        )
+
+    async def test_keypad_identity_comes_from_code_and_current_map_controls_action(self):
+        self.registry.create_reader(
+            "front_keypad", "Front keypad", "keypad", "front_door", {
+                "transaction_entity": "sensor.keypad_transaction",
+                "code_entity": "sensor.keypad_code",
+                "action_entity": "sensor.keypad_action",
+                "action_map": {"disarm": "lock"},
+            }
+        )
+        self.registry.add_keypad_credential(
+            self.person_id, "front_keypad", "1234", "disarm", "open"
+        )
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+        admin.capture_sessions = {}
+        await admin.process_keypad_event(
+            self.registry.reader("front_keypad"), "1", "1234", "disarm"
+        )
+        self.assertEqual(self.service_calls[0][1], "lock")
+        payload = self.events[-1][1]
+        self.assertEqual(payload["person_name"], "Example Person")
+        self.assertEqual(payload["action"], "lock")
+
+        self.service_calls.clear()
+        await admin.process_keypad_event(
+            self.registry.reader("front_keypad"), "2", "1234", "unknown_button"
+        )
+        self.assertEqual(self.service_calls, [])
 
     async def test_restart_primes_stale_access_event_without_executing_it(self):
         self.registry.update_reader(

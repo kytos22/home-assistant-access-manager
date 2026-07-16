@@ -129,8 +129,26 @@
     .status.unavailable { background: rgba(255,107,114,.13); color: #ffafb3; }
     .header-actions > label { margin: 0; }
     .entity { display: block; margin-top: 5px; color: var(--muted); font-size: .76rem; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
-    .door-card { display: grid; grid-template-columns: 1fr 1.2fr .8fr auto; gap: 12px; align-items: end; padding: 14px 0; border-bottom: 1px solid rgba(40,57,75,.7); }
-    .door-card label { margin-top: 0; }
+    .door-card { padding: 16px; margin-top: 12px; border: 1px solid rgba(61,83,105,.65); border-radius: 15px; background: rgba(8,15,22,.42); }
+    .door-card-head, .door-card-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .door-card-head h3 { margin: 0 0 4px; }
+    .door-card-grid { display: grid; grid-template-columns: minmax(0,1.4fr) minmax(150px,.7fr); gap: 12px; margin: 14px 0; }
+    .door-card-grid > div { min-height: 64px; padding: 11px 12px; border: 1px solid rgba(61,83,105,.48); border-radius: 11px; }
+    .door-card-grid span { display: block; margin-bottom: 7px; color: var(--muted); font-size: .76rem; text-transform: uppercase; letter-spacing: .07em; }
+    .door-card-actions { justify-content: flex-end; }
+    .form-body { padding: 4px 22px 8px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+    .form-grid .wide { grid-column: 1 / -1; }
+    .form-section { grid-column: 1 / -1; margin: 18px 0 2px; padding-top: 14px; border-top: 1px solid var(--line); }
+    .form-section h3 { margin: 0 0 5px; }
+    .form-error { display: none; margin-top: 12px; color: #ffafb3; }
+    .form-error.visible { display: block; }
+    .warning-box { margin: 10px 0; padding: 14px; border: 1px solid rgba(245,184,75,.45); border-radius: 12px; background: rgba(245,184,75,.1); color: #ffe0a3; line-height: 1.45; }
+    .warning-box.danger { border-color: rgba(255,107,114,.5); background: rgba(255,107,114,.11); color: #ffc0c3; }
+    .keymap-list { display: grid; gap: 9px; margin-top: 10px; }
+    .keymap-row { display: grid; grid-template-columns: minmax(170px,1fr) minmax(130px,.7fr) auto; gap: 8px; align-items: center; }
+    .keymap-row button { padding: 9px 11px; }
+    .learning-status { margin-top: 9px; min-height: 22px; color: #bad3ff; }
     .mini-stat { color: var(--muted); font-size: .82rem; }
     body.modal-open { overflow: hidden; }
     @media (max-width: 840px) {
@@ -140,6 +158,7 @@
       .manage, .users, .people, .infrastructure { grid-column: span 12; }
       .tab-panel > .manage, .tab-panel > .users { grid-column: span 12; }
       .door-card { grid-template-columns: 1fr; }
+      .door-card-grid, .form-grid, .keymap-row { grid-template-columns: 1fr; }
       .reader-selector { grid-template-columns: 1fr; }
       .finger-summary { grid-template-columns: 1fr; }
       .hand-stage { margin-inline: 10px; padding: 2px; }
@@ -396,6 +415,37 @@
   </section>
 </div>
 
+<div id="editor-modal" class="modal" aria-hidden="true">
+  <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+    <div class="modal-head">
+      <div><h2 id="editor-title">Edit</h2><p id="editor-subtitle" class="muted"></p></div>
+      <button id="editor-close" class="icon-button" type="button" aria-label="Close">×</button>
+    </div>
+    <form id="editor-form">
+      <div id="editor-fields" class="form-body"></div>
+      <p id="editor-error" class="form-error"></p>
+      <div class="modal-actions">
+        <button id="editor-cancel" class="secondary" type="button">Cancel</button>
+        <button id="editor-save" type="submit">Save</button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<div id="confirm-modal" class="modal" aria-hidden="true">
+  <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <div class="modal-head">
+      <div><h2 id="confirm-title">Confirm</h2><p id="confirm-subtitle" class="muted"></p></div>
+      <button id="confirm-close" class="icon-button" type="button" aria-label="Close">×</button>
+    </div>
+    <div class="form-body"><div id="confirm-message" class="warning-box"></div></div>
+    <div class="modal-actions">
+      <button id="confirm-cancel" class="secondary" type="button">Cancel</button>
+      <button id="confirm-action" class="danger" type="button">Confirm</button>
+    </div>
+  </section>
+</div>
+
 <script>
 (() => {
   const $ = selector => document.querySelector(selector);
@@ -408,6 +458,9 @@
   let selectedFinger = null;
   let keypadPerson = null;
   let keypadCapturing = false;
+  let editorSubmit = null;
+  let confirmSubmit = null;
+  let learningReaderId = null;
 
   const messages = {
     en: {
@@ -449,7 +502,13 @@
       delete_retry:"Retrying deletion", delete_failed:"Deletion not confirmed", existing_id_linked:"Existing ID linked", user_renamed:"Credential updated",
       person_created:"User created", person_linked:"Linked to Home Assistant", person_renamed:"User updated", keypad_credential_added:"Keypad credential added",
       keypad_credential_deleted:"Keypad credential deleted", keypad_capture_failed:"Keypad capture failed", keypad_denied:"Keypad credential denied",
-      door_action_executed:"Door action executed", door_action_failed:"Door action failed",
+      door_action_executed:"Door action executed", door_action_failed:"Door action failed", local_lock_succeeded:"Local lock succeeded", local_lock_failed:"Local lock failed",
+      door_test_succeeded:"Door test succeeded", door_test_failed:"Door test failed", keypad_button_detected:"Keypad button detected", keypad_action_ignored:"Keypad button ignored",
+      test_actions:"Test actions", edit_door:"Edit door", add_mapping:"Add mapping", detect_button:"Detect button", detecting_button:"Press the physical keypad action button · {seconds}s",
+      raw_action:"Raw keypad action", mapped_action:"Door action", ignore:"Ignore", enabled:"Enabled", disabled:"Disabled", internal_id:"Internal ID", save_changes:"Save changes",
+      confirm:"Confirm", important_warning:"Important warning", test_warning:"This sends a real command to {door}. Check the selected action before confirming.",
+      confirm_action:"CONFIRM {action}", edit_keypad:"Edit keypad", edit_fingerprint_reader:"Edit fingerprint reader", add_person_title:"Add user", edit_person_title:"Edit user",
+      link_person:"Home Assistant person", create_new_person:"Create a new Home Assistant Person", reader_settings:"Reader settings", entity_settings:"Home Assistant entities",
       left_thumb:"Left thumb", left_index:"Left index", left_middle:"Left middle", left_ring:"Left ring", left_pinky:"Left little finger",
       right_thumb:"Right thumb", right_index:"Right index", right_middle:"Right middle", right_ring:"Right ring", right_pinky:"Right little finger",
       left_hand:"LEFT HAND", right_hand:"RIGHT HAND"
@@ -493,7 +552,13 @@
       delete_retry:"Reintentando borrado", delete_failed:"Borrado no confirmado", existing_id_linked:"ID existente vinculado", user_renamed:"Credencial actualizada",
       person_created:"Usuario creado", person_linked:"Asociado con Home Assistant", person_renamed:"Usuario actualizado", keypad_credential_added:"Credencial keypad registrada",
       keypad_credential_deleted:"Credencial keypad borrada", keypad_capture_failed:"Captura keypad fallida", keypad_denied:"Credencial keypad denegada",
-      door_action_executed:"Acción de puerta ejecutada", door_action_failed:"Acción de puerta fallida",
+      door_action_executed:"Acción de puerta ejecutada", door_action_failed:"Acción de puerta fallida", local_lock_succeeded:"Bloqueo local completado", local_lock_failed:"Bloqueo local fallido",
+      door_test_succeeded:"Prueba de puerta completada", door_test_failed:"Prueba de puerta fallida", keypad_button_detected:"Tecla de keypad detectada", keypad_action_ignored:"Tecla de keypad ignorada",
+      test_actions:"Probar acciones", edit_door:"Editar puerta", add_mapping:"Añadir asignación", detect_button:"Detectar tecla", detecting_button:"Pulsa la tecla de acción física del keypad · {seconds}s",
+      raw_action:"Acción bruta del keypad", mapped_action:"Acción de puerta", ignore:"Ignorar", enabled:"Activado", disabled:"Desactivado", internal_id:"ID interno", save_changes:"Guardar cambios",
+      confirm:"Confirmar", important_warning:"Aviso importante", test_warning:"Esto enviará una orden real a {door}. Comprueba la acción seleccionada antes de confirmar.",
+      confirm_action:"CONFIRMAR {action}", edit_keypad:"Editar keypad", edit_fingerprint_reader:"Editar lector de huellas", add_person_title:"Añadir usuario", edit_person_title:"Editar usuario",
+      link_person:"Persona de Home Assistant", create_new_person:"Crear una nueva persona en Home Assistant", reader_settings:"Configuración del lector", entity_settings:"Entidades de Home Assistant",
       left_thumb:"Pulgar izquierdo", left_index:"Índice izquierdo", left_middle:"Corazón izquierdo", left_ring:"Anular izquierdo", left_pinky:"Meñique izquierdo",
       right_thumb:"Pulgar derecho", right_index:"Índice derecho", right_middle:"Corazón derecho", right_ring:"Anular derecho", right_pinky:"Meñique derecho",
       left_hand:"MANO IZQUIERDA", right_hand:"MANO DERECHA"
@@ -515,11 +580,11 @@
     return response.json();
   }
   function showError(message = "") { $("#notice").textContent = message; $("#notice").classList.toggle("visible", Boolean(message)); }
-  async function mutate(path, method, payload) {
+  async function mutate(path, method, payload, options = {}) {
     if (busy) return false;
     busy = true;
     try { await request(path, {method, body: payload === undefined ? undefined : JSON.stringify(payload)}); await refresh(); showError(); return true; }
-    catch (error) { showError(error.message); return false; }
+    catch (error) { if (options.inline) throw error; showError(error.message); return false; }
     finally { busy = false; }
   }
 
@@ -628,18 +693,6 @@
     }).join("") : `<tr><td colspan="6" class="empty">${t("no_records")}</td></tr>`;
   }
 
-  function configureKeypadActionMap(current = {}) {
-    const mapping = {...current};
-    for (const [action,label,fallback] of [["open","prompt_key_open","disarm"],["unlock","prompt_key_unlock",""],["lock","prompt_key_lock","arm_all_zones"]]) {
-      const existing = Object.keys(mapping).find(raw => mapping[raw] === action) ?? fallback;
-      const raw = prompt(t(label),existing);
-      if (raw === null) return null;
-      for (const key of Object.keys(mapping)) if (mapping[key] === action) delete mapping[key];
-      if (raw.trim()) mapping[raw.trim()] = action;
-    }
-    return mapping;
-  }
-
   function doorEntityOptions(selected) {
     return (data.door_entities || []).map(entity => `<option value="${esc(entity.entity_id)}" ${entity.entity_id === selected ? "selected" : ""}>${esc(entity.name)} · ${esc(entity.entity_id)}</option>`).join("");
   }
@@ -648,7 +701,14 @@
     return (entity?.actions || []).map(action => `<option value="${esc(action)}" ${action === selected ? "selected" : ""}>${esc(action)}</option>`).join("");
   }
   function renderDoors() {
-    $("#doors-body").innerHTML = (data.doors || []).map(door => `<div class="door-card" data-door="${esc(door.id)}"><div><label>${t("name")}</label><input class="door-name" value="${esc(door.name)}"><span class="entity">${esc(door.id)}</span></div><div><label>${t("ha_entities")}</label><select class="door-entity" onchange="updateDoorActions('${door.id}')">${doorEntityOptions(door.entity_id)}</select></div><div><label>${t("default_action")}</label><select class="door-action">${actionOptions(door.entity_id,door.default_action || door.open_action)}</select></div><div><span class="status">${esc(door.state || "—")}</span><button style="margin-left:8px" onclick="saveDoor('${door.id}')">${t("save")}</button></div></div>`).join("");
+    $("#doors-body").innerHTML = (data.doors || []).map(door => {
+      const entity = (data.door_entities || []).find(item => item.entity_id === door.entity_id);
+      return `<article class="door-card" data-door="${esc(door.id)}">
+        <div class="door-card-head"><div><h3>${esc(door.name)}</h3><span class="entity">${esc(door.id)}</span></div><span class="status">${esc(door.state || "—")}</span></div>
+        <div class="door-card-grid"><div><span>${t("ha_entities")}</span><strong>${esc(entity?.name || door.entity_id)}</strong><span class="entity">${esc(door.entity_id)}</span></div><div><span>${t("default_action")}</span><strong>${esc(door.default_action || door.open_action)}</strong></div></div>
+        <div class="door-card-actions"><button class="secondary" onclick="openDoorEditor('${door.id}')">${t("edit")}</button><button class="danger" onclick="openDoorTest('${door.id}')">${t("test_actions")}</button></div>
+      </article>`;
+    }).join("");
   }
 
   function renderLogs() {
@@ -665,7 +725,7 @@
     $("#access-reader-count").textContent = data.access_readers?.length ?? 0; $("#door-count").textContent = data.doors?.length ?? 0;
     $("#people-list").innerHTML = (data.people || []).map(person => `<option value="${esc(person.name)}"></option>`).join("");
     $("#management").textContent = data.management_message || t("management_empty");
-    renderPeople(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderLogs(); renderCapture();
+    renderPeople(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderLogs(); renderCapture(); renderKeypadLearning();
   }
   async function refresh() { try { data = await request("state"); render(); showError(); } catch (error) { showError(error.message); } }
 
@@ -702,27 +762,95 @@
   }
   async function closeKeypadModal(cancelRemote=true) { const readerId=$("#keypad-reader").value; if(cancelRemote&&keypadCapturing&&readerId) await request(`keypad/capture/${readerId}`,{method:"DELETE"}).catch(()=>{}); $("#keypad-modal").classList.remove("open"); $("#keypad-modal").setAttribute("aria-hidden","true"); document.body.classList.remove("modal-open"); keypadPerson=null; keypadCapturing=false; }
 
+  function openEditor({title,subtitle="",html,saveLabel=null,onSubmit}) {
+    editorSubmit=onSubmit;
+    $("#editor-title").textContent=title; $("#editor-subtitle").textContent=subtitle;
+    $("#editor-fields").innerHTML=html; $("#editor-error").classList.remove("visible");
+    $("#editor-save").textContent=saveLabel||t("save_changes"); $("#editor-save").className="";
+    $("#editor-modal").classList.add("open"); $("#editor-modal").setAttribute("aria-hidden","false"); document.body.classList.add("modal-open");
+  }
+  async function closeEditor() {
+    if(learningReaderId) await request(`keypads/${learningReaderId}/action-learning`,{method:"DELETE"}).catch(()=>{});
+    learningReaderId=null; editorSubmit=null; $("#editor-modal").classList.remove("open"); $("#editor-modal").setAttribute("aria-hidden","true"); document.body.classList.remove("modal-open");
+  }
+  function openConfirm({title,subtitle="",message,confirmLabel=null,danger=true,onConfirm}) {
+    confirmSubmit=onConfirm; $("#confirm-title").textContent=title; $("#confirm-subtitle").textContent=subtitle; $("#confirm-message").textContent=message;
+    $("#confirm-message").className=`warning-box${danger?" danger":""}`; $("#confirm-action").textContent=confirmLabel||t("confirm"); $("#confirm-action").className=danger?"danger":"";
+    $("#confirm-modal").classList.add("open"); $("#confirm-modal").setAttribute("aria-hidden","false"); document.body.classList.add("modal-open");
+  }
+  function closeConfirm(){confirmSubmit=null;$("#confirm-modal").classList.remove("open");$("#confirm-modal").setAttribute("aria-hidden","true");document.body.classList.remove("modal-open");}
+  const inputField=(label,name,value="",required=true,extra="")=>`<label>${esc(label)}<input name="${esc(name)}" value="${esc(value)}" ${required?"required":""} ${extra}></label>`;
+  const selectField=(label,name,options,selected="",wide=false)=>`<label class="${wide?"wide":""}">${esc(label)}<select name="${esc(name)}">${options.map(item=>`<option value="${esc(item.value)}" ${item.value===selected?"selected":""}>${esc(item.label)}</option>`).join("")}</select></label>`;
+  const doorSelectItems=()=>[{value:"",label:"—"},...(data.doors||[]).map(door=>({value:door.id,label:`${door.name} · ${door.id}`}))];
+  const haPersonSelectItems=()=>[{value:"",label:t("create_new_person")},...(data.ha_people||[]).map(person=>({value:person.entity_id,label:`${person.name} · ${person.entity_id}`}))];
+
+  function openPersonEditor(id=null) {
+    const person=id?(data.people||[]).find(item=>item.id===id):null;
+    const html=`<div class="form-grid">${inputField(t("name"),"name",person?.name||"")}${person?"":selectField(t("link_person"),"ha_person_entity_id",haPersonSelectItems(),"",true)}</div>`;
+    openEditor({title:t(person?"edit_person_title":"add_person_title"),html,onSubmit:async form=>{
+      const name=String(form.get("name")||"").trim(); if(!name)throw new Error(t("prompt_person"));
+      const ok=person?await mutate(`people/${person.id}`,"PUT",{name},{inline:true}):await mutate("people","POST",{name,ha_person_entity_id:String(form.get("ha_person_entity_id")||"")},{inline:true});
+      if(ok)await closeEditor();
+    }});
+  }
+
+  function openDoorEditor(id=null) {
+    const door=id?(data.doors||[]).find(item=>item.id===id):null;
+    const selectedEntity=door?.entity_id||(data.door_entities?.[0]?.entity_id||"");
+    const entities=(data.door_entities||[]).map(item=>({value:item.entity_id,label:`${item.name} · ${item.entity_id}`}));
+    const actions=(data.door_entities||[]).find(item=>item.entity_id===selectedEntity)?.actions||[];
+    const html=`<div class="form-grid">${inputField(t("name"),"name",door?.name||"")}${inputField(t("internal_id"),"id",door?.id||"",true,door?"readonly":"")}${selectField(t("ha_entities"),"entity_id",entities,selectedEntity,true)}${selectField(t("default_action"),"default_action",actions.map(action=>({value:action,label:action})),door?.default_action||actions[0]||"",true)}</div>`;
+    openEditor({title:t(door?"edit_door":"add_door"),subtitle:door?.id||"",html,onSubmit:async form=>{
+      const payload={id:String(form.get("id")||"").trim(),name:String(form.get("name")||"").trim(),entity_id:String(form.get("entity_id")||""),default_action:String(form.get("default_action")||"")};
+      const ok=await mutate(door?`doors/${door.id}`:"doors",door?"PUT":"POST",payload,{inline:true}); if(ok)await closeEditor();
+    }});
+    const entitySelect=$("#editor-form [name=entity_id]"), actionSelect=$("#editor-form [name=default_action]");
+    entitySelect.addEventListener("change",()=>{actionSelect.innerHTML=actionOptions(entitySelect.value,"");});
+  }
+
+  function openDoorTest(id) {
+    const door=(data.doors||[]).find(item=>item.id===id); if(!door)return;
+    const entity=(data.door_entities||[]).find(item=>item.entity_id===door.entity_id), actions=entity?.actions||[];
+    const html=`<div class="form-grid">${selectField(t("action"),"test_action",actions.map(action=>({value:action,label:action.toUpperCase()})),door.default_action||actions[0]||"",true)}<div id="door-test-warning" class="warning-box wide"></div></div>`;
+    openEditor({title:t("test_actions"),subtitle:`${door.name} · ${door.entity_id}`,html,saveLabel:t("confirm_action",{action:(door.default_action||actions[0]||"").toUpperCase()}),onSubmit:async form=>{
+      const action=String(form.get("test_action")||""); const ok=await mutate(`doors/${door.id}/test`,"POST",{action},{inline:true}); if(ok)await closeEditor();
+    }});
+    const select=$("#editor-form [name=test_action]"), warning=$("#door-test-warning"), save=$("#editor-save");
+    const update=()=>{const dangerous=select.value!=="lock";warning.textContent=t("test_warning",{door:door.name});warning.className=`warning-box wide${dangerous?" danger":""}`;save.className=dangerous?"danger":"";save.textContent=t("confirm_action",{action:select.value.toUpperCase()});}; select.addEventListener("change",update);update();
+  }
+
+  function keymapRow(raw="",action="open") { return `<div class="keymap-row"><input class="keymap-raw" value="${esc(raw)}" placeholder="disarm"><select class="keymap-action">${["open","unlock","lock","ignore"].map(value=>`<option value="${value}" ${value===action?"selected":""}>${t(value).toUpperCase()}</option>`).join("")}</select><button type="button" class="danger" onclick="this.closest('.keymap-row').remove()">${t("delete")}</button></div>`; }
+  window.addKeymapRow=(raw="",action="open")=>$("#keymap-list").insertAdjacentHTML("beforeend",keymapRow(raw,action));
+  function collectKeymap(){const result={};document.querySelectorAll("#keymap-list .keymap-row").forEach(row=>{const raw=row.querySelector(".keymap-raw").value.trim(),action=row.querySelector(".keymap-action").value;if(raw&&action!=="ignore")result[raw]=action;});return result;}
+  window.startKeypadLearning=async readerId=>{if(!readerId)return;await request(`keypads/${readerId}/action-learning`,{method:"POST",body:"{}"});learningReaderId=readerId;await refresh();renderKeypadLearning();};
+  function renderKeypadLearning(){if(!learningReaderId||!$("#editor-modal").classList.contains("open"))return;const status=$("#keypad-learning-status"),session=(data.keypad_action_learning||[]).find(item=>item.reader_id===learningReaderId);if(!status)return;if(session?.raw_action){if(![...document.querySelectorAll("#keymap-list .keymap-raw")].some(input=>input.value===session.raw_action))window.addKeymapRow(session.raw_action,"open");status.textContent=`${t("raw_action")}: ${session.raw_action}`;request(`keypads/${learningReaderId}/action-learning`,{method:"DELETE"}).catch(()=>{});learningReaderId=null;}else status.textContent=t("detecting_button",{seconds:session?.seconds_left??60});}
+
+  function openReaderEditor(id=null,type="fingerprint") {
+    const reader=id?(data.access_readers||[]).find(item=>item.id===id):null; type=reader?.reader_type||type;
+    const config={...(reader?.config||{})}, prefix=normalize(reader?.name||type).replace(/[^a-z0-9]+/g,"_");
+    const common=`${inputField(t("name"),"name",reader?.name||"")}${inputField(t("internal_id"),"id",reader?.id||"",true,reader?"readonly":"")}${selectField(t("door"),"door_id",doorSelectItems(),reader?.door_id||data.doors?.[0]?.id||"",true)}${selectField(t("enabled"),"enabled",[{value:"true",label:t("enabled")},{value:"false",label:t("disabled")}],String(reader?.enabled??true),true)}`;
+    const keypadFields=`<div class="form-section"><h3>${t("entity_settings")}</h3></div>${inputField(t("prompt_transaction"),"transaction_entity",config.transaction_entity||`sensor.${prefix}_action_transaction`)}${inputField(t("prompt_code_entity"),"code_entity",config.code_entity||`sensor.${prefix}_action_code`)}${inputField(t("prompt_action_entity"),"action_entity",config.action_entity||`sensor.${prefix}_action`)}<div class="form-section"><h3>${t("action_map")}</h3><p class="muted">${t("capture_intro")}</p><div id="keymap-list" class="keymap-list">${Object.entries(config.action_map||{disarm:"open",arm_all_zones:"lock"}).map(([raw,action])=>keymapRow(raw,action)).join("")}</div><div class="actions"><button type="button" class="secondary" onclick="addKeymapRow()">${t("add_mapping")}</button><button type="button" class="secondary" ${reader?`onclick="startKeypadLearning('${reader.id}')"`:"disabled"}>${t("detect_button")}</button></div><div id="keypad-learning-status" class="learning-status"></div></div>`;
+    const fpDefinitions=[["slot_entity","prompt_slot_entity",true],["enroll_entity","prompt_enroll_entity",true],["cancel_entity","prompt_cancel_entity",true],["delete_entity","prompt_delete_entity",true],["name_registry_entity","prompt_registry_entity",true],["access_event_entity","prompt_access_entity",true],["management_event_entity","prompt_management_entity",true],["fingerprint_count_entity","prompt_count_entity",false],["reader_capacity_entity","prompt_capacity_entity",false],["device_status_entity","prompt_device_entity",false]];
+    const fpFields=config.legacy_autodiscovery?`<div class="form-section"><p class="muted">Legacy entity discovery is active for this reader.</p></div>`:`<div class="form-section"><h3>${t("entity_settings")}</h3></div>${fpDefinitions.map(([key,label,required])=>inputField(t(label),key,config[key]||"",required)).join("")}`;
+    openEditor({title:t(type==="keypad"?"edit_keypad":"edit_fingerprint_reader"),subtitle:reader?.id||"",html:`<div class="form-grid">${common}${type==="keypad"?keypadFields:fpFields}</div>`,onSubmit:async form=>{
+      const payload={id:String(form.get("id")||"").trim(),name:String(form.get("name")||"").trim(),reader_type:type,door_id:String(form.get("door_id")||""),enabled:String(form.get("enabled"))==="true",config:{}};
+      if(type==="keypad")payload.config={transaction_entity:String(form.get("transaction_entity")||"").trim(),code_entity:String(form.get("code_entity")||"").trim(),action_entity:String(form.get("action_entity")||"").trim(),action_map:collectKeymap()};
+      else if(config.legacy_autodiscovery)delete payload.config;else fpDefinitions.forEach(([key])=>{const value=String(form.get(key)||"").trim();if(value)payload.config[key]=value;});
+      const ok=await mutate(reader?`readers/${reader.id}`:"readers",reader?"PUT":"POST",payload,{inline:true});if(ok)await closeEditor();
+    }});
+  }
+
   window.linkHaPerson = (id,entity) => entity && mutate(`people/${id}/ha-person`,"PUT",{ha_person_entity_id:entity});
-  window.createHaPerson = id => { const person=data.people.find(item=>item.id===id); if(person&&confirm(t("confirm_create_person",{name:person.name}))) mutate(`people/${id}/create-ha-person`,"POST"); };
-  window.renamePerson = id => { const person=data.people.find(item=>item.id===id); const name=person&&prompt(t("prompt_rename"),person.name); if(name?.trim()&&name.trim()!==person.name) mutate(`people/${id}`,"PUT",{name:name.trim()}); };
+  window.createHaPerson = id => { const person=data.people.find(item=>item.id===id); if(person)openConfirm({title:t("create_in_ha"),message:t("confirm_create_person",{name:person.name}),onConfirm:async()=>{if(await mutate(`people/${id}/create-ha-person`,"POST"))closeConfirm();}}); };
+  window.renamePerson = id => openPersonEditor(id);
   window.prepareFingerprint = id => { const person=data.people.find(item=>item.id===id); if(!person)return; switchTab("fingerprints"); $("#name").value=person.name; $("#slot").focus(); };
   window.openKeypadModal = id => { const person=data.people.find(item=>item.id===id), keypads=data.access_readers.filter(reader=>reader.reader_type==="keypad"&&reader.enabled&&reader.availability!=="missing"); if(!person||!keypads.length){showError(t("no_keypad"));return;} keypadPerson=person;keypadCapturing=false;$("#keypad-person").textContent=`${person.name} · ${person.ha_person_entity_id}`;$("#keypad-reader").innerHTML=keypads.map(reader=>`<option value="${esc(reader.id)}">${esc(reader.name)}</option>`).join("");$("#keypad-status").textContent=t("capture_intro");$("#keypad-start").disabled=false;$("#keypad-modal").classList.add("open");$("#keypad-modal").setAttribute("aria-hidden","false");document.body.classList.add("modal-open"); };
-  window.deleteKeypadCredential = id => confirm(t("confirm_delete_keypad")) && mutate(`keypad/credentials/${id}`,"DELETE");
+  window.deleteKeypadCredential = id => openConfirm({title:t("delete"),message:t("confirm_delete_keypad"),onConfirm:async()=>{if(await mutate(`keypad/credentials/${id}`,"DELETE"))closeConfirm();}});
   window.associateReader = (id,doorId) => { const reader=data.access_readers.find(item=>item.id===id); if(reader) mutate(`readers/${id}`,"PUT",{name:reader.name,door_id:doorId,enabled:reader.enabled}); };
   window.assignFinger = (readerId,slot) => { selectedReader=readerId; $("#fingerprint-reader").value=readerId; const user=data.users.find(item=>item.reader_id===readerId&&Number(item.slot)===Number(slot)); if(user) openFingerModal("assign",user); };
-  window.deleteFingerprint = (readerId,slot) => confirm(t("confirm_delete_fingerprint",{id:slot,reader:readerName(readerId)})) && mutate(`users/${slot}?reader_id=${encodeURIComponent(readerId)}`,"DELETE");
-  window.updateDoorActions = id => { const row=document.querySelector(`[data-door="${CSS.escape(id)}"]`), entity=row.querySelector(".door-entity").value; row.querySelector(".door-action").innerHTML=actionOptions(entity,""); };
-  window.saveDoor = id => { const row=document.querySelector(`[data-door="${CSS.escape(id)}"]`); mutate(`doors/${id}`,"PUT",{name:row.querySelector(".door-name").value.trim(),entity_id:row.querySelector(".door-entity").value,default_action:row.querySelector(".door-action").value}); };
-  window.editReader = id => {
-    const reader=data.access_readers.find(item=>item.id===id); if(!reader)return;
-    const name=prompt(t("prompt_reader_name"),reader.name); if(!name?.trim())return;
-    const config={...reader.config};
-    const fields=reader.reader_type==="keypad" ? [["transaction_entity","prompt_transaction"],["code_entity","prompt_code_entity"],["action_entity","prompt_action_entity"]] : [["slot_entity","prompt_slot_entity"],["enroll_entity","prompt_enroll_entity"],["cancel_entity","prompt_cancel_entity"],["delete_entity","prompt_delete_entity"],["name_registry_entity","prompt_registry_entity"],["access_event_entity","prompt_access_entity"],["management_event_entity","prompt_management_entity"],["fingerprint_count_entity","prompt_count_entity"],["reader_capacity_entity","prompt_capacity_entity"],["device_status_entity","prompt_device_entity"]];
-    const legacyDiscovery = Boolean(reader.config?.legacy_autodiscovery);
-    if(!legacyDiscovery) for(const [key,label] of fields){const value=prompt(t(label),config[key]||"");if(value===null)return;config[key]=value.trim();}
-    if(reader.reader_type==="keypad"){const mapping=configureKeypadActionMap(config.action_map||{});if(mapping===null)return;config.action_map=mapping;}
-    mutate(`readers/${id}`,"PUT",{name:name.trim(),door_id:reader.door_id,enabled:reader.enabled,...(!legacyDiscovery?{config}:{})});
-  };
+  window.deleteFingerprint = (readerId,slot) => openConfirm({title:t("delete"),message:t("confirm_delete_fingerprint",{id:slot,reader:readerName(readerId)}),onConfirm:async()=>{if(await mutate(`users/${slot}?reader_id=${encodeURIComponent(readerId)}`,"DELETE"))closeConfirm();}});
+  window.openDoorEditor=openDoorEditor; window.openDoorTest=openDoorTest;
+  window.editReader = id => openReaderEditor(id);
 
   $("#language").addEventListener("change",event=>{language=event.target.value;applyLanguage();});
   document.querySelectorAll(".tab-button").forEach(button=>button.addEventListener("click",()=>switchTab(button.dataset.tab)));
@@ -734,12 +862,15 @@
   ["#finger-close","#finger-cancel"].forEach(id=>$(id).addEventListener("click",closeFingerModal)); $("#finger-modal").addEventListener("click",event=>event.target===$("#finger-modal")&&closeFingerModal());
   $("#keypad-start").addEventListener("click",async()=>{if(!keypadPerson)return;const reader_id=$("#keypad-reader").value;const ok=await mutate("keypad/capture","POST",{person_id:keypadPerson.id,reader_id});if(ok){keypadCapturing=true;$("#keypad-start").disabled=true;$("#keypad-status").textContent=t("capture_wait");}});
   ["#keypad-close","#keypad-cancel"].forEach(id=>$(id).addEventListener("click",()=>closeKeypadModal())); $("#keypad-modal").addEventListener("click",event=>event.target===$("#keypad-modal")&&closeKeypadModal());
-  $("#add-person").addEventListener("click",async()=>{const name=prompt(t("prompt_person"));if(!name?.trim())return;const existing=data.ha_people.find(person=>normalize(person.name)===normalize(name));await mutate("people","POST",{name:name.trim(),ha_person_entity_id:existing?.entity_id||""});});
-  $("#add-door").addEventListener("click",async()=>{const name=prompt(t("prompt_door_name"));if(!name?.trim())return;const id=prompt(t("prompt_door_id"),normalize(name).replace(/[^a-z0-9]+/g,"_"));if(!id?.trim())return;const entity=prompt(t("choose_door_entity"),data.door_entities[0]?.entity_id||"");const option=data.door_entities.find(item=>item.entity_id===entity?.trim());if(!option){showError(t("choose_door_entity"));return;}const action=prompt(t("choose_action"),option.actions[0]||"");if(!action)return;await mutate("doors","POST",{id:id.trim(),name:name.trim(),entity_id:entity.trim(),default_action:action.trim()});});
-  $("#add-keypad").addEventListener("click",async()=>{const name=prompt(t("prompt_reader_name"));if(!name?.trim())return;const id=prompt(t("prompt_reader_id"),normalize(name).replace(/[^a-z0-9]+/g,"_"));if(!id?.trim())return;const door=prompt(t("prompt_door_link",{doors:data.doors.map(item=>item.id).join(", ")}),data.doors[0]?.id||"");if(!door?.trim())return;const prefix=normalize(name).replace(/[^a-z0-9]+/g,"_");const transaction=prompt(t("prompt_transaction"),`sensor.${prefix}_action_transaction`),code=prompt(t("prompt_code_entity"),`sensor.${prefix}_action_code`),action=prompt(t("prompt_action_entity"),`sensor.${prefix}_action`);if(!transaction||!code||!action)return;const action_map=configureKeypadActionMap({disarm:"open",arm_all_zones:"lock"});if(action_map===null)return;await mutate("readers","POST",{id:id.trim(),name:name.trim(),reader_type:"keypad",door_id:door.trim(),config:{transaction_entity:transaction.trim(),code_entity:code.trim(),action_entity:action.trim(),action_map}});});
-  $("#add-fingerprint-reader").addEventListener("click",async()=>{const name=prompt(t("prompt_reader_name"));if(!name?.trim())return;const id=prompt(t("prompt_reader_id"),normalize(name).replace(/[^a-z0-9]+/g,"_"));if(!id?.trim())return;const door=prompt(t("prompt_door_link",{doors:data.doors.map(item=>item.id).join(", ")}),data.doors[0]?.id||"");if(!door?.trim())return;const fields=[["slot_entity","prompt_slot_entity"],["enroll_entity","prompt_enroll_entity"],["cancel_entity","prompt_cancel_entity"],["delete_entity","prompt_delete_entity"],["name_registry_entity","prompt_registry_entity"],["access_event_entity","prompt_access_entity"],["management_event_entity","prompt_management_entity"]],config={};for(const [key,label] of fields){const value=prompt(t(label),"");if(!value)return;config[key]=value.trim();}for(const [key,label] of [["fingerprint_count_entity","prompt_count_entity"],["reader_capacity_entity","prompt_capacity_entity"],["device_status_entity","prompt_device_entity"]]){const value=prompt(t(label),"");if(value===null)return;if(value.trim())config[key]=value.trim();}await mutate("readers","POST",{id:id.trim(),name:name.trim(),reader_type:"fingerprint",door_id:door.trim(),config});});
+  $("#editor-form").addEventListener("submit",async event=>{event.preventDefault();if(!editorSubmit||busy)return;const error=$("#editor-error");error.classList.remove("visible");try{await editorSubmit(new FormData(event.currentTarget));}catch(reason){error.textContent=reason.message;error.classList.add("visible");}});
+  ["#editor-close","#editor-cancel"].forEach(id=>$(id).addEventListener("click",closeEditor)); $("#editor-modal").addEventListener("click",event=>event.target===$("#editor-modal")&&closeEditor());
+  ["#confirm-close","#confirm-cancel"].forEach(id=>$(id).addEventListener("click",closeConfirm)); $("#confirm-modal").addEventListener("click",event=>event.target===$("#confirm-modal")&&closeConfirm()); $("#confirm-action").addEventListener("click",async()=>{if(confirmSubmit&&!busy)await confirmSubmit();});
+  $("#add-person").addEventListener("click",()=>openPersonEditor());
+  $("#add-door").addEventListener("click",()=>openDoorEditor());
+  $("#add-keypad").addEventListener("click",()=>openReaderEditor(null,"keypad"));
+  $("#add-fingerprint-reader").addEventListener("click",()=>openReaderEditor(null,"fingerprint"));
   $("#log-retention").addEventListener("change",event=>mutate("settings/log-retention","PUT",{days:Number(event.target.value)}));
-  document.addEventListener("keydown",event=>{if(event.key!=="Escape")return;if(fingerModal)closeFingerModal();if(keypadPerson)closeKeypadModal();});
+  document.addEventListener("keydown",event=>{if(event.key!=="Escape")return;if(fingerModal)closeFingerModal();else if(keypadPerson)closeKeypadModal();else if($("#editor-modal").classList.contains("open"))closeEditor();else if($("#confirm-modal").classList.contains("open"))closeConfirm();});
 
   applyLanguage(); refresh(); setInterval(refresh,3000);
 })();
