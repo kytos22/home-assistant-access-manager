@@ -12,7 +12,7 @@ Access Manager does not connect directly to physical hardware. Every reader, key
 | --- | --- | --- |
 | Fingerprint terminal | Reference hardware | [ESPHome Fingerprint Access Reader](https://github.com/kytos22/esphome-fingerprint-access-reader) on a Waveshare ESP32-C6-Touch-LCD-1.47 with a Grow-compatible UART fingerprint sensor. |
 | Zigbee/MQTT keypad | Protocol compatible | Three Home Assistant entities that expose transaction, code/tag and semantic action. There is no model whitelist. |
-| Door contact | Optional for auto-lock | A `binary_sensor.*` entity whose Home Assistant device class is `door`. |
+| Door contact | Optional for auto-lock; required for open-door alerts | A `binary_sensor.*` entity whose Home Assistant device class is `door`. |
 | Door actuator | Entity compatible | A supported `lock`, `switch`, `button`, `input_button` or `cover` entity. |
 
 <p align="center">
@@ -30,7 +30,7 @@ The image identifies the exact display/controller used by the reference firmware
 - Explicit links to Home Assistant `person.*` entities.
 - Multiple fingerprint readers with independent physical ID spaces.
 - Per-person keypad credentials identified by `code/tag`, with physical capture or protected manual entry; the keypad itself does not know users.
-- Debounced keypad packet assembly that waits for transaction, code/tag, and action before consuming an attempt.
+- Debounced keypad packet assembly that preserves transient transaction, code/tag, and action events before Home Assistant clears their states.
 - Keyed HMAC storage for keypad credentials; plaintext secrets are never persisted.
 - Doors backed by an existing Home Assistant `lock`, `switch`, `button`, `input_button` or `cover` entity.
 - Capability-aware direct door actions after successful authentication.
@@ -39,7 +39,8 @@ The image identifies the exact display/controller used by the reference firmware
 - Two-tap local display lock requests from compatible readers; unauthenticated local open/unlock requests are rejected.
 - Configurable log retention with a 10,000-row hard safety limit.
 - Native Home Assistant app log-level configuration while routine HTTP request logging remains disabled.
-- Native Home Assistant auto-lock automations with 5, 10, 15, 20, 30, or 60 minute delays and an optional closed-door sensor check.
+- Guided native Home Assistant automations for auto-lock, door-left-open alerts, and denied-access alerts.
+- One automation of each type per door, with optional `notify.*` delivery or persistent Home Assistant notifications for alerts.
 - Strict automation ownership checks: Access Manager never edits or deletes unrelated Home Assistant automations.
 - Persistent SQLite data stored in the add-on `/data` directory.
 - Normalized `access_manager_credential` and `access_manager_door_action` Home Assistant events.
@@ -106,7 +107,7 @@ Access Manager intentionally starts with an empty database.
 2. Add a door in **Doors** and choose an existing Home Assistant entity plus its default authentication action.
 3. Add fingerprint readers or keypads and assign each one to a door.
 4. Enroll or link credentials.
-5. Optionally add native auto-lock rules in **Automations** and select a door contact sensor when the delay should start after the physical door closes.
+5. Optionally add native auto-lock, door-left-open, or denied-access rules in **Automations**. Alerts can use a persistent Home Assistant notification or an available `notify.*` entity.
 
 No Home Assistant automation is required to operate the door. Access Manager calls the configured entity service directly after an authorized credential. Disable older automations that also open the same door to avoid duplicate commands.
 
@@ -179,7 +180,13 @@ The three Home Assistant entities may update a few milliseconds apart. Access Ma
 
 ## Managed Home Assistant automations
 
-The **Automations** tab creates ordinary Home Assistant automations for doors backed by `lock.*` entities. Without a contact sensor, an auto-lock rule waits until the lock has remained `unlocked` for the selected delay, verifies that it is still unlocked, and then calls `lock.lock`. When a `binary_sensor.*` with the `door` device class is selected, closing the contact starts the delay; at the end, the rule locks only if the lock is still unlocked and the door is still closed.
+The **Automations** tab creates guided, ordinary Home Assistant automations. Select the type first, then the door and its settings. Access Manager allows one rule of each type per door:
+
+- **Auto-lock** is available for doors backed by `lock.*`. Without a contact sensor it locks after the entity has remained `unlocked` for the selected delay. With a `binary_sensor.*` whose device class is `door`, closing the contact starts the delay and the final action verifies that the lock remains unlocked and the contact remains closed.
+- **Door left open** requires a door contact sensor and sends an alert after the contact has remained open for the selected delay.
+- **Denied access** listens for Access Manager credential events for that door and sends an alert after the selected number of denied attempts occurs within the configured time window.
+
+Alert rules default to a persistent Home Assistant notification, which needs no additional setup. If Home Assistant exposes compatible `notify.*` entities, the editor also offers them as delivery targets.
 
 Access Manager records every automation it creates and gives it a dedicated `access_manager_*` configuration ID, an `[Access Manager]` alias, and an ownership description. Update and delete operations require the local record and those Home Assistant ownership markers to agree. The panel does not list, import, edit, or delete automations outside that scope.
 

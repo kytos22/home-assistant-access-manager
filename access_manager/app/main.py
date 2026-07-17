@@ -112,6 +112,11 @@ AUTOMATION_ID_PREFIX = "access_manager_"
 AUTOMATION_ALIAS_PREFIX = "[Access Manager]"
 AUTOMATION_DESCRIPTION_MARKER = "Managed by Access Manager."
 AUTO_LOCK_DELAYS = (5, 10, 15, 20, 30, 60)
+DOOR_OPEN_DELAYS = (1, 2, 5, 10, 15, 20, 30, 60)
+DENIED_ATTEMPT_THRESHOLDS = (1, 2, 3, 5, 10)
+DENIED_ATTEMPT_WINDOWS = (1, 2, 5, 10, 15, 30)
+KEYPAD_PACKET_SETTLE_SECONDS = 0.1
+KEYPAD_PACKET_MAX_SPAN_SECONDS = 2.0
 
 
 def now_iso():
@@ -1390,6 +1395,25 @@ class HomeAssistant:
             )
         return sorted(result, key=lambda item: normalized(item["name"]))
 
+    def notification_entities(self):
+        result = []
+        for entity_id, state in self.states.items():
+            if not str(entity_id).startswith("notify."):
+                continue
+            result.append(
+                {
+                    "entity_id": entity_id,
+                    "name": state.get("attributes", {}).get("friendly_name") or entity_id,
+                    "state": state.get("state"),
+                }
+            )
+        return sorted(result, key=lambda item: normalized(item["name"]))
+
+    def is_notification_entity(self, entity_id):
+        return not entity_id or (
+            str(entity_id).startswith("notify.") and entity_id in self.states
+        )
+
     def manageable_entities(self):
         allowed = {"number", "button", "text", "sensor", "binary_sensor"}
         result = []
@@ -1796,6 +1820,7 @@ class FingerprintAdmin:
         self.keypad_learning_sessions = {}
         self.last_keypad_actions = {}
         self.keypad_packet_tasks = {}
+        self.keypad_packet_buffers = {}
 
     async def startup(self, _app):
         await self.ha.start()
@@ -1868,6 +1893,29 @@ class FingerprintAdmin:
                 ):
                     self.record_learned_keypad_action(reader, raw_action, learning)
                     continue
+            packet_field = next(
+                (
+                    field
+                    for field, configured_entity in (
+                        ("transaction", config.get("transaction_entity")),
+                        ("code", config.get("code_entity")),
+                        ("action", config.get("action_entity")),
+                    )
+                    if entity_id == configured_entity
+                ),
+                None,
+            )
+            value = str((state or {}).get("state", ""))
+            if packet_field is None or not self.valid_keypad_value(value):
+                # Zigbee2MQTT clears these short-lived entities after publishing
+                # an attempt. Keep the valid event snapshot instead of replacing
+                # it with the subsequent empty/unknown state.
+                continue
+            packet = self.keypad_packet_buffers.setdefault(
+                reader["id"], {"values": {}, "observed": {}}
+            )
+            packet["values"][packet_field] = value
+            packet["observed"][packet_field] = asyncio.get_running_loop().time()
             previous = self.keypad_packet_tasks.pop(reader["id"], None)
             if previous and not previous.done():
                 previous.cancel()
@@ -1890,11 +1938,46 @@ class FingerprintAdmin:
 
     async def consume_keypad_packet(self, reader_id):
         try:
-            # Zigbee/MQTT integrations commonly update transaction, code and
-            # action in quick succession. Read them only after the packet settles.
-            await asyncio.sleep(0.5)
-            await self.ha.refresh_states()
-            await self.process_keypad_packet(reader_id)
+            # Zigbee/MQTT integrations publish transaction, code and action in
+            # one attempt, but Home Assistant exposes them as separate and very
+            # short-lived state changes. Assemble the event snapshots without a
+            # later REST refresh, which may only see their cleared values.
+            await asyncio.sleep(KEYPAD_PACKET_SETTLE_SECONDS)
+            packet = self.keypad_packet_buffers.get(reader_id)
+            if not packet:
+                return
+            required = {"transaction", "code", "action"}
+            if not required.issubset(packet["values"]):
+                await asyncio.sleep(KEYPAD_PACKET_MAX_SPAN_SECONDS)
+                if self.keypad_packet_buffers.get(reader_id) is packet:
+                    self.keypad_packet_buffers.pop(reader_id, None)
+                return
+            observed = packet["observed"]
+            latest = max(observed[field] for field in required)
+            if any(
+                latest - observed[field] > KEYPAD_PACKET_MAX_SPAN_SECONDS
+                for field in required
+            ):
+                packet["values"] = {
+                    field: value
+                    for field, value in packet["values"].items()
+                    if latest - observed[field] <= KEYPAD_PACKET_MAX_SPAN_SECONDS
+                }
+                packet["observed"] = {
+                    field: timestamp
+                    for field, timestamp in observed.items()
+                    if latest - timestamp <= KEYPAD_PACKET_MAX_SPAN_SECONDS
+                }
+                await asyncio.sleep(KEYPAD_PACKET_MAX_SPAN_SECONDS)
+                if self.keypad_packet_buffers.get(reader_id) is packet:
+                    self.keypad_packet_buffers.pop(reader_id, None)
+                return
+            snapshot = dict(packet["values"])
+            self.keypad_packet_buffers.pop(reader_id, None)
+            current = asyncio.current_task()
+            if self.keypad_packet_tasks.get(reader_id) is current:
+                self.keypad_packet_tasks.pop(reader_id, None)
+            await self.process_keypad_packet(reader_id, snapshot)
         except asyncio.CancelledError:
             return
         except Exception as error:
@@ -1904,18 +1987,23 @@ class FingerprintAdmin:
             if self.keypad_packet_tasks.get(reader_id) is current:
                 self.keypad_packet_tasks.pop(reader_id, None)
 
-    async def process_keypad_packet(self, reader_id):
+    async def process_keypad_packet(self, reader_id, packet=None):
         reader = self.registry.reader(reader_id)
         if not reader or not reader["enabled"] or reader["reader_type"] != "keypad":
             return False
         config = reader.get("config", {})
-        transaction = self.ha.states.get(
-            config.get("transaction_entity"), {}
-        ).get("state")
-        code = self.ha.states.get(config.get("code_entity"), {}).get("state")
-        keypad_action = self.ha.states.get(
-            config.get("action_entity"), {}
-        ).get("state")
+        if packet is None:
+            transaction = self.ha.states.get(
+                config.get("transaction_entity"), {}
+            ).get("state")
+            code = self.ha.states.get(config.get("code_entity"), {}).get("state")
+            keypad_action = self.ha.states.get(
+                config.get("action_entity"), {}
+            ).get("state")
+        else:
+            transaction = packet.get("transaction")
+            code = packet.get("code")
+            keypad_action = packet.get("action")
         if not all(
             self.valid_keypad_value(value)
             for value in (transaction, code, keypad_action)
@@ -2199,9 +2287,13 @@ class FingerprintAdmin:
                 "doors": doors,
                 "door_entities": self.ha.door_entities(),
                 "door_sensors": self.ha.door_sensor_entities(),
+                "notification_entities": self.ha.notification_entities(),
                 "access_readers": readers,
                 "managed_automations": managed_automations,
                 "auto_lock_delays": list(AUTO_LOCK_DELAYS),
+                "door_open_delays": list(DOOR_OPEN_DELAYS),
+                "denied_attempt_thresholds": list(DENIED_ATTEMPT_THRESHOLDS),
+                "denied_attempt_windows": list(DENIED_ATTEMPT_WINDOWS),
                 "captures": self.active_captures(),
                 "keypad_action_learning": self.active_keypad_learning(),
                 "last_keypad_actions": self.last_keypad_actions,
@@ -2708,6 +2800,14 @@ class FingerprintAdmin:
         return f"{AUTOMATION_ID_PREFIX}auto_lock_{door_id}"
 
     @staticmethod
+    def door_open_automation_id(door_id):
+        return f"{AUTOMATION_ID_PREFIX}door_open_{door_id}"
+
+    @staticmethod
+    def denied_access_automation_id(door_id):
+        return f"{AUTOMATION_ID_PREFIX}denied_access_{door_id}"
+
+    @staticmethod
     def owned_automation_config(config, expected_id):
         if not isinstance(config, dict):
             return False
@@ -2813,6 +2913,138 @@ class FingerprintAdmin:
             "mode": "restart",
         }
 
+    @staticmethod
+    def notification_action(title, message, notification_entity=""):
+        if notification_entity:
+            return {
+                "action": "notify.send_message",
+                "target": {"entity_id": notification_entity},
+                "data": {"message": message},
+            }
+        return {
+            "action": "notify.persistent_notification",
+            "data": {"title": title, "message": message},
+        }
+
+    @classmethod
+    def build_door_open_config(
+        cls, door, config_id, delay_minutes, door_sensor_entity,
+        notification_entity="",
+    ):
+        return {
+            "id": config_id,
+            "alias": (
+                f"{AUTOMATION_ALIAS_PREFIX} Door open alert for {door['name']} "
+                f"after {delay_minutes} minutes"
+            ),
+            "description": (
+                f"{AUTOMATION_DESCRIPTION_MARKER} "
+                f"Door-open alert for Access Manager door {door['id']}."
+            ),
+            "triggers": [
+                {
+                    "trigger": "state",
+                    "entity_id": door_sensor_entity,
+                    "to": "on",
+                    "for": {
+                        "hours": delay_minutes // 60,
+                        "minutes": delay_minutes % 60,
+                        "seconds": 0,
+                    },
+                }
+            ],
+            "conditions": [
+                {
+                    "condition": "state",
+                    "entity_id": door_sensor_entity,
+                    "state": "on",
+                }
+            ],
+            "actions": [
+                cls.notification_action(
+                    "Door left open",
+                    (
+                        f"{door['name']} has remained open for "
+                        f"{delay_minutes} minutes."
+                    ),
+                    notification_entity,
+                )
+            ],
+            "mode": "single",
+        }
+
+    @staticmethod
+    def denied_event_trigger(door_id):
+        return {
+            "trigger": "event",
+            "event_type": "access_manager_credential",
+            "event_data": {"door_id": door_id, "authorized": False},
+        }
+
+    @classmethod
+    def build_denied_access_config(
+        cls, door, config_id, attempt_threshold, window_minutes,
+        notification_entity="",
+    ):
+        trigger = cls.denied_event_trigger(door["id"])
+        actions = []
+        if attempt_threshold > 1:
+            actions.append(
+                {
+                    "wait_for_trigger": [dict(trigger)],
+                    "timeout": {
+                        "hours": window_minutes // 60,
+                        "minutes": window_minutes % 60,
+                        "seconds": 0,
+                    },
+                    "continue_on_timeout": False,
+                }
+            )
+        if attempt_threshold > 2:
+            actions.append(
+                {
+                    "repeat": {
+                        "count": attempt_threshold - 2,
+                        "sequence": [
+                            {
+                                "wait_for_trigger": [dict(trigger)],
+                                "timeout": "{{ wait.remaining }}",
+                                "continue_on_timeout": False,
+                            }
+                        ],
+                    }
+                }
+            )
+        noun = "attempt" if attempt_threshold == 1 else "attempts"
+        actions.append(
+            cls.notification_action(
+                "Denied access alert",
+                (
+                    f"Access Manager detected {attempt_threshold} denied access {noun} "
+                    f"at {door['name']} within {window_minutes} minutes."
+                ),
+                notification_entity,
+            )
+        )
+        return {
+            "id": config_id,
+            "alias": (
+                f"{AUTOMATION_ALIAS_PREFIX} Denied access alert for {door['name']}"
+            ),
+            "description": (
+                f"{AUTOMATION_DESCRIPTION_MARKER} "
+                f"Denied-access alert for Access Manager door {door['id']}."
+            ),
+            "triggers": [trigger],
+            "conditions": [],
+            "actions": actions,
+            # While the first run waits for the configured threshold, subsequent
+            # denied events are consumed by wait_for_trigger instead of starting
+            # overlapping counters.
+            "mode": "single",
+            "max_exceeded": "silent",
+        }
+
     async def resolve_automation_entity(self, config_id):
         for _attempt in range(4):
             await self.ha.refresh_states()
@@ -2821,6 +3053,61 @@ class FingerprintAdmin:
                 return entity_id
             await asyncio.sleep(0.25)
         return None
+
+    def automation_door(self, door_id):
+        door = next(
+            (item for item in self.registry.doors() if item["id"] == door_id), None
+        )
+        if not door:
+            raise web.HTTPNotFound(text="Door not found")
+        return door
+
+    def automation_notification_entity(self, payload):
+        entity_id = str(payload.get("notification_entity", "")).strip()
+        if not self.ha.is_notification_entity(entity_id):
+            raise web.HTTPBadRequest(
+                text="Select an available Home Assistant notification entity"
+            )
+        return entity_id
+
+    async def persist_managed_automation(
+        self, automation_type, door, config_id, enabled, config, stored_config,
+        event_detail,
+    ):
+        local = self.registry.managed_automation(config_id)
+        current = await self.ha.automation_config(config_id)
+        if not local and current:
+            raise web.HTTPConflict(
+                text="That Home Assistant automation ID already exists outside Access Manager"
+            )
+        if local and (
+            local["ha_config_id"] != config_id
+            or local["automation_type"] != automation_type
+            or local["door_id"] != door["id"]
+        ):
+            raise web.HTTPConflict(text="The managed automation identity does not match")
+        if current and not self.owned_automation_config(current, config_id):
+            raise web.HTTPConflict(
+                text="The Home Assistant automation is no longer owned by Access Manager"
+            )
+        await self.ha.save_automation_config(config_id, config)
+        self.registry.upsert_managed_automation(
+            config_id, automation_type, door["id"], config_id, enabled,
+            stored_config,
+        )
+        entity_id = await self.resolve_automation_entity(config_id)
+        if not entity_id:
+            raise web.HTTPBadGateway(
+                text="Home Assistant saved the automation but did not expose its entity"
+            )
+        await self.ha.call_service(
+            "automation", "turn_on" if enabled else "turn_off",
+            {"entity_id": entity_id},
+        )
+        self.registry.add_event("automation_saved", detail=event_detail)
+        return web.json_response(
+            {"ok": True, "automation_id": config_id, "entity_id": entity_id}
+        )
 
     async def save_auto_lock_automation(self, request):
         self.require_admin_request(request)
@@ -2838,11 +3125,7 @@ class FingerprintAdmin:
                 text="Select an available binary sensor with the door device class"
             )
         enabled = bool(payload.get("enabled", True))
-        door = next(
-            (item for item in self.registry.doors() if item["id"] == door_id), None
-        )
-        if not door:
-            raise web.HTTPNotFound(text="Door not found")
+        door = self.automation_door(door_id)
         if not str(door.get("entity_id", "")).startswith("lock."):
             raise web.HTTPBadRequest(
                 text="Native auto-lock is available only for Home Assistant lock entities"
@@ -2850,44 +3133,83 @@ class FingerprintAdmin:
         if "lock" not in self.ha.door_actions(door["entity_id"]):
             raise web.HTTPBadRequest(text="This entity does not support locking")
         config_id = self.auto_lock_automation_id(door_id)
-        local = self.registry.managed_automation(config_id)
-        current = await self.ha.automation_config(config_id)
-        if not local and current:
-            raise web.HTTPConflict(
-                text="That Home Assistant automation ID already exists outside Access Manager"
-            )
-        if local and local["ha_config_id"] != config_id:
-            raise web.HTTPConflict(text="The managed automation identity does not match")
-        if current and not self.owned_automation_config(current, config_id):
-            raise web.HTTPConflict(
-                text="The Home Assistant automation is no longer owned by Access Manager"
-            )
         config = self.build_auto_lock_config(
             door, config_id, delay_minutes, door_sensor_entity
         )
-        await self.ha.save_automation_config(config_id, config)
-        self.registry.upsert_managed_automation(
-            config_id, "auto_lock", door_id, config_id, enabled,
+        return await self.persist_managed_automation(
+            "auto_lock", door, config_id, enabled, config,
             {
                 "delay_minutes": delay_minutes,
                 "door_sensor_entity": door_sensor_entity,
             },
+            f"{door['name']} · auto-lock · {delay_minutes} min",
         )
-        entity_id = await self.resolve_automation_entity(config_id)
-        if not entity_id:
-            raise web.HTTPBadGateway(
-                text="Home Assistant saved the automation but did not expose its entity"
+
+    async def save_door_open_automation(self, request):
+        self.require_admin_request(request)
+        payload = await request.json()
+        door_id = str(payload.get("door_id", "")).strip()
+        try:
+            delay_minutes = int(payload.get("delay_minutes"))
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text="Select a valid door-open delay")
+        if delay_minutes not in DOOR_OPEN_DELAYS:
+            raise web.HTTPBadRequest(text="Select a supported door-open delay")
+        door_sensor_entity = str(payload.get("door_sensor_entity", "")).strip()
+        if not self.ha.is_door_sensor(door_sensor_entity):
+            raise web.HTTPBadRequest(
+                text="Select an available binary sensor with the door device class"
             )
-        await self.ha.call_service(
-            "automation", "turn_on" if enabled else "turn_off",
-            {"entity_id": entity_id},
+        notification_entity = self.automation_notification_entity(payload)
+        enabled = bool(payload.get("enabled", True))
+        door = self.automation_door(door_id)
+        config_id = self.door_open_automation_id(door_id)
+        config = self.build_door_open_config(
+            door, config_id, delay_minutes, door_sensor_entity,
+            notification_entity,
         )
-        self.registry.add_event(
-            "automation_saved",
-            detail=f"{door['name']} · auto-lock · {delay_minutes} min",
+        return await self.persist_managed_automation(
+            "door_open", door, config_id, enabled, config,
+            {
+                "delay_minutes": delay_minutes,
+                "door_sensor_entity": door_sensor_entity,
+                "notification_entity": notification_entity,
+            },
+            f"{door['name']} · door-open alert · {delay_minutes} min",
         )
-        return web.json_response(
-            {"ok": True, "automation_id": config_id, "entity_id": entity_id}
+
+    async def save_denied_access_automation(self, request):
+        self.require_admin_request(request)
+        payload = await request.json()
+        door_id = str(payload.get("door_id", "")).strip()
+        try:
+            attempt_threshold = int(payload.get("attempt_threshold"))
+            window_minutes = int(payload.get("window_minutes"))
+        except (TypeError, ValueError):
+            raise web.HTTPBadRequest(text="Select a valid denied-attempt threshold")
+        if attempt_threshold not in DENIED_ATTEMPT_THRESHOLDS:
+            raise web.HTTPBadRequest(text="Select a supported attempt threshold")
+        if window_minutes not in DENIED_ATTEMPT_WINDOWS:
+            raise web.HTTPBadRequest(text="Select a supported attempt window")
+        notification_entity = self.automation_notification_entity(payload)
+        enabled = bool(payload.get("enabled", True))
+        door = self.automation_door(door_id)
+        config_id = self.denied_access_automation_id(door_id)
+        config = self.build_denied_access_config(
+            door, config_id, attempt_threshold, window_minutes,
+            notification_entity,
+        )
+        return await self.persist_managed_automation(
+            "denied_access", door, config_id, enabled, config,
+            {
+                "attempt_threshold": attempt_threshold,
+                "window_minutes": window_minutes,
+                "notification_entity": notification_entity,
+            },
+            (
+                f"{door['name']} · denied-access alert · "
+                f"{attempt_threshold}/{window_minutes} min"
+            ),
         )
 
     async def delete_managed_automation(self, request):
@@ -2966,6 +3288,12 @@ class FingerprintAdmin:
         app.router.add_post("/api/readers", self.create_reader)
         app.router.add_put("/api/readers/{reader_id}", self.update_reader)
         app.router.add_put("/api/automations/auto-lock", self.save_auto_lock_automation)
+        app.router.add_put(
+            "/api/automations/door-open", self.save_door_open_automation
+        )
+        app.router.add_put(
+            "/api/automations/denied-access", self.save_denied_access_automation
+        )
         app.router.add_delete(
             "/api/automations/{automation_id}", self.delete_managed_automation
         )

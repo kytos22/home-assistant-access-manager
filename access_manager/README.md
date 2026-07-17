@@ -15,7 +15,7 @@ Access Manager is an administrator-only Home Assistant add-on for managing peopl
 - Emits one normalized `access_manager_credential` event for automations.
 - Provides English and Spanish interfaces.
 - Shows the installed app version in the header.
-- Creates native auto-lock rules with an optional closed-door contact check.
+- Creates guided native auto-lock, door-left-open, and denied-access rules with one rule of each type per door.
 - Exposes `warning`, `info`, and `debug` application log levels in the Home Assistant app configuration; routine HTTP request logging remains disabled.
 - Applies configurable, time-based log retention and a 10,000-row safety cap.
 
