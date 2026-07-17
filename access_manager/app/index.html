@@ -518,8 +518,9 @@
       zigbee_hint:"Zigbee keypads normally sleep. Their status shows whether they are configured in Home Assistant, not whether they are continuously online.",
       ha_entities:"Home Assistant entities", add_door:"Add door", door_hint:"An authorized credential directly runs the selected default action. Lock entities expose open only when the device reports that capability.",
       add_automation:"Add automation", automation_hint:"These are native Home Assistant automations. Access Manager only updates or deletes automations that it created and still owns.",
-      auto_lock:"Auto-lock", auto_lock_delay:"Lock after", edit_automation:"Edit automation", no_automations:"No managed automations", no_lock_doors:"Add a door backed by a lock entity first.",
-      door_sensor:"Door contact sensor", no_door_sensor:"No sensor (lock after unlock)", door_sensor_hint:"Optional. Closing the contact starts the delay; the lock runs only if the door remains closed.",
+      automation_type:"Automation type", auto_lock:"Auto-lock", auto_lock_delay:"Lock after", door_open_alert:"Door left open alert", door_open_delay:"Alert after", denied_access_alert:"Denied access alert", denied_attempt_threshold:"Notify after", denied_attempt_window:"Within", edit_automation:"Edit automation", no_automations:"No managed automations", no_automation_slots:"No compatible door is available for another automation of this type.",
+      door_sensor:"Door contact sensor", no_door_sensor:"No sensor (lock after unlock)", door_sensor_hint:"Optional for auto-lock. Closing the contact starts the delay; the lock runs only if the door remains closed.", door_sensor_required_hint:"Required. The alert starts only when this contact remains open for the selected time.",
+      notification_target:"Notification target", persistent_notification:"Home Assistant persistent notification", notification_hint:"Persistent notifications work without additional setup. Available notify entities can be selected for device delivery.", one_attempt:"1 denied attempt", attempts:"{count} denied attempts", denied_summary:"{attempts} within {minutes}",
       minutes:"{count} minutes", one_hour:"1 hour", automation_native:"Native Home Assistant automation", confirm_delete_automation:"Delete this Access Manager automation from Home Assistant?",
       activity_log:"Activity log", retention:"Retention", retention_hint:"Expired entries are deleted automatically. A hard safety limit of 10,000 entries also applies.",
       date:"Date", event:"Event", confidence:"Confidence", detail:"Detail", no_users:"No users", no_credentials:"No credentials",
@@ -579,8 +580,9 @@
       zigbee_hint:"Los keypads Zigbee suelen dormir. El estado indica si están configurados en Home Assistant, no si permanecen continuamente online.",
       ha_entities:"Entidades de Home Assistant", add_door:"Añadir puerta", door_hint:"Una credencial autorizada ejecuta directamente la acción predeterminada. En entidades lock, open solo aparece si el dispositivo declara esa capacidad.",
       add_automation:"Añadir automatización", automation_hint:"Son automatizaciones nativas de Home Assistant. Access Manager solo actualiza o borra las que ha creado y siguen siendo de su propiedad.",
-      auto_lock:"Cierre automático", auto_lock_delay:"Cerrar después de", edit_automation:"Editar automatización", no_automations:"No hay automatizaciones gestionadas", no_lock_doors:"Primero añade una puerta respaldada por una entidad lock.",
-      door_sensor:"Sensor de contacto de puerta", no_door_sensor:"Sin sensor (cerrar tras desbloquear)", door_sensor_hint:"Opcional. Al cerrar el contacto empieza la espera; solo cerrará si la puerta sigue cerrada.",
+      automation_type:"Tipo de automatización", auto_lock:"Cierre automático", auto_lock_delay:"Cerrar después de", door_open_alert:"Aviso de puerta abierta", door_open_delay:"Avisar después de", denied_access_alert:"Aviso de acceso denegado", denied_attempt_threshold:"Avisar tras", denied_attempt_window:"Dentro de", edit_automation:"Editar automatización", no_automations:"No hay automatizaciones gestionadas", no_automation_slots:"No hay una puerta compatible disponible para otra automatización de este tipo.",
+      door_sensor:"Sensor de contacto de puerta", no_door_sensor:"Sin sensor (cerrar tras desbloquear)", door_sensor_hint:"Opcional para el cierre automático. Al cerrar el contacto empieza la espera; solo cerrará si la puerta sigue cerrada.", door_sensor_required_hint:"Obligatorio. El aviso solo se activa cuando este contacto permanece abierto durante el tiempo seleccionado.",
+      notification_target:"Destino de la notificación", persistent_notification:"Notificación persistente de Home Assistant", notification_hint:"Las notificaciones persistentes funcionan sin configuración adicional. También puedes seleccionar una entidad notify disponible para enviarla a un dispositivo.", one_attempt:"1 intento denegado", attempts:"{count} intentos denegados", denied_summary:"{attempts} en {minutes}",
       minutes:"{count} minutos", one_hour:"1 hora", automation_native:"Automatización nativa de Home Assistant", confirm_delete_automation:"¿Borrar esta automatización de Access Manager en Home Assistant?",
       activity_log:"Registro de actividad", retention:"Retención", retention_hint:"Las entradas caducadas se borran automáticamente. También se aplica un límite de seguridad de 10.000 entradas.",
       date:"Fecha", event:"Evento", confidence:"Confianza", detail:"Detalle", no_users:"No hay usuarios", no_credentials:"Sin credenciales",
@@ -784,21 +786,31 @@
   function renderAutomations() {
     const items = data.managed_automations || [];
     $("#automations-body").innerHTML = items.length ? items.map(item => {
+      const typeLabel = automationTypeLabel(item.automation_type);
       const delay = Number(item.config?.delay_minutes || 0);
       const delayLabel = delay === 60 ? t("one_hour") : t("minutes", {count:delay});
       const stateClass = item.state === "on" ? "" : item.state === "off" ? "pending" : "missing";
       const sensorId = item.config?.door_sensor_entity || "";
       const sensor = (data.door_sensors || []).find(entry => entry.entity_id === sensorId);
       const sensorName = sensor?.name || sensorId;
+      const notificationId = item.config?.notification_entity || "";
+      const notification = (data.notification_entities || []).find(entry => entry.entity_id === notificationId);
+      const notificationName = notification?.name || notificationId || t("persistent_notification");
+      const summary = item.automation_type === "denied_access"
+        ? t("denied_summary", {
+            attempts:Number(item.config?.attempt_threshold) === 1 ? t("one_attempt") : t("attempts", {count:item.config?.attempt_threshold || 1}),
+            minutes:Number(item.config?.window_minutes) === 60 ? t("one_hour") : t("minutes", {count:item.config?.window_minutes || 1})
+          })
+        : delayLabel;
       return `<article class="door-card" data-automation="${esc(item.id)}">
-        <div class="door-card-head"><div><h3>${t("auto_lock")} · ${esc(item.door_name)}</h3><span class="entity">${esc(item.ha_entity_id || item.ha_config_id)}</span></div><span class="status ${stateClass}">${esc(item.state || "missing")}</span></div>
-        <div class="door-card-grid"><div><span>${t("door")}</span><strong>${esc(item.door_name)}</strong><span class="entity">${esc(item.door_entity_id || "—")}</span></div><div><span>${t("auto_lock_delay")}</span><strong>${esc(delayLabel)}</strong></div></div>
+        <div class="door-card-head"><div><h3>${esc(typeLabel)} · ${esc(item.door_name)}</h3><span class="entity">${esc(item.ha_entity_id || item.ha_config_id)}</span></div><span class="status ${stateClass}">${esc(item.state || "missing")}</span></div>
+        <div class="door-card-grid"><div><span>${t("door")}</span><strong>${esc(item.door_name)}</strong><span class="entity">${esc(item.door_entity_id || "—")}</span></div><div><span>${esc(item.automation_type === "denied_access" ? t("denied_attempt_threshold") : item.automation_type === "door_open" ? t("door_open_delay") : t("auto_lock_delay"))}</span><strong>${esc(summary)}</strong></div></div>
         ${sensorId ? `<div class="door-card-grid"><div><span>${t("door_sensor")}</span><strong>${esc(sensorName)}</strong><span class="entity">${esc(sensorId)}</span></div></div>` : ""}
+        ${item.automation_type !== "auto_lock" ? `<div class="door-card-grid"><div><span>${t("notification_target")}</span><strong>${esc(notificationName)}</strong>${notificationId ? `<span class="entity">${esc(notificationId)}</span>` : ""}</div></div>` : ""}
         <div class="door-card-actions"><span class="muted">${t("automation_native")}</span><button class="secondary" onclick="editAutomation('${item.id}')">${t("edit")}</button><button class="danger" onclick="deleteAutomation('${item.id}')">${t("delete")}</button></div>
       </article>`;
     }).join("") : `<div class="empty">${t("no_automations")}</div>`;
-    const usedDoors = new Set(items.map(item => item.door_id));
-    const available = (data.doors || []).some(door => door.entity_id?.startsWith("lock.") && !usedDoors.has(door.id));
+    const available = automationTypes.some(type => automationEligibleDoors(type).length);
     $("#add-automation").disabled = !available;
   }
 
@@ -898,7 +910,19 @@
   const selectField=(label,name,options,selected="",wide=false)=>`<label class="${wide?"wide":""}">${esc(label)}<select name="${esc(name)}">${options.map(item=>`<option value="${esc(item.value)}" ${item.value===selected?"selected":""}>${esc(item.label)}</option>`).join("")}</select></label>`;
   const doorSelectItems=()=>[{value:"",label:"—"},...(data.doors||[]).map(door=>({value:door.id,label:`${door.name} · ${door.id}`}))];
   const doorSensorSelectItems=()=>[{value:"",label:t("no_door_sensor")},...(data.door_sensors||[]).map(sensor=>({value:sensor.entity_id,label:`${sensor.name} · ${sensor.entity_id} (${sensor.state})`}))];
+  const notificationSelectItems=()=>[{value:"",label:t("persistent_notification")},...(data.notification_entities||[]).map(entity=>({value:entity.entity_id,label:`${entity.name} · ${entity.entity_id}`}))];
   const haPersonSelectItems=()=>[{value:"",label:t("create_new_person")},...(data.ha_people||[]).map(person=>({value:person.entity_id,label:`${person.name} · ${person.entity_id}`}))];
+  const automationTypes=["auto_lock","door_open","denied_access"];
+  const automationTypeLabel=type=>t(type === "door_open" ? "door_open_alert" : type === "denied_access" ? "denied_access_alert" : "auto_lock");
+  function automationEligibleDoors(type, editingId=null) {
+    const used=new Set((data.managed_automations||[]).filter(item=>item.id!==editingId).map(item=>`${item.automation_type}:${item.door_id}`));
+    return (data.doors||[]).filter(door=>{
+      if(used.has(`${type}:${door.id}`))return false;
+      if(type==="auto_lock")return door.entity_id?.startsWith("lock.");
+      if(type==="door_open")return Boolean((data.door_sensors||[]).length);
+      return type==="denied_access";
+    });
+  }
 
   function openPersonEditor(id=null) {
     const person=id?(data.people||[]).find(item=>item.id===id):null;
@@ -937,19 +961,57 @@
 
   function openAutomationEditor(id=null) {
     const item=id?(data.managed_automations||[]).find(entry=>entry.id===id):null;
-    const used=new Set((data.managed_automations||[]).filter(entry=>entry.id!==id).map(entry=>entry.door_id));
-    const doors=(data.doors||[]).filter(door=>door.entity_id?.startsWith("lock.")&&!used.has(door.id)&&(item?door.id===item.door_id:true));
-    if(!doors.length){showError(t("no_lock_doors"));return;}
-    const selectedDoor=item?.door_id||doors[0].id;
-    const delays=(data.auto_lock_delays||[5,10,15,20,30,60]).map(value=>({value:String(value),label:Number(value)===60?t("one_hour"):t("minutes",{count:value})}));
-    const selectedSensor=String(item?.config?.door_sensor_entity||"");
-    const sensors=doorSensorSelectItems();
-    if(selectedSensor&&!sensors.some(sensor=>sensor.value===selectedSensor)) sensors.push({value:selectedSensor,label:selectedSensor});
-    const html=`<div class="form-grid">${selectField(t("door"),"door_id",doors.map(door=>({value:door.id,label:`${door.name} · ${door.entity_id}`})),selectedDoor,true)}${selectField(t("auto_lock_delay"),"delay_minutes",delays,String(item?.config?.delay_minutes||10),true)}${selectField(t("door_sensor"),"door_sensor_entity",sensors,selectedSensor,true)}${selectField(t("status"),"enabled",[{value:"true",label:t("enabled")},{value:"false",label:t("disabled")}],String(item?.enabled??true),true)}<div class="form-section"><p class="muted">${t("door_sensor_hint")}</p><p class="muted">${t("automation_hint")}</p></div></div>`;
-    openEditor({title:t(item?"edit_automation":"add_automation"),subtitle:item?.ha_entity_id||t("automation_native"),html,onSubmit:async form=>{
-      const payload={door_id:String(form.get("door_id")||""),delay_minutes:Number(form.get("delay_minutes")),door_sensor_entity:String(form.get("door_sensor_entity")||""),enabled:String(form.get("enabled"))==="true"};
-      const ok=await mutate("automations/auto-lock","PUT",payload,{inline:true});if(ok)await closeEditor();
+    const availableTypes=item?[item.automation_type]:automationTypes.filter(type=>automationEligibleDoors(type).length);
+    if(!availableTypes.length){showError(t("no_automation_slots"));return;}
+    let selectedType=item?.automation_type||availableTypes[0];
+    const optionLabel=value=>Number(value)===60?t("one_hour"):t("minutes",{count:value});
+    const renderFields=()=>{
+      const doors=item
+        ? (data.doors||[]).filter(door=>door.id===item.door_id)
+        : automationEligibleDoors(selectedType);
+      if(!doors.length){showError(t("no_automation_slots"));return;}
+      const selectedDoor=item?.door_id||doors[0].id;
+      const typeItems=availableTypes.map(type=>({value:type,label:automationTypeLabel(type)}));
+      const doorItems=doors.map(door=>({value:door.id,label:`${door.name} · ${door.entity_id}`}));
+      const enabled=String(item?.enabled??true);
+      let specific="";
+      if(selectedType==="auto_lock"){
+        const delays=(data.auto_lock_delays||[5,10,15,20,30,60]).map(value=>({value:String(value),label:optionLabel(value)}));
+        const selectedSensor=String(item?.config?.door_sensor_entity||"");
+        const sensors=doorSensorSelectItems();
+        if(selectedSensor&&!sensors.some(sensor=>sensor.value===selectedSensor))sensors.push({value:selectedSensor,label:selectedSensor});
+        specific=`${selectField(t("auto_lock_delay"),"delay_minutes",delays,String(item?.config?.delay_minutes||10),true)}${selectField(t("door_sensor"),"door_sensor_entity",sensors,selectedSensor,true)}<div class="form-section"><p class="muted">${t("door_sensor_hint")}</p></div>`;
+      }else if(selectedType==="door_open"){
+        const delays=(data.door_open_delays||[1,2,5,10,15,20,30,60]).map(value=>({value:String(value),label:optionLabel(value)}));
+        const selectedSensor=String(item?.config?.door_sensor_entity||(data.door_sensors?.[0]?.entity_id||""));
+        const sensors=doorSensorSelectItems().slice(1);
+        if(selectedSensor&&!sensors.some(sensor=>sensor.value===selectedSensor))sensors.push({value:selectedSensor,label:selectedSensor});
+        const selectedNotification=String(item?.config?.notification_entity||"");
+        const notifications=notificationSelectItems();
+        if(selectedNotification&&!notifications.some(entity=>entity.value===selectedNotification))notifications.push({value:selectedNotification,label:selectedNotification});
+        specific=`${selectField(t("door_open_delay"),"delay_minutes",delays,String(item?.config?.delay_minutes||10),true)}${selectField(t("door_sensor"),"door_sensor_entity",sensors,selectedSensor,true)}${selectField(t("notification_target"),"notification_entity",notifications,selectedNotification,true)}<div class="form-section"><p class="muted">${t("door_sensor_required_hint")}</p><p class="muted">${t("notification_hint")}</p></div>`;
+      }else{
+        const thresholds=(data.denied_attempt_thresholds||[1,2,3,5,10]).map(value=>({value:String(value),label:Number(value)===1?t("one_attempt"):t("attempts",{count:value})}));
+        const windows=(data.denied_attempt_windows||[1,2,5,10,15,30]).map(value=>({value:String(value),label:optionLabel(value)}));
+        const selectedNotification=String(item?.config?.notification_entity||"");
+        const notifications=notificationSelectItems();
+        if(selectedNotification&&!notifications.some(entity=>entity.value===selectedNotification))notifications.push({value:selectedNotification,label:selectedNotification});
+        specific=`${selectField(t("denied_attempt_threshold"),"attempt_threshold",thresholds,String(item?.config?.attempt_threshold||3),true)}${selectField(t("denied_attempt_window"),"window_minutes",windows,String(item?.config?.window_minutes||5),true)}${selectField(t("notification_target"),"notification_entity",notifications,selectedNotification,true)}<div class="form-section"><p class="muted">${t("notification_hint")}</p></div>`;
+      }
+      $("#editor-fields").innerHTML=`<div class="form-grid">${selectField(t("automation_type"),"automation_type",typeItems,selectedType,true)}${selectField(t("door"),"door_id",doorItems,selectedDoor,true)}${specific}${selectField(t("status"),"enabled",[{value:"true",label:t("enabled")},{value:"false",label:t("disabled")}],enabled,true)}<div class="form-section"><p class="muted">${t("automation_hint")}</p></div></div>`;
+      const typeSelect=$("#editor-form [name=automation_type]");
+      if(!item)typeSelect.addEventListener("change",()=>{selectedType=typeSelect.value;renderFields();});
+    };
+    openEditor({title:t(item?"edit_automation":"add_automation"),subtitle:item?.ha_entity_id||t("automation_native"),html:"",onSubmit:async form=>{
+      const type=String(form.get("automation_type")||selectedType);
+      const payload={door_id:String(form.get("door_id")||""),enabled:String(form.get("enabled"))==="true"};
+      if(type==="auto_lock")Object.assign(payload,{delay_minutes:Number(form.get("delay_minutes")),door_sensor_entity:String(form.get("door_sensor_entity")||"")});
+      if(type==="door_open")Object.assign(payload,{delay_minutes:Number(form.get("delay_minutes")),door_sensor_entity:String(form.get("door_sensor_entity")||""),notification_entity:String(form.get("notification_entity")||"")});
+      if(type==="denied_access")Object.assign(payload,{attempt_threshold:Number(form.get("attempt_threshold")),window_minutes:Number(form.get("window_minutes")),notification_entity:String(form.get("notification_entity")||"")});
+      const endpoint={auto_lock:"auto-lock",door_open:"door-open",denied_access:"denied-access"}[type];
+      const ok=await mutate(`automations/${endpoint}`,"PUT",payload,{inline:true});if(ok)await closeEditor();
     }});
+    renderFields();
   }
 
   function keymapRow(raw="",action="open") { return `<div class="keymap-row"><input class="keymap-raw" value="${esc(raw)}" placeholder="disarm"><select class="keymap-action">${["open","unlock","lock","ignore"].map(value=>`<option value="${value}" ${value===action?"selected":""}>${t(value).toUpperCase()}</option>`).join("")}</select><button type="button" class="danger" onclick="this.closest('.keymap-row').remove()">${t("delete")}</button></div>`; }

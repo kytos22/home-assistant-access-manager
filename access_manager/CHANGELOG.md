@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.3
+
+- Captures short-lived keypad transaction, code/tag and action entity updates before Zigbee2MQTT clears them to empty or unknown states.
+- Adds guided native Home Assistant automations for door-left-open and denied-access alerts alongside auto-lock.
+- Allows one automation of each type per door, with configurable delays, denied-attempt thresholds and time windows.
+- Sends alerts through a selected Home Assistant `notify.*` entity or a persistent notification that requires no additional setup.
+
 ## 0.8.2
 
 - Treats a keypad code or tag as the credential and keeps the accompanying semantic action separate, so one credential works with every mapped keypad action.

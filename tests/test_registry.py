@@ -411,6 +411,64 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await admin.process_keypad_packet("packet_keypad"))
         self.assertEqual(len(processed), 1)
 
+        # The transaction is an opaque deduplication token. It may jump rather
+        # than behaving like a counter that increases exactly one by one.
+        self.ha.states["sensor.packet_transaction"]["state"] = "103"
+        self.assertTrue(await admin.process_keypad_packet("packet_keypad"))
+        self.assertEqual(processed[-1], ("packet_keypad", "103", "1234", "disarm"))
+        self.assertEqual(
+            self.registry.setting("reader_transaction:packet_keypad"), "103"
+        )
+
+    async def test_keypad_capture_uses_transient_event_values_before_they_clear(self):
+        self.registry.create_reader(
+            "transient_keypad", "Transient keypad", "keypad", "front_door", {
+                "transaction_entity": "sensor.transient_transaction",
+                "code_entity": "sensor.transient_code",
+                "action_entity": "sensor.transient_action",
+                "action_map": {"disarm": "open"},
+            }
+        )
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+        admin.capture_sessions = {
+            "transient_keypad": {
+                "person_id": self.person_id,
+                "person_name": "Example Person",
+                "expires_at": APP.asyncio.get_running_loop().time() + 60,
+            }
+        }
+        admin.keypad_learning_sessions = {}
+        admin.last_keypad_actions = {}
+        admin.keypad_packet_tasks = {}
+        admin.keypad_packet_buffers = {}
+
+        for entity_id, value in (
+            ("sensor.transient_transaction", "57"),
+            ("sensor.transient_code", "0426"),
+            ("sensor.transient_action", "disarm"),
+        ):
+            await admin.handle_state_change(entity_id, {"state": value})
+        for entity_id, value in (
+            ("sensor.transient_transaction", ""),
+            ("sensor.transient_code", ""),
+            ("sensor.transient_action", "unknown"),
+        ):
+            self.ha.states[entity_id] = {"state": value}
+            await admin.handle_state_change(entity_id, {"state": value})
+
+        await APP.asyncio.sleep(APP.KEYPAD_PACKET_SETTLE_SECONDS + 0.1)
+        credential = self.registry.find_keypad_credential(
+            "transient_keypad", "0426", "disarm"
+        )
+        self.assertIsNotNone(credential)
+        self.assertNotIn("transient_keypad", admin.capture_sessions)
+        self.assertNotIn("transient_keypad", admin.keypad_packet_buffers)
+        self.assertIsNone(self.registry.find_keypad_credential(
+            "transient_keypad", "426", "disarm"
+        ))
+
     async def test_auto_lock_config_is_native_and_ownership_marked(self):
         door = self.registry.doors()[0]
         config_id = APP.FingerprintAdmin.auto_lock_automation_id(door["id"])
@@ -442,6 +500,79 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
             APP.FingerprintAdmin.owned_automation_config(config, config_id)
         )
 
+    async def test_door_open_and_denied_access_configs_are_native(self):
+        door = self.registry.doors()[0]
+        door_open_id = APP.FingerprintAdmin.door_open_automation_id(door["id"])
+        door_open = APP.FingerprintAdmin.build_door_open_config(
+            door, door_open_id, 5, "binary_sensor.front_door_contact"
+        )
+        self.assertEqual(door_open_id, "access_manager_door_open_front_door")
+        self.assertEqual(door_open["triggers"][0]["to"], "on")
+        self.assertEqual(door_open["triggers"][0]["for"]["minutes"], 5)
+        self.assertEqual(
+            door_open["conditions"][0]["entity_id"],
+            "binary_sensor.front_door_contact",
+        )
+        self.assertEqual(
+            door_open["actions"][0]["action"],
+            "notify.persistent_notification",
+        )
+
+        denied_id = APP.FingerprintAdmin.denied_access_automation_id(door["id"])
+        denied = APP.FingerprintAdmin.build_denied_access_config(
+            door, denied_id, 3, 5, "notify.example_phone"
+        )
+        self.assertEqual(denied_id, "access_manager_denied_access_front_door")
+        self.assertEqual(denied["triggers"][0], {
+            "trigger": "event",
+            "event_type": "access_manager_credential",
+            "event_data": {"door_id": "front_door", "authorized": False},
+        })
+        self.assertEqual(denied["actions"][0]["timeout"]["minutes"], 5)
+        self.assertEqual(denied["actions"][1]["repeat"]["count"], 1)
+        self.assertEqual(
+            denied["actions"][1]["repeat"]["sequence"][0]["timeout"],
+            "{{ wait.remaining }}",
+        )
+        self.assertEqual(denied["actions"][-1], {
+            "action": "notify.send_message",
+            "target": {"entity_id": "notify.example_phone"},
+            "data": {
+                "message": (
+                    "Access Manager detected 3 denied access attempts "
+                    "at Front door within 5 minutes."
+                )
+            },
+        })
+        self.assertEqual(denied["mode"], "single")
+        self.assertEqual(denied["max_exceeded"], "silent")
+
+        immediate = APP.FingerprintAdmin.build_denied_access_config(
+            door, denied_id, 1, 5
+        )
+        self.assertEqual(len(immediate["actions"]), 1)
+        self.assertEqual(
+            immediate["actions"][0]["action"],
+            "notify.persistent_notification",
+        )
+
+    async def test_registry_allows_one_automation_of_each_type_per_door(self):
+        for automation_type in ("auto_lock", "door_open", "denied_access"):
+            automation_id = f"access_manager_{automation_type}_front_door"
+            self.registry.upsert_managed_automation(
+                automation_id, automation_type, "front_door", automation_id,
+                True, {},
+            )
+        self.assertEqual(
+            {item["automation_type"] for item in self.registry.managed_automations()},
+            {"auto_lock", "door_open", "denied_access"},
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.registry.upsert_managed_automation(
+                "alternate_auto_lock", "auto_lock", "front_door",
+                "alternate_auto_lock", True, {},
+            )
+
     async def test_door_sensor_entities_only_include_binary_sensors(self):
         self.ha.states.update({
             "binary_sensor.front_door_contact": {
@@ -466,6 +597,25 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
             "entity_id": "binary_sensor.front_door_contact",
             "name": "Front door",
             "state": "off",
+        }])
+
+    async def test_notification_entities_only_include_notify_domain(self):
+        self.ha.states.update({
+            "notify.example_phone": {
+                "state": "2026-07-17T00:00:00+00:00",
+                "attributes": {"friendly_name": "Example phone"},
+            },
+            "sensor.notification_count": {
+                "state": "2", "attributes": {"friendly_name": "Notifications"},
+            },
+        })
+        self.assertTrue(self.ha.is_notification_entity(""))
+        self.assertTrue(self.ha.is_notification_entity("notify.example_phone"))
+        self.assertFalse(self.ha.is_notification_entity("notify.missing"))
+        self.assertEqual(self.ha.notification_entities(), [{
+            "entity_id": "notify.example_phone",
+            "name": "Example phone",
+            "state": "2026-07-17T00:00:00+00:00",
         }])
 
     async def test_delete_refuses_automation_if_ownership_marker_changed(self):
