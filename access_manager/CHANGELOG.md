@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.1
+
+- Updates generated ESPHome reader configurations and firmware status to Fingerprint Access Reader 0.5.1, which fixes fresh compilation of the release-pinned display profile.
+
 ## 0.12.0
 
 - Adds clear Home Assistant Person link health, explicit unlink and relink controls, and guided repair when a linked Person is missing or unavailable.
