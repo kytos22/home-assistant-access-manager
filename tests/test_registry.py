@@ -74,12 +74,12 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.12.1"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.12.2"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
     def test_esphome_generator_pins_firmware_and_never_embeds_secrets(self):
-        self.assertEqual(APP.READER_FIRMWARE_VERSION, "0.5.1")
+        self.assertEqual(APP.READER_FIRMWARE_VERSION, "0.5.2")
         generated = APP.esphome_reader_config({
             "profile": "reader_only",
             "install_mode": "new",

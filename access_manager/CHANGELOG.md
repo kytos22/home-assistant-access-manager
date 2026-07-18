@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.2
+
+- Updates generated reader configurations to Fingerprint Access Reader 0.5.2, which publishes its installed version during boot.
+- Distinguishes a configured firmware sensor that has not reported yet from a reader without firmware-version configuration.
+
 ## 0.12.1
 
 - Updates generated ESPHome reader configurations and firmware status to Fingerprint Access Reader 0.5.1, which fixes fresh compilation of the release-pinned display profile.

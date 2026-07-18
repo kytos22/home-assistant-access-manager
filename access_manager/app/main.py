@@ -22,7 +22,7 @@ HA_API = "http://supervisor/core/api"
 HA_WS = "ws://supervisor/core/websocket"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 APP_VERSION = os.environ.get("ACCESS_MANAGER_VERSION") or "development"
-READER_FIRMWARE_VERSION = "0.5.1"
+READER_FIRMWARE_VERSION = "0.5.2"
 READER_FIRMWARE_REPOSITORY = (
     "https://github.com/kytos22/esphome-fingerprint-access-reader"
 )
