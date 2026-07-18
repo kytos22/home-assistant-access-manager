@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0
+
+- Adds clear Home Assistant Person link health, explicit unlink and relink controls, and guided repair when a linked Person is missing or unavailable.
+- Adds staged identity deletion with a dependency preview, immediate credential revocation, per-reader fingerprint cleanup, restart recovery, progress, and blocker visibility.
+- Protects mobile NFC access during identity changes by suspending affected permissions until an administrator explicitly confirms them again.
+- Makes the administration panel phone-friendly with compact section navigation, touch-sized controls, responsive table cards, and usable mobile confirmations and modals.
+
 ## 0.11.0
 
 - Adds reader-scoped shared keypad codes and tags with encrypted storage, privacy-aware reveal, physical or manual capture, duplicate prevention, revocation, and clear audit labels.

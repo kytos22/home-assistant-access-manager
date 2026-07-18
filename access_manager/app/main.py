@@ -226,6 +226,7 @@ class Registry:
         self.connection.row_factory = sqlite3.Row
         self.connection.executescript(
             """
+            PRAGMA foreign_keys=ON;
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS users (
                 reader_id TEXT NOT NULL DEFAULT 'display1',
@@ -256,7 +257,7 @@ class Registry:
             );
             CREATE TABLE IF NOT EXISTS deletion_queue (
                 reader_id TEXT NOT NULL DEFAULT 'display1',
-                slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 50),
+                slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 240),
                 state TEXT NOT NULL DEFAULT 'queued',
                 attempts INTEGER NOT NULL DEFAULT 0,
                 baseline_count INTEGER,
@@ -271,7 +272,13 @@ class Registry:
                 name TEXT NOT NULL,
                 normalized_name TEXT NOT NULL UNIQUE,
                 ha_person_entity_id TEXT UNIQUE,
+                ha_link_status TEXT NOT NULL DEFAULT 'unlinked',
+                ha_auto_link_disabled INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'active',
+                deletion_requested_at TEXT,
+                archived_at TEXT,
+                deletion_total INTEGER NOT NULL DEFAULT 0,
+                deletion_completed INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -345,6 +352,8 @@ class Registry:
                 person_id INTEGER NOT NULL REFERENCES people(id),
                 door_id TEXT NOT NULL REFERENCES doors(id),
                 enabled INTEGER NOT NULL DEFAULT 0,
+                suspended INTEGER NOT NULL DEFAULT 0,
+                ha_person_entity_id TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 PRIMARY KEY(person_id, door_id)
@@ -404,7 +413,7 @@ class Registry:
                 """
                 CREATE TABLE deletion_queue_multi_reader (
                     reader_id TEXT NOT NULL DEFAULT 'display1',
-                    slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 50),
+                    slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 240),
                     state TEXT NOT NULL DEFAULT 'queued',
                     attempts INTEGER NOT NULL DEFAULT 0,
                     baseline_count INTEGER,
@@ -423,6 +432,38 @@ class Registry:
                 FROM deletion_queue;
                 DROP TABLE deletion_queue;
                 ALTER TABLE deletion_queue_multi_reader RENAME TO deletion_queue;
+                """
+            )
+        deletion_schema = self.connection.execute(
+            """
+            SELECT sql FROM sqlite_master
+            WHERE type = 'table' AND name = 'deletion_queue'
+            """
+        ).fetchone()[0]
+        if "BETWEEN 1 AND 50" in deletion_schema:
+            self.connection.executescript(
+                """
+                CREATE TABLE deletion_queue_wide (
+                    reader_id TEXT NOT NULL DEFAULT 'display1',
+                    slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 240),
+                    state TEXT NOT NULL DEFAULT 'queued',
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    baseline_count INTEGER,
+                    expected_count INTEGER,
+                    last_error TEXT,
+                    requested_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(reader_id, slot)
+                );
+                INSERT INTO deletion_queue_wide(
+                    reader_id, slot, state, attempts, baseline_count,
+                    expected_count, last_error, requested_at, updated_at
+                )
+                SELECT reader_id, slot, state, attempts, baseline_count,
+                       expected_count, last_error, requested_at, updated_at
+                FROM deletion_queue;
+                DROP TABLE deletion_queue;
+                ALTER TABLE deletion_queue_wide RENAME TO deletion_queue;
                 """
             )
         door_columns = {
@@ -477,6 +518,56 @@ class Registry:
             )
             self.connection.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_people_ha_person ON people(ha_person_entity_id)"
+            )
+        people_columns = {
+            row[1] for row in self.connection.execute("PRAGMA table_info(people)").fetchall()
+        }
+        people_migrations = {
+            "ha_link_status": "TEXT NOT NULL DEFAULT 'unlinked'",
+            "ha_auto_link_disabled": "INTEGER NOT NULL DEFAULT 0",
+            "deletion_requested_at": "TEXT",
+            "archived_at": "TEXT",
+            "deletion_total": "INTEGER NOT NULL DEFAULT 0",
+            "deletion_completed": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for column, definition in people_migrations.items():
+            if column not in people_columns:
+                self.connection.execute(
+                    f"ALTER TABLE people ADD COLUMN {column} {definition}"
+                )
+        self.connection.execute(
+            """
+            UPDATE people SET ha_link_status = CASE
+                WHEN ha_person_entity_id IS NULL THEN 'unlinked'
+                ELSE 'unknown'
+            END
+            WHERE ha_link_status NOT IN ('linked', 'missing', 'unknown', 'unlinked')
+               OR (ha_person_entity_id IS NOT NULL AND ha_link_status = 'unlinked')
+            """
+        )
+        mobile_permission_columns = {
+            row[1] for row in self.connection.execute(
+                "PRAGMA table_info(mobile_nfc_permissions)"
+            ).fetchall()
+        }
+        if "suspended" not in mobile_permission_columns:
+            self.connection.execute(
+                "ALTER TABLE mobile_nfc_permissions "
+                "ADD COLUMN suspended INTEGER NOT NULL DEFAULT 0"
+            )
+        if "ha_person_entity_id" not in mobile_permission_columns:
+            self.connection.execute(
+                "ALTER TABLE mobile_nfc_permissions ADD COLUMN ha_person_entity_id TEXT"
+            )
+            self.connection.execute(
+                """
+                UPDATE mobile_nfc_permissions
+                SET ha_person_entity_id = (
+                    SELECT people.ha_person_entity_id FROM people
+                    WHERE people.id = mobile_nfc_permissions.person_id
+                )
+                WHERE enabled = 1
+                """
             )
         keypad_credential_columns = {
             row[1] for row in self.connection.execute(
@@ -549,6 +640,7 @@ class Registry:
             self.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
             self.connection.execute("VACUUM")
         self.bootstrap_access_model()
+        self.recover_person_deletions()
         self.purge_events()
 
     def bootstrap_access_model(self):
@@ -638,6 +730,8 @@ class Registry:
     def put_user(self, slot, name, finger="", status="active", reader_id="display1"):
         timestamp = now_iso()
         person_id = self.ensure_person(name)
+        if not self.person_access_allowed(person_id):
+            raise ValueError("Identity is not active")
         self.connection.execute(
             """
             INSERT INTO users(
@@ -746,6 +840,7 @@ class Registry:
         if not deletion:
             return None
         user = self.user(slot, reader_id)
+        person_id = user.get("person_id") if user else None
         with self.connection:
             self.connection.execute(
                 "DELETE FROM deletion_queue WHERE reader_id = ? AND slot = ?",
@@ -755,7 +850,71 @@ class Registry:
                 "DELETE FROM users WHERE reader_id = ? AND slot = ?",
                 (reader_id, slot),
             )
-        return user
+            if person_id:
+                self.connection.execute(
+                    """
+                    UPDATE people SET deletion_completed =
+                        MIN(deletion_total, deletion_completed + 1),
+                        updated_at = ?
+                    WHERE id = ? AND status = 'deletion_pending'
+                    """,
+                    (now_iso(), person_id),
+                )
+        archived = self.try_archive_person(person_id) if person_id else False
+        return (user | {"person_archived": archived}) if user else None
+
+    def recover_person_deletions(self):
+        """Restore every durable person deletion after an add-on restart."""
+        rows = self.connection.execute(
+            "SELECT id, name FROM people WHERE status = 'deletion_pending'"
+        ).fetchall()
+        archived = []
+        for person in rows:
+            fingerprints = self.connection.execute(
+                "SELECT reader_id, slot FROM users WHERE person_id = ?",
+                (person["id"],),
+            ).fetchall()
+            timestamp = now_iso()
+            with self.connection:
+                self.connection.execute(
+                    "UPDATE keypad_credentials SET status = 'revoked', updated_at = ? "
+                    "WHERE person_id = ? AND status != 'revoked'",
+                    (timestamp, person["id"]),
+                )
+                self.connection.execute(
+                    "UPDATE mobile_nfc_permissions SET enabled = 0, suspended = 1, "
+                    "updated_at = ? WHERE person_id = ?",
+                    (timestamp, person["id"]),
+                )
+                for fingerprint in fingerprints:
+                    self.connection.execute(
+                        "UPDATE users SET status = 'deleting', updated_at = ? "
+                        "WHERE reader_id = ? AND slot = ?",
+                        (timestamp, fingerprint["reader_id"], fingerprint["slot"]),
+                    )
+                    self.connection.execute(
+                        """
+                        INSERT INTO deletion_queue(
+                            reader_id, slot, state, attempts, requested_at, updated_at
+                        ) VALUES (?, ?, 'queued', 0, ?, ?)
+                        ON CONFLICT(reader_id, slot) DO UPDATE SET
+                            state = CASE WHEN deletion_queue.state = 'sent'
+                                         THEN 'queued' ELSE deletion_queue.state END,
+                            updated_at = excluded.updated_at
+                        """,
+                        (
+                            fingerprint["reader_id"], fingerprint["slot"],
+                            timestamp, timestamp,
+                        ),
+                    )
+            if not fingerprints and self.try_archive_person(person["id"]):
+                archived.append(person["name"])
+        for name in archived:
+            self.add_event(
+                "person_archived",
+                detail=f"{name} · restart recovery",
+                source="access_manager",
+            )
 
     def rename_user(self, slot, name, finger, reader_id="display1"):
         user = self.user(slot, reader_id)
@@ -807,12 +966,26 @@ class Registry:
     def people(self):
         people = [
             dict(row) for row in self.connection.execute(
-                "SELECT * FROM people WHERE status = 'active' ORDER BY name COLLATE NOCASE"
+                "SELECT * FROM people WHERE status IN ('active', 'deletion_pending') "
+                "ORDER BY name COLLATE NOCASE"
             ).fetchall()
         ]
         fingerprints = self.users()
         keypad_credentials = self.keypad_credentials()
         for person in people:
+            person["ha_auto_link_disabled"] = bool(
+                person.get("ha_auto_link_disabled")
+            )
+            person["ha_link_state"] = person.get("ha_link_status", "unknown")
+            if person["status"] == "deletion_pending":
+                total = int(person.get("deletion_total") or 0)
+                done = int(person.get("deletion_completed") or 0)
+                person["deletion"] = {
+                    "total": total,
+                    "done": done,
+                    "pending": max(0, total - done),
+                    "blocked_readers": [],
+                }
             person["credentials"] = []
             for fingerprint in fingerprints:
                 if fingerprint.get("person_id") != person["id"]:
@@ -870,40 +1043,383 @@ class Registry:
         return self.ensure_person(name)
 
     def link_ha_person(self, person_id, entity_id):
-        if not self.person(person_id):
+        person = self.person(person_id)
+        if not person:
             raise ValueError("Person not found")
-        if not str(entity_id).startswith("person."):
+        if person["status"] != "active":
+            raise ValueError("Only an active identity can be linked")
+        entity_id = str(entity_id).strip()
+        if not entity_id.startswith("person."):
             raise ValueError("Invalid Home Assistant Person entity")
+        previous = person.get("ha_person_entity_id")
+        suspended = 0
         try:
+            with self.connection:
+                if previous != entity_id:
+                    cursor = self.connection.execute(
+                        """
+                        UPDATE mobile_nfc_permissions
+                        SET suspended = CASE WHEN enabled = 1 THEN 1 ELSE suspended END,
+                            updated_at = ?
+                        WHERE person_id = ? AND enabled = 1
+                        """,
+                        (now_iso(), person_id),
+                    )
+                    suspended = cursor.rowcount
+                self.connection.execute(
+                    """
+                    UPDATE people SET ha_person_entity_id = ?,
+                        ha_link_status = 'linked', ha_auto_link_disabled = 0,
+                        updated_at = ? WHERE id = ?
+                    """,
+                    (entity_id, now_iso(), person_id),
+                )
+        except sqlite3.IntegrityError as error:
+            raise ValueError(
+                "That Home Assistant Person is already linked"
+            ) from error
+        return {
+            "previous_entity_id": previous,
+            "ha_person_entity_id": entity_id,
+            "suspended_permissions": suspended,
+        }
+
+    def unlink_ha_person(self, person_id):
+        person = self.person(person_id)
+        if not person:
+            raise ValueError("Person not found")
+        if person["status"] != "active":
+            raise ValueError("Only an active identity can be unlinked")
+        previous = person.get("ha_person_entity_id")
+        with self.connection:
+            cursor = self.connection.execute(
+                """
+                UPDATE mobile_nfc_permissions
+                SET suspended = CASE WHEN enabled = 1 THEN 1 ELSE suspended END,
+                    updated_at = ?
+                WHERE person_id = ? AND enabled = 1
+                """,
+                (now_iso(), person_id),
+            )
             self.connection.execute(
                 """
-                UPDATE people SET ha_person_entity_id = ?, updated_at = ? WHERE id = ?
+                UPDATE people SET ha_person_entity_id = NULL,
+                    ha_link_status = 'unlinked', ha_auto_link_disabled = 1,
+                    updated_at = ? WHERE id = ?
                 """,
-                (entity_id, now_iso(), person_id),
+                (now_iso(), person_id),
             )
-            self.connection.commit()
-        except sqlite3.IntegrityError as error:
-            raise ValueError("That Home Assistant Person is already linked") from error
+        return {
+            "previous_entity_id": previous,
+            "suspended_permissions": cursor.rowcount,
+        }
+
+    @staticmethod
+    def normalized_ha_people(ha_people):
+        result = []
+        for item in ha_people or []:
+            if not isinstance(item, dict):
+                continue
+            entity_id = str(item.get("entity_id") or "").strip()
+            if not entity_id and item.get("id"):
+                entity_id = f"person.{item['id']}"
+            if not entity_id.startswith("person."):
+                continue
+            result.append({
+                "entity_id": entity_id,
+                "name": str(item.get("name") or entity_id.split(".", 1)[1]),
+            })
+        return result
+
+    def reconcile_ha_people(self, ha_people, api_ready):
+        """Reconcile only against a validated, fresh person/list response."""
+        rows = self.connection.execute(
+            "SELECT * FROM people WHERE status != 'archived'"
+        ).fetchall()
+        if not api_ready:
+            with self.connection:
+                for row in rows:
+                    state = (
+                        "unknown" if row["ha_person_entity_id"] else "unlinked"
+                    )
+                    self.connection.execute(
+                        "UPDATE people SET ha_link_status = ? WHERE id = ?",
+                        (state, row["id"]),
+                    )
+            return
+        items = self.normalized_ha_people(ha_people)
+        available = {item["entity_id"]: item for item in items}
+        exact = {}
+        for entity_id, item in available.items():
+            exact.setdefault(normalized(item["name"]), []).append(entity_id)
+        timestamp = now_iso()
+        with self.connection:
+            for row in rows:
+                entity_id = row["ha_person_entity_id"]
+                if (
+                    row["status"] == "active"
+                    and not entity_id
+                    and not row["ha_auto_link_disabled"]
+                ):
+                    candidates = exact.get(normalized(row["name"]), [])
+                    if len(candidates) == 1:
+                        entity_id = candidates[0]
+                        try:
+                            self.connection.execute(
+                                """
+                                UPDATE people SET ha_person_entity_id = ?,
+                                    updated_at = ? WHERE id = ?
+                                """,
+                                (entity_id, timestamp, row["id"]),
+                            )
+                        except sqlite3.IntegrityError:
+                            entity_id = None
+                state = (
+                    "unlinked" if not entity_id
+                    else "linked" if entity_id in available
+                    else "missing"
+                )
+                self.connection.execute(
+                    "UPDATE people SET ha_link_status = ? WHERE id = ?",
+                    (state, row["id"]),
+                )
 
     def auto_link_ha_people(self, ha_people):
-        exact = {}
-        for item in ha_people:
-            exact.setdefault(normalized(item["name"]), []).append(item["entity_id"])
+        self.reconcile_ha_people(ha_people, True)
+
+    def person_access_allowed(self, person_or_id):
+        person = (
+            person_or_id if isinstance(person_or_id, dict)
+            else self.person(person_or_id)
+        )
+        return bool(person and person["status"] == "active")
+
+    def mobile_nfc_eligible(self, person_id):
+        person = self.person(person_id)
+        return bool(
+            person
+            and person["status"] == "active"
+            and person.get("ha_person_entity_id")
+            and person.get("ha_link_status") == "linked"
+        )
+
+    def person_deletion_preview(self, person_id):
+        person = self.person(person_id)
+        if not person:
+            raise ValueError("Person not found")
+        fingerprints = [
+            dict(row) for row in self.connection.execute(
+                """
+                SELECT users.reader_id, users.slot, users.finger, users.status,
+                       readers.name AS reader_name, readers.enabled AS reader_enabled
+                FROM users
+                LEFT JOIN readers ON readers.id = users.reader_id
+                WHERE users.person_id = ?
+                ORDER BY users.reader_id, users.slot
+                """,
+                (person_id,),
+            ).fetchall()
+        ]
+        for item in fingerprints:
+            item["reader_enabled"] = bool(item.get("reader_enabled"))
+            item["deletion"] = self.deletion(
+                item["slot"], item["reader_id"]
+            )
+        keypads = [
+            dict(row) for row in self.connection.execute(
+                """
+                SELECT keypad_credentials.id, keypad_credentials.reader_id,
+                       keypad_credentials.code_hint, keypad_credentials.status,
+                       readers.name AS reader_name
+                FROM keypad_credentials
+                LEFT JOIN readers
+                    ON readers.id = keypad_credentials.reader_id
+                WHERE keypad_credentials.person_id = ?
+                ORDER BY keypad_credentials.reader_id, keypad_credentials.id
+                """,
+                (person_id,),
+            ).fetchall()
+        ]
+        mobile = [
+            dict(row) | {
+                "enabled": bool(row["enabled"]),
+                "suspended": bool(row["suspended"]),
+            }
+            for row in self.connection.execute(
+                """
+                SELECT mobile_nfc_permissions.*, doors.name AS door_name
+                FROM mobile_nfc_permissions
+                LEFT JOIN doors
+                    ON doors.id = mobile_nfc_permissions.door_id
+                WHERE mobile_nfc_permissions.person_id = ?
+                ORDER BY mobile_nfc_permissions.door_id
+                """,
+                (person_id,),
+            ).fetchall()
+        ]
+        blocked_readers = sorted({
+            item["reader_id"] for item in fingerprints
+            if not item["reader_enabled"]
+            or (
+                item.get("deletion")
+                and item["deletion"].get("state") == "retry"
+            )
+        })
+        return {
+            "person": person,
+            "fingerprints": fingerprints,
+            "keypad_credentials": keypads,
+            "mobile_nfc_permissions": mobile,
+            "blocked_readers": blocked_readers,
+            "counts": {
+                "fingerprints": len(fingerprints),
+                "keypad_credentials": len(keypads),
+                "mobile_nfc_permissions": len(mobile),
+            },
+        }
+
+    def begin_person_deletion(self, person_id):
+        person = self.person(person_id)
+        if not person:
+            raise ValueError("Person not found")
+        if person["status"] == "archived":
+            return self.person_deletion_preview(person_id) | {
+                "archived": True
+            }
+        if person["status"] == "deletion_pending":
+            return self.person_deletion_preview(person_id) | {
+                "archived": False
+            }
+        if person["status"] != "active":
+            raise ValueError("Identity cannot be deleted")
+        preview = self.person_deletion_preview(person_id)
+        timestamp = now_iso()
+        keypad_count = preview["counts"]["keypad_credentials"]
+        mobile_count = preview["counts"]["mobile_nfc_permissions"]
         with self.connection:
-            for person in self.people():
-                if person.get("ha_person_entity_id"):
-                    continue
-                candidates = exact.get(normalized(person["name"]), [])
-                if len(candidates) == 1:
-                    self.connection.execute(
-                        "UPDATE people SET ha_person_entity_id = ?, updated_at = ? WHERE id = ?",
-                        (candidates[0], now_iso(), person["id"]),
+            self.connection.execute(
+                """
+                UPDATE people SET status = 'deletion_pending',
+                    deletion_requested_at = ?, deletion_total = ?,
+                    deletion_completed = 0, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    timestamp, len(preview["fingerprints"]),
+                    timestamp, person_id,
+                ),
+            )
+            self.connection.execute(
+                """
+                UPDATE keypad_credentials
+                SET status = 'revoked', updated_at = ?
+                WHERE person_id = ? AND status != 'revoked'
+                """,
+                (timestamp, person_id),
+            )
+            self.connection.execute(
+                """
+                UPDATE mobile_nfc_permissions
+                SET enabled = 0, suspended = 1, updated_at = ?
+                WHERE person_id = ?
+                """,
+                (timestamp, person_id),
+            )
+            for item in preview["fingerprints"]:
+                self.connection.execute(
+                    """
+                    UPDATE users SET status = 'deleting', updated_at = ?
+                    WHERE reader_id = ? AND slot = ?
+                    """,
+                    (timestamp, item["reader_id"], item["slot"]),
+                )
+                self.connection.execute(
+                    """
+                    INSERT INTO deletion_queue(
+                        reader_id, slot, state, attempts,
+                        requested_at, updated_at
                     )
+                    VALUES (?, ?, 'queued', 0, ?, ?)
+                    ON CONFLICT(reader_id, slot) DO UPDATE SET
+                        state = CASE
+                            WHEN deletion_queue.state = 'sent'
+                            THEN deletion_queue.state ELSE 'queued'
+                        END,
+                        last_error = NULL,
+                        updated_at = excluded.updated_at
+                    """,
+                    (
+                        item["reader_id"], item["slot"],
+                        timestamp, timestamp,
+                    ),
+                )
+        self.add_event(
+            "person_deletion_requested",
+            detail=(
+                f"{person['name']} · "
+                f"{len(preview['fingerprints'])} fingerprints"
+            ),
+            source="access_manager",
+        )
+        if keypad_count:
+            self.add_event(
+                "person_keypad_credentials_revoked",
+                detail=f"{person['name']} · {keypad_count}",
+                source="access_manager",
+            )
+        if mobile_count:
+            self.add_event(
+                "person_mobile_nfc_permissions_revoked",
+                detail=f"{person['name']} · {mobile_count}",
+                source="access_manager",
+            )
+        archived = self.try_archive_person(person_id)
+        return preview | {
+            "person": self.person(person_id),
+            "archived": archived,
+        }
+
+    def try_archive_person(self, person_id):
+        if not person_id:
+            return False
+        person = self.person(person_id)
+        if not person or person["status"] != "deletion_pending":
+            return False
+        remaining = self.connection.execute(
+            "SELECT COUNT(*) FROM users WHERE person_id = ?",
+            (person_id,),
+        ).fetchone()[0]
+        if remaining:
+            return False
+        timestamp = now_iso()
+        with self.connection:
+            self.connection.execute(
+                "DELETE FROM keypad_credentials WHERE person_id = ?",
+                (person_id,),
+            )
+            self.connection.execute(
+                "DELETE FROM mobile_nfc_permissions WHERE person_id = ?",
+                (person_id,),
+            )
+            cursor = self.connection.execute(
+                """
+                UPDATE people SET status = 'archived', archived_at = ?,
+                    deletion_completed = deletion_total,
+                    ha_person_entity_id = NULL,
+                    ha_link_status = 'unlinked',
+                    ha_auto_link_disabled = 1, updated_at = ?
+                WHERE id = ? AND status = 'deletion_pending'
+                """,
+                (timestamp, timestamp, person_id),
+            )
+        return cursor.rowcount > 0
 
     def rename_person(self, person_id, name):
         person = self.person(person_id)
         if not person or not normalized(name):
             raise ValueError("Invalid person or name")
+        if person["status"] != "active":
+            raise ValueError("Only an active identity can be renamed")
         timestamp = now_iso()
         with self.connection:
             self.connection.execute(
@@ -968,38 +1484,74 @@ class Registry:
         self.connection.commit()
         return cursor.rowcount > 0
 
-    def mobile_nfc_permissions(self):
+    def mobile_nfc_permissions(self, include_inactive=False):
+        where = (
+            "" if include_inactive
+            else "WHERE enabled = 1 AND suspended = 0"
+        )
         rows = self.connection.execute(
-            "SELECT * FROM mobile_nfc_permissions WHERE enabled = 1"
+            f"""
+            SELECT * FROM mobile_nfc_permissions
+            {where}
+            ORDER BY person_id, door_id
+            """
         ).fetchall()
-        return [dict(row) | {"enabled": True} for row in rows]
+        return [
+            dict(row) | {
+                "enabled": bool(row["enabled"]),
+                "suspended": bool(row["suspended"]),
+                "requires_confirmation": bool(
+                    row["enabled"] and row["suspended"]
+                ),
+            }
+            for row in rows
+        ]
 
     def mobile_nfc_allowed(self, person_id, door_id):
         row = self.connection.execute(
             """
-            SELECT enabled FROM mobile_nfc_permissions
-            WHERE person_id = ? AND door_id = ?
+            SELECT permissions.enabled
+            FROM mobile_nfc_permissions AS permissions
+            JOIN people ON people.id = permissions.person_id
+            WHERE permissions.person_id = ? AND permissions.door_id = ?
+              AND permissions.enabled = 1
+              AND permissions.suspended = 0
+              AND permissions.ha_person_entity_id =
+                  people.ha_person_entity_id
+              AND people.status = 'active'
+              AND people.ha_link_status = 'linked'
             """,
             (person_id, door_id),
         ).fetchone()
         return bool(row and row["enabled"])
 
     def set_mobile_nfc_permission(self, person_id, door_id, enabled):
-        if not self.person(person_id):
+        person = self.person(person_id)
+        if not person:
             raise ValueError("Person not found")
+        if enabled and not self.mobile_nfc_eligible(person_id):
+            raise ValueError(
+                "Link the user to a confirmed Home Assistant Person first"
+            )
         if not any(door["id"] == door_id for door in self.doors()):
             raise ValueError("Door not found")
         timestamp = now_iso()
         self.connection.execute(
             """
             INSERT INTO mobile_nfc_permissions(
-                person_id, door_id, enabled, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?)
+                person_id, door_id, enabled, suspended,
+                ha_person_entity_id, created_at, updated_at
+            ) VALUES (?, ?, ?, 0, ?, ?, ?)
             ON CONFLICT(person_id, door_id) DO UPDATE SET
                 enabled = excluded.enabled,
+                suspended = 0,
+                ha_person_entity_id = excluded.ha_person_entity_id,
                 updated_at = excluded.updated_at
             """,
-            (person_id, door_id, int(bool(enabled)), timestamp, timestamp),
+            (
+                person_id, door_id, int(bool(enabled)),
+                person.get("ha_person_entity_id"), timestamp, timestamp,
+            ),
         )
         self.connection.commit()
 
@@ -1355,8 +1907,11 @@ class Registry:
         return bool(personal or shared)
 
     def add_keypad_credential(self, person_id, reader_id, code):
-        if not self.person(person_id):
+        person = self.person(person_id)
+        if not person:
             raise ValueError("Person not found")
+        if person["status"] != "active":
+            raise ValueError("Identity is not active")
         reader = self.reader(reader_id)
         if not reader or reader["reader_type"] != "keypad":
             raise ValueError("Keypad not found")
@@ -1542,6 +2097,9 @@ class HomeAssistant:
         self.people_api_ready = False
         self.people_storage = []
         self.people_storage_refreshed_at = 0.0
+        self.people_storage_refreshed_iso = None
+        self.people_refresh_attempted_at = 0.0
+        self.people_refresh_task = None
         self.tags_api_ready = False
         self.tags_storage = []
         self.tags_storage_refreshed_at = None
@@ -1561,13 +2119,7 @@ class HomeAssistant:
             await self.replay_current_events()
             await self.sync_all_names()
             await self.sync_all_reader_doors()
-            try:
-                await self.refresh_people_storage()
-                self.people_api_ready = True
-                LOGGER.info("Home Assistant People integration is available")
-            except Exception as error:
-                self.people_api_ready = False
-                LOGGER.warning("Home Assistant People API is unavailable: %s", error)
+            await self.refresh_people_storage_safely()
             try:
                 await self.refresh_tags_storage()
                 self.tags_api_ready = True
@@ -1580,6 +2132,12 @@ class HomeAssistant:
             LOGGER.warning("Home Assistant is not available yet: %s", error)
 
     async def close(self):
+        if self.people_refresh_task:
+            self.people_refresh_task.cancel()
+            await asyncio.gather(
+                self.people_refresh_task, return_exceptions=True
+            )
+            self.people_refresh_task = None
         if self.tag_refresh_task:
             self.tag_refresh_task.cancel()
             await asyncio.gather(self.tag_refresh_task, return_exceptions=True)
@@ -1887,9 +2445,104 @@ class HomeAssistant:
 
     async def refresh_people_storage(self):
         result = await self.websocket_command({"type": "person/list"})
-        self.people_storage = result.get("storage", []) if isinstance(result, dict) else []
-        self.people_storage_refreshed_at = asyncio.get_running_loop().time()
+        if isinstance(result, dict):
+            items = []
+            for key in ("storage", "config"):
+                group = result.get(key, [])
+                if not isinstance(group, list):
+                    raise RuntimeError(
+                        "Home Assistant returned an invalid People response"
+                    )
+                items.extend(group)
+        elif isinstance(result, list):
+            items = result
+        else:
+            items = None
+        if not isinstance(items, list):
+            raise RuntimeError(
+                "Home Assistant returned an invalid People response"
+            )
+        self.people_storage = [
+            item for item in items if isinstance(item, dict)
+        ]
+        self.people_storage_refreshed_at = (
+            asyncio.get_running_loop().time()
+        )
+        self.people_storage_refreshed_iso = now_iso()
+        self.people_api_ready = True
         return self.people_storage
+
+    def storage_people(self):
+        result = []
+        for item in self.people_storage:
+            person_id = str(item.get("id", "")).strip()
+            if not person_id:
+                continue
+            entity_id = f"person.{person_id}"
+            state = self.states.get(entity_id, {})
+            result.append({
+                "entity_id": entity_id,
+                "name": str(
+                    item.get("name")
+                    or state.get("attributes", {}).get("friendly_name")
+                    or person_id
+                ),
+                "state": state.get("state"),
+                "picture": (
+                    item.get("picture")
+                    or state.get("attributes", {}).get("entity_picture")
+                ),
+            })
+        return sorted(
+            result, key=lambda item: normalized(item["name"])
+        )
+
+    async def refresh_people_storage_safely(self):
+        self.people_refresh_attempted_at = (
+            asyncio.get_running_loop().time()
+        )
+        try:
+            await self.refresh_people_storage()
+            self.people_api_ready = True
+            self.registry.reconcile_ha_people(
+                self.storage_people(), True
+            )
+            LOGGER.info(
+                "Home Assistant People integration is available"
+            )
+            return True
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self.people_api_ready = False
+            self.registry.reconcile_ha_people([], False)
+            LOGGER.warning(
+                "Home Assistant People API is unavailable: %s", error
+            )
+            return False
+        finally:
+            self.people_refresh_task = None
+
+    async def ensure_people_storage_fresh(self, max_age=60):
+        now = asyncio.get_running_loop().time()
+        if (
+            self.people_api_ready
+            and self.people_storage_refreshed_at
+            and now - self.people_storage_refreshed_at < max_age
+        ):
+            return True
+        if self.people_refresh_task:
+            return await asyncio.shield(self.people_refresh_task)
+        if (
+            self.people_refresh_attempted_at
+            and now - self.people_refresh_attempted_at < 10
+        ):
+            self.registry.reconcile_ha_people([], False)
+            return False
+        self.people_refresh_task = asyncio.create_task(
+            self.refresh_people_storage_safely()
+        )
+        return await asyncio.shield(self.people_refresh_task)
 
     async def access_person_for_user_id(self, user_id):
         user_id = str(user_id or "").strip()
@@ -1900,13 +2553,9 @@ class HomeAssistant:
             (candidate for candidate in self.people_storage if candidate.get("user_id") == user_id),
             None,
         )
-        refresh_after = 300 if item is not None else 60
+        refresh_after = 60
         if now - self.people_storage_refreshed_at >= refresh_after:
-            self.people_storage_refreshed_at = now
-            try:
-                await self.refresh_people_storage()
-            except Exception as error:
-                LOGGER.warning("Could not refresh Home Assistant People: %s", error)
+            await self.refresh_people_storage_safely()
             item = next(
                 (candidate for candidate in self.people_storage if candidate.get("user_id") == user_id),
                 None,
@@ -1914,12 +2563,21 @@ class HomeAssistant:
         if not item or not item.get("id"):
             return None
         entity_id = f"person.{item['id']}"
-        return next(
+        person = next(
             (
                 person for person in self.registry.people()
                 if person.get("ha_person_entity_id") == entity_id
             ),
             None,
+        )
+        return (
+            person
+            if (
+                person
+                and person.get("status") == "active"
+                and person.get("ha_link_status") == "linked"
+            )
+            else None
         )
 
     async def dispatch_tag_scan(self, event):
@@ -2026,6 +2684,7 @@ class HomeAssistant:
         if not person_id:
             raise RuntimeError("Home Assistant did not return the Person ID")
         await self.refresh_states()
+        await self.refresh_people_storage_safely()
         return f"person.{person_id}"
 
     async def update_ha_person(self, entity_id, name):
@@ -2045,12 +2704,15 @@ class HomeAssistant:
         }
         await self.websocket_command(command)
         await self.refresh_states()
+        await self.refresh_people_storage_safely()
 
     async def emit_credential_event(
         self, reader_id, person, credential_type, credential_id, action,
         source_event, authorized=True, credential_label=None,
     ):
         reader = self.registry.reader(reader_id)
+        if person and not self.registry.person_access_allowed(person):
+            authorized = False
         if not reader or not reader.get("enabled") or not reader.get("door_id"):
             LOGGER.warning("Reader %s has no active door assigned", reader_id)
             return
@@ -2434,12 +3096,22 @@ class HomeAssistant:
             name = user["name"] if user else f"Unregistered ID {slot}"
             reader = self.registry.reader(reader_id)
             detail = f"{name} · {reader['name'] if reader else reader_id}"
-            self.registry.add_event("access_granted", slot, confidence, detail)
             if user and user.get("person_id"):
                 person = self.registry.person(user["person_id"])
+                authorized = bool(
+                    person and person.get("status") == "active"
+                )
+                self.registry.add_event(
+                    "access_granted" if authorized else "access_denied",
+                    slot, confidence, detail,
+                )
                 await self.emit_credential_event(
                     reader_id, person, "fingerprint", slot, event["action"],
-                    event["sequence"],
+                    event["sequence"], authorized=authorized,
+                )
+            else:
+                self.registry.add_event(
+                    "access_denied", slot, confidence, detail
                 )
         elif kind in {"unmatched", "invalid", "misplaced"}:
             self.registry.add_event(f"scan_{kind}", slot, confidence)
@@ -2488,6 +3160,12 @@ class HomeAssistant:
             user = self.registry.complete_delete(slot, reader_id)
             if user:
                 self.registry.add_event("user_deleted", slot, detail=user["name"])
+                if user.get("person_archived"):
+                    self.registry.add_event(
+                        "person_archived",
+                        detail=user["name"],
+                        source="access_manager",
+                    )
                 LOGGER.info("ESP confirmed deletion for ID %d", slot)
         elif kind == "delete_failed" and slot:
             if self.registry.deletion(slot, reader_id):
@@ -2948,6 +3626,16 @@ class FingerprintAdmin:
         person = None if shared else self.registry.person(credential["person_id"])
         if not shared and not person:
             return
+        if person and person.get("status") != "active":
+            self.registry.add_event(
+                "keypad_denied",
+                detail=f"{reader['name']} · {action_name}",
+            )
+            await self.ha.emit_credential_event(
+                reader["id"], person, "keypad", credential["id"],
+                action_name, transaction, authorized=False,
+            )
+            return
         # The keypad is intentionally dumb: identity comes from the stored
         # code/tag, while the current reader mapping decides what that physical
         # action button does now.
@@ -2980,10 +3668,29 @@ class FingerprintAdmin:
         async with self.deletion_lock:
             for item in self.registry.deletions():
                 reader_id = item["reader_id"]
-                if not self.retry_due(item) or not self.ha.device_online(reader_id):
+                if not self.retry_due(item):
+                    continue
+                if not self.ha.device_online(reader_id):
+                    if item.get("last_error") != "Reader offline":
+                        self.registry.add_event(
+                            "person_deletion_blocked",
+                            item["slot"],
+                            detail=f"{reader_id} · reader offline",
+                            source="access_manager",
+                        )
+                    self.registry.mark_delete_retry(
+                        item["slot"], "Reader offline", reader_id
+                    )
                     continue
                 count = self.ha.fingerprint_count(reader_id)
                 if count is None:
+                    if item.get("last_error") != "Reader count is unavailable":
+                        self.registry.add_event(
+                            "person_deletion_blocked",
+                            item["slot"],
+                            detail=f"{reader_id} · count unavailable",
+                            source="access_manager",
+                        )
                     self.registry.mark_delete_retry(
                         item["slot"], "Reader count is unavailable", reader_id
                     )
@@ -2995,6 +3702,12 @@ class FingerprintAdmin:
                         self.registry.add_event(
                             "user_deleted", item["slot"], detail=user["name"]
                         )
+                        if user.get("person_archived"):
+                            self.registry.add_event(
+                                "person_archived",
+                                detail=user["name"],
+                                source="access_manager",
+                            )
                         LOGGER.info(
                             "Deletion of ID %d recovered from reader count",
                             item["slot"],
@@ -3058,6 +3771,7 @@ class FingerprintAdmin:
         return response
 
     async def state(self, _request):
+        await self.ha.ensure_people_storage_fresh()
         self.ha.schedule_tags_refresh()
         reader = {}
         for key in (
@@ -3144,8 +3858,30 @@ class FingerprintAdmin:
             automation["door_entity_id"] = door.get("entity_id") if door else None
             automation["ha_entity_id"] = entity_id
             automation["state"] = entity_state.get("state", "missing")
-        ha_people = self.ha.ha_people()
-        self.registry.auto_link_ha_people(ha_people)
+        ha_people = (
+            self.ha.storage_people()
+            if self.ha.people_api_ready
+            else self.ha.ha_people()
+        )
+        people = self.registry.people()
+        reader_availability = {
+            item["id"]: item.get("availability")
+            for item in readers
+        }
+        for person in people:
+            deletion = person.get("deletion")
+            if not deletion:
+                continue
+            deletion["blocked_readers"] = sorted({
+                credential["reader_id"]
+                for credential in person.get("credentials", [])
+                if (
+                    credential.get("type") == "fingerprint"
+                    and reader_availability.get(
+                        credential["reader_id"]
+                    ) != "available"
+                )
+            })
         response = web.json_response(
             {
                 "version": APP_VERSION,
@@ -3166,15 +3902,23 @@ class FingerprintAdmin:
                 ],
                 "reader": reader,
                 "users": users,
-                "people": self.registry.people(),
+                "people": people,
                 "shared_keypad_credentials": self.registry.shared_keypad_credentials(),
                 "ha_people": ha_people,
                 "ha_people_api_ready": self.ha.people_api_ready,
+                "ha_people_refreshed_at": (
+                    self.ha.people_storage_refreshed_iso
+                ),
                 "ha_tags_api_ready": self.ha.tags_api_ready,
                 "doors": doors,
                 "ha_tags": self.ha.ha_tags(),
                 "mobile_nfc_tags": self.registry.mobile_nfc_tags(),
                 "mobile_nfc_permissions": self.registry.mobile_nfc_permissions(),
+                "mobile_nfc_permission_records": (
+                    self.registry.mobile_nfc_permissions(
+                        include_inactive=True
+                    )
+                ),
                 "door_entities": self.ha.door_entities(),
                 "door_sensors": self.ha.door_sensor_entities(),
                 "notification_entities": self.ha.notification_entities(),
@@ -3219,7 +3963,11 @@ class FingerprintAdmin:
         if finger not in FINGER_LABELS:
             raise web.HTTPBadRequest(text="Select one of the ten fingers")
         person = self.registry.person_by_name(name)
-        if not person or not person.get("ha_person_entity_id"):
+        if (
+            not person
+            or person.get("status") != "active"
+            or not person.get("ha_person_entity_id")
+        ):
             raise web.HTTPConflict(
                 text="Create or link the user to a Home Assistant Person first"
             )
@@ -3263,7 +4011,11 @@ class FingerprintAdmin:
         if finger not in FINGER_LABELS:
             raise web.HTTPBadRequest(text="Select one of the ten fingers")
         person = self.registry.person_by_name(name)
-        if not person or not person.get("ha_person_entity_id"):
+        if (
+            not person
+            or person.get("status") != "active"
+            or not person.get("ha_person_entity_id")
+        ):
             raise web.HTTPConflict(
                 text="Create or link the user to a Home Assistant Person first"
             )
@@ -3349,8 +4101,14 @@ class FingerprintAdmin:
         if self.registry.person_by_name(name):
             raise web.HTTPConflict(text="A person with that name already exists")
         requested_entity = str(payload.get("ha_person_entity_id", "")).strip()
-        available = {item["entity_id"] for item in self.ha.ha_people()}
         if requested_entity:
+            if not await self.ha.ensure_people_storage_fresh():
+                raise web.HTTPBadGateway(
+                    text="Home Assistant People API is unavailable"
+                )
+            available = {
+                item["entity_id"] for item in self.ha.storage_people()
+            }
             if requested_entity not in available:
                 raise web.HTTPBadRequest(text="Home Assistant Person does not exist")
             ha_entity_id = requested_entity
@@ -3373,6 +4131,8 @@ class FingerprintAdmin:
         person = self.registry.person(person_id)
         if not person:
             raise web.HTTPNotFound(text="Person not found")
+        if person.get("status") != "active":
+            raise web.HTTPConflict(text="Identity is not active")
         if person.get("ha_person_entity_id"):
             raise web.HTTPConflict(text="This identity is already linked to Home Assistant")
         try:
@@ -3395,7 +4155,12 @@ class FingerprintAdmin:
             raise web.HTTPNotFound(text="Person not found")
         try:
             if person.get("ha_person_entity_id"):
-                await self.ha.update_ha_person(person["ha_person_entity_id"], name)
+                await self.ha.ensure_people_storage_fresh()
+                refreshed_person = self.registry.person(person_id)
+                if refreshed_person.get("ha_link_status") == "linked":
+                    await self.ha.update_ha_person(
+                        refreshed_person["ha_person_entity_id"], name
+                    )
             self.registry.rename_person(person_id, name)
         except (ValueError, RuntimeError, sqlite3.IntegrityError) as error:
             raise web.HTTPConflict(text=str(error))
@@ -3406,15 +4171,111 @@ class FingerprintAdmin:
         self.require_admin_request(request)
         person_id = int(request.match_info["person_id"])
         payload = await request.json()
-        entity_id = str(payload.get("ha_person_entity_id", ""))
-        available = {item["entity_id"] for item in self.ha.ha_people()}
+        entity_id = str(
+            payload.get("ha_person_entity_id", "")
+        ).strip()
+        if not await self.ha.ensure_people_storage_fresh():
+            raise web.HTTPBadGateway(
+                text="Home Assistant People API is unavailable"
+            )
+        available = {
+            item["entity_id"] for item in self.ha.storage_people()
+        }
         if entity_id not in available:
             raise web.HTTPBadRequest(text="Home Assistant Person does not exist")
         try:
-            self.registry.link_ha_person(person_id, entity_id)
+            result = self.registry.link_ha_person(person_id, entity_id)
         except ValueError as error:
             raise web.HTTPConflict(text=str(error))
-        return web.json_response({"ok": True})
+        person = self.registry.person(person_id)
+        event_type = (
+            "person_relinked"
+            if (
+                result["previous_entity_id"]
+                and result["previous_entity_id"] != entity_id
+            )
+            else "person_linked"
+        )
+        self.registry.add_event(
+            event_type,
+            detail=f"{person['name']} · {entity_id}",
+            source="access_manager",
+        )
+        return web.json_response({"ok": True, **result})
+
+    async def unlink_ha_person(self, request):
+        self.require_admin_request(request)
+        try:
+            person_id = int(request.match_info["person_id"])
+            person = self.registry.person(person_id)
+            result = self.registry.unlink_ha_person(person_id)
+        except (TypeError, ValueError) as error:
+            raise web.HTTPConflict(text=str(error))
+        self.registry.add_event(
+            "person_unlinked",
+            detail=(
+                f"{person['name']} · "
+                f"{result['previous_entity_id'] or 'none'}"
+            ),
+            source="access_manager",
+        )
+        return web.json_response({"ok": True, **result})
+
+    def deletion_preview_with_availability(self, person_id):
+        preview = self.registry.person_deletion_preview(person_id)
+        blocked = set(preview.get("blocked_readers", []))
+        for item in preview["fingerprints"]:
+            item["reader_online"] = self.ha.device_online(
+                item["reader_id"]
+            )
+            if not item["reader_online"]:
+                blocked.add(item["reader_id"])
+        preview["blocked_readers"] = sorted(blocked)
+        preview["can_archive_immediately"] = not preview["fingerprints"]
+        return preview
+
+    async def person_deletion_preview(self, request):
+        self.require_admin_request(request)
+        try:
+            person_id = int(request.match_info["person_id"])
+            preview = self.deletion_preview_with_availability(person_id)
+        except TypeError as error:
+            raise web.HTTPBadRequest(text=str(error))
+        except ValueError as error:
+            raise web.HTTPNotFound(text=str(error))
+        return web.json_response(preview)
+
+    async def delete_person(self, request):
+        self.require_admin_request(request)
+        try:
+            person_id = int(request.match_info["person_id"])
+            before = self.deletion_preview_with_availability(person_id)
+            result = self.registry.begin_person_deletion(person_id)
+        except TypeError as error:
+            raise web.HTTPBadRequest(text=str(error))
+        except ValueError as error:
+            raise web.HTTPConflict(text=str(error))
+        if result.get("archived"):
+            self.registry.add_event(
+                "person_archived",
+                detail=before["person"]["name"],
+                source="access_manager",
+            )
+        else:
+            asyncio.create_task(self.process_pending_deletions())
+        body = {
+            "ok": True,
+            "status": (
+                "archived"
+                if result.get("archived")
+                else "deletion_pending"
+            ),
+            "preview": before,
+            "blocked_readers": before["blocked_readers"],
+        }
+        return web.json_response(
+            body, status=200 if result.get("archived") else 202
+        )
 
     async def start_keypad_capture(self, request):
         self.require_admin_request(request)
@@ -3431,6 +4292,8 @@ class FingerprintAdmin:
         reader = self.registry.reader(reader_id)
         if not person:
             raise web.HTTPNotFound(text="Person not found")
+        if person.get("status") != "active":
+            raise web.HTTPConflict(text="Identity is not active")
         if not reader or reader["reader_type"] != "keypad" or not reader["enabled"]:
             raise web.HTTPBadRequest(text="Select an enabled keypad")
         self.capture_sessions[reader_id] = {
@@ -3762,8 +4625,18 @@ class FingerprintAdmin:
             person = self.registry.person(person_id)
             if not person:
                 raise ValueError("User not found")
-            if enabled and not person.get("ha_person_entity_id"):
-                raise ValueError("Link the user to a Home Assistant Person first")
+            if (
+                enabled
+                and not await self.ha.ensure_people_storage_fresh()
+            ):
+                raise ValueError(
+                    "Home Assistant People API is unavailable"
+                )
+            if enabled and not self.registry.mobile_nfc_eligible(person_id):
+                raise ValueError(
+                    "Link the user to a confirmed "
+                    "Home Assistant Person first"
+                )
             self.registry.set_mobile_nfc_permission(person_id, door_id, enabled)
         except (TypeError, ValueError) as error:
             raise web.HTTPBadRequest(text=str(error))
@@ -4360,6 +5233,17 @@ class FingerprintAdmin:
         app.router.add_post("/api/people", self.create_person)
         app.router.add_put("/api/people/{person_id}", self.rename_person)
         app.router.add_put("/api/people/{person_id}/ha-person", self.link_ha_person)
+        app.router.add_delete(
+            "/api/people/{person_id}/ha-person",
+            self.unlink_ha_person,
+        )
+        app.router.add_get(
+            "/api/people/{person_id}/deletion-preview",
+            self.person_deletion_preview,
+        )
+        app.router.add_delete(
+            "/api/people/{person_id}", self.delete_person
+        )
         app.router.add_post(
             "/api/people/{person_id}/create-ha-person",
             self.create_ha_person_for_local,

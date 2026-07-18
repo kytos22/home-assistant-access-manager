@@ -24,8 +24,9 @@
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
     * { box-sizing: border-box; }
+    html, body { max-width: 100%; overflow-x: hidden; }
     body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 10% -10%, #17334a, transparent 35%), var(--bg); color: var(--text); }
-    main { width: min(1180px, calc(100% - 32px)); margin: 0 auto; padding: 30px 0 56px; }
+    main { width: min(1180px, calc(100% - 32px)); min-width: 0; margin: 0 auto; padding: 30px 0 56px; }
     header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
     h1 { margin: 0; font-size: clamp(1.6rem, 4vw, 2.4rem); letter-spacing: -.04em; }
     h2 { font-size: 1.05rem; margin: 0 0 16px; }
@@ -56,7 +57,7 @@
     .hint { margin: 13px 0 0; font-size: .84rem; line-height: 1.45; }
     .notice { display: none; margin: 0 0 16px; padding: 12px 14px; border-radius: 10px; color: #ffd3d5; background: rgba(255,107,114,.12); border: 1px solid rgba(255,107,114,.3); }
     .notice.visible { display: block; }
-    .table-wrap { overflow-x: auto; }
+    .table-wrap { max-width: 100%; overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; min-width: 580px; }
     th { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; text-align: left; font-weight: 600; }
     th, td { border-bottom: 1px solid rgba(40,57,75,.7); padding: 11px 8px; }
@@ -65,6 +66,23 @@
     .status { padding: 4px 8px; border-radius: 99px; font-size: .75rem; background: rgba(70,198,161,.12); color: #7de1c4; }
     .status.pending { background: rgba(245,184,75,.13); color: #ffd27e; }
     .status.deleting { background: rgba(255,107,114,.13); color: #ffafb3; }
+    .status.unknown { background: rgba(114,167,255,.13); color: #bad3ff; }
+    .status.unlinked { background: rgba(157,176,194,.12); color: #c7d6e2; }
+    .person-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .person-lifecycle { display: grid; gap: 8px; margin-top: 9px; }
+    .person-link-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .person-link-actions button { padding: 7px 9px; font-size: .78rem; }
+    .deletion-progress { min-width: min(340px, 100%); padding: 12px; border: 1px solid rgba(255,107,114,.35); border-radius: 12px; background: rgba(255,107,114,.08); }
+    .deletion-progress p { margin: 7px 0 0; font-size: .8rem; }
+    .progress-track { height: 7px; margin-top: 9px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.09); }
+    .progress-fill { height: 100%; border-radius: inherit; background: var(--danger); transition: width .2s ease; }
+    .nfc-suspended { opacity: .86; }
+    .nfc-state { display: grid; gap: 6px; }
+    .preview-summary { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; margin: 12px 0; }
+    .preview-summary > div { padding: 11px; border: 1px solid var(--line); border-radius: 10px; background: rgba(8,15,22,.45); }
+    .preview-summary strong, .preview-summary span { display: block; }
+    .preview-summary span { margin-top: 4px; color: var(--muted); font-size: .78rem; }
+    .preview-details { display: grid; gap: 8px; margin-top: 10px; }
     .section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
     .section-head h2 { margin: 0; }
     .section-actions, .association-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -126,6 +144,7 @@
     .header-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .language-select { width: auto; min-width: 125px; padding: 8px 34px 8px 11px; }
     .tabs { display: flex; gap: 7px; overflow-x: auto; padding: 5px; margin-bottom: 16px; border: 1px solid var(--line); border-radius: 14px; background: rgba(9,18,27,.75); }
+    .mobile-tabs { display: none; }
     .tab-button { flex: 0 0 auto; background: transparent; color: var(--muted); padding: 10px 14px; }
     .tab-button.active { background: #293b4e; color: var(--text); }
     .tab-panel { display: none; }
@@ -174,26 +193,62 @@
     @media (max-width: 840px) {
       main { width: min(100% - 20px, 700px); padding-top: 18px; }
       header { align-items: flex-start; flex-direction: column; }
-      .stats { grid-template-columns: repeat(2, 1fr); }
-      .manage, .users, .people, .infrastructure { grid-column: span 12; }
+      .header-actions { width: 100%; }
+      .tabs { display: none; }
+      .mobile-tabs { position: sticky; top: 0; z-index: 20; display: grid; grid-template-columns: auto minmax(0,1fr); align-items: center; gap: 10px; margin-bottom: 16px; padding: 10px; border: 1px solid var(--line); border-radius: 13px; background: rgba(9,18,27,.96); backdrop-filter: blur(12px); }
+      .mobile-tabs label { margin: 0; }
+      .mobile-tabs select { min-width: 0; }
+      input, select, textarea, button { min-height: 44px; }
+      input, select, textarea { min-width: 0; font-size: 16px; }
+      .icon-button { min-width: 44px; }
+      .stats { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .manage, .users, .people, .infrastructure { grid-column: span 12; min-width: 0; }
+      .tab-panel, .tab-panel > *, .tab-panel > .manage, .tab-panel > .users { min-width: 0; }
       .tab-panel > .manage, .tab-panel > .users { grid-column: span 12; }
       .door-card { grid-template-columns: 1fr; }
       .door-card-grid, .form-grid, .keymap-row, .config-grid { grid-template-columns: 1fr; }
-      .reader-selector { grid-template-columns: 1fr; }
-      .finger-summary { grid-template-columns: 1fr; }
+      .reader-selector, .permission-toolbar { grid-template-columns: 1fr; }
+      .finger-summary, .preview-summary { grid-template-columns: 1fr; }
       .settings-row { align-items: stretch; flex-direction: column; }
       .hand-stage { margin-inline: 10px; padding: 2px; }
-      .mobile-nfc-table { min-width: 0; }
-      .mobile-nfc-table thead { display: none; }
-      .mobile-nfc-table tbody, .mobile-nfc-table tr, .mobile-nfc-table td { display: block; width: 100%; }
-      .mobile-nfc-table tr { margin-top: 10px; padding: 12px; border: 1px solid rgba(61,83,105,.65); border-radius: 12px; background: rgba(8,15,22,.42); }
-      .mobile-nfc-table td { display: grid; grid-template-columns: minmax(92px,.45fr) minmax(0,1fr); gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(40,57,75,.55); overflow-wrap: anywhere; }
-      .mobile-nfc-table td:last-child { border-bottom: 0; }
-      .mobile-nfc-table td::before { content: attr(data-label); color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; }
-      .mobile-nfc-table td.actions-cell { display: flex; justify-content: flex-end; padding-top: 11px; }
-      .mobile-nfc-table td.actions-cell::before, .mobile-nfc-table td.empty::before { display: none; }
-      .mobile-nfc-table td.empty { display: block; }
-      .permission-toolbar { grid-template-columns: 1fr; }
+      .association-actions, .person-link-actions { align-items: stretch; flex-direction: column; }
+      .association-actions select, .association-actions button, .person-link-actions button { width: 100%; min-width: 0; }
+      .credential-list, .log-detail, .deletion-progress { min-width: 0; overflow-wrap: anywhere; }
+      .table-wrap { overflow: visible; }
+      table.responsive-table { min-width: 0; }
+      table.responsive-table thead { display: none; }
+      table.responsive-table tbody, table.responsive-table tr, table.responsive-table td { display: block; width: 100%; }
+      table.responsive-table tr { margin-top: 10px; padding: 12px; overflow: hidden; border: 1px solid rgba(61,83,105,.65); border-radius: 12px; background: rgba(8,15,22,.42); }
+      table.responsive-table td { display: grid; grid-template-columns: minmax(92px,.45fr) minmax(0,1fr); gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(40,57,75,.55); overflow-wrap: anywhere; text-align: left; white-space: normal; }
+      table.responsive-table td:last-child { border-bottom: 0; }
+      table.responsive-table td::before { content: attr(data-label); color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; }
+      table.responsive-table td.actions-cell { display: flex; justify-content: flex-start; gap: 8px; flex-wrap: wrap; padding-top: 11px; }
+      table.responsive-table td.actions-cell::before, table.responsive-table td.empty::before { display: none; }
+      table.responsive-table td.actions-cell button { flex: 1 1 140px; margin: 0; }
+      table.responsive-table td.empty { display: block; }
+      .modal { place-items: end center; padding: 0; }
+      .modal-card { width: 100%; max-height: calc(100dvh - 10px); overflow-x: hidden; overscroll-behavior: contain; border-radius: 20px 20px 0 0; }
+      .modal-head { position: sticky; top: 0; z-index: 3; padding: 15px 16px 10px; background: rgba(18,31,44,.98); }
+      .modal-actions { position: sticky; bottom: 0; z-index: 3; flex-wrap: wrap; padding: 13px 16px max(13px, env(safe-area-inset-bottom)); background: rgba(12,21,30,.98); border-top: 1px solid var(--line); }
+      .modal-actions button { flex: 1 1 130px; }
+      .form-body, .capture-box { margin-inline: 0; padding-inline: 16px; }
+    }
+    @media (max-width: 520px) {
+      main { width: min(100% - 12px, 520px); padding-top: 10px; }
+      header { gap: 12px; margin-bottom: 14px; }
+      .header-actions { gap: 7px; }
+      .language-select { width: 100%; }
+      .mobile-tabs { margin-inline: -1px; padding: 8px; }
+      .card { padding: 14px; border-radius: 14px; }
+      .stats { gap: 8px; }
+      .stat { min-height: 78px; padding: 12px; }
+      .section-head { align-items: stretch; flex-direction: column; }
+      .section-head > button, .section-actions > button { width: 100%; }
+      .actions { align-items: stretch; flex-direction: column; }
+      .actions > button { width: 100%; }
+      table.responsive-table tr { padding: 10px; }
+      table.responsive-table td { grid-template-columns: 1fr; gap: 5px; }
+      .form-body { padding-inline: 13px; }
     }
   </style>
 </head>
@@ -227,6 +282,19 @@
     <button class="tab-button" data-tab="settings" data-i18n="tab_settings">Settings</button>
     <button class="tab-button" data-tab="logs" data-i18n="tab_logs">Log</button>
   </nav>
+
+  <div class="mobile-tabs">
+    <label for="mobile-tab-select" data-i18n="section">Section</label>
+    <select id="mobile-tab-select" aria-label="Access Manager section">
+      <option value="people" data-i18n="tab_people">Users & credentials</option>
+      <option value="fingerprints" data-i18n="tab_fingerprints">Fingerprint readers</option>
+      <option value="keypads" data-i18n="tab_keypads">Keypads</option>
+      <option value="doors" data-i18n="tab_doors">Doors</option>
+      <option value="automations" data-i18n="tab_automations">Automations</option>
+      <option value="settings" data-i18n="tab_settings">Settings</option>
+      <option value="logs" data-i18n="tab_logs">Log</option>
+    </select>
+  </div>
 
   <section id="tab-people" class="tab-panel active" role="tabpanel">
     <section class="card stats">
@@ -265,7 +333,7 @@
         <div><label for="mobile-nfc-door-filter" data-i18n="filter_door">Filter by door</label><select id="mobile-nfc-door-filter"></select></div>
       </div>
       <div class="table-wrap"><table class="mobile-nfc-table">
-        <thead><tr><th data-i18n="user">User</th><th data-i18n="tag">Tag</th><th data-i18n="door">Door</th><th></th></tr></thead>
+        <thead><tr><th data-i18n="user">User</th><th data-i18n="tag">Tag</th><th data-i18n="door">Door</th><th data-i18n="status">Status</th></tr></thead>
         <tbody id="mobile-nfc-permissions-body"></tbody>
       </table></div>
     </section>
@@ -560,7 +628,7 @@
 <script>
 (() => {
   const $ = selector => document.querySelector(selector);
-  const PANEL_BUILD_VERSION = "0.11.0";
+  const PANEL_BUILD_VERSION = "0.12.0";
   let data = null;
   let busy = false;
   let refreshPromise = null;
@@ -583,6 +651,11 @@
       app_title:"Access Manager", app_subtitle:"Users · credentials · readers · doors", language:"Language", installed_version:"Installed version",
       connecting:"Connecting…", connected:"Home Assistant connected", disconnected:"Home Assistant disconnected", panel_updating:"Loading the updated Access Manager panel…", panel_update_failed:"The updated panel could not be loaded. Close and reopen Access Manager, then try again.",
       tab_people:"Users & credentials", tab_fingerprints:"Fingerprint readers", tab_keypads:"Keypads", tab_doors:"Doors", tab_automations:"Automations", tab_settings:"Settings", tab_logs:"Log",
+      section:"Section", link_state_linked:"Linked", link_state_missing:"Person missing in Home Assistant", link_state_unknown:"Link not verified", link_state_unlinked:"Not linked",
+      link_help_linked:"Linked to Home Assistant. Credentials and access permissions are active.", link_help_missing:"This Home Assistant person no longer exists. Fingerprints and keypad credentials remain active and visible; mobile NFC access is suspended.", link_help_unknown:"Home Assistant could not verify this link. Fingerprints and keypad credentials remain active and visible; mobile NFC access is suspended until verification succeeds.", link_help_unlinked:"This identity is stored only in Access Manager. Link it before adding credentials or mobile NFC access.",
+      link_ha_person:"Link person", relink_ha_person:"Relink person", repair_link:"Repair link", unlink_ha_person:"Unlink from Home Assistant", unlink_person_title:"Unlink Home Assistant person?", unlink_person_warning:"The local identity, fingerprints, and codes will be kept. Mobile NFC permissions will be suspended, and automatic relinking will remain disabled.", confirm_unlink:"UNLINK", relink_person_title:"Relink Home Assistant person", relink_person_warning:"Choose the Home Assistant person for this identity. Mobile NFC permissions are not transferred silently; suspended permissions remain suspended until you confirm them.", confirm_relink:"RELINK",
+      delete_person:"Delete identity", delete_person_title:"Delete Access Manager identity?", delete_person_intro:"Review everything that will be revoked. Fingerprints must be confirmed as deleted by every reader before the identity can be archived.", fingerprints_count:"Fingerprints", keypad_count:"Keypad credentials", mobile_nfc_count:"Mobile NFC permissions", offline_readers:"Offline readers", deletion_pending_person:"Deletion pending", deletion_progress:"{done} of {total} fingerprints deleted", deletion_blocked:"Waiting for: {readers}", deletion_waiting:"Waiting for reader confirmation.", view_deletion:"View deletion", confirm_delete_person:"DELETE IDENTITY",
+      nfc_permission_active:"Active", nfc_permission_suspended:"Suspended", nfc_suspended_reason:"The Home Assistant link must be repaired before this permission can be reactivated.", repair_person_link:"Repair person link", confirm_nfc_permission:"Confirm access", no_linked_people:"No active linked people are available.", credential_link_required:"Choose an active identity linked to Home Assistant.", person_unlinked:"Person unlinked", person_relinked:"Person relinked", person_deletion_requested:"Person deletion requested",
       people:"People", credentials:"Credentials", readers:"Readers", doors:"Doors", automations:"Automations", settings:"Settings", users_credentials:"Users and credentials",
       add_user:"Add user", user:"User", linked_credentials:"Linked credentials", fingerprint_readers:"Fingerprint readers",
       add_fingerprint_reader:"Add fingerprint reader", reader:"Reader", name:"Name", door:"Door", availability:"Availability",
@@ -591,7 +664,7 @@
       physical_ids:"Physical fingerprint IDs", finger:"Finger", status:"Status", updated:"Updated", keypads:"Keypads", add_keypad:"Add keypad",
       zigbee_hint:"Zigbee keypads normally sleep. Their status shows whether they are configured in Home Assistant, not whether they are continuously online.",
       ha_entities:"Home Assistant entities", add_door:"Add door", door_hint:"An authorized credential directly runs the selected default action. Lock entities expose open only when the device reports that capability.",
-      mobile_nfc_tags:"Mobile NFC door tags", add_mobile_nfc_tag:"Add NFC tag", mobile_nfc_hint:"The tag identifies the door. The authenticated Home Assistant app account identifies the person.", mobile_nfc_permissions:"Mobile NFC permissions", mobile_nfc_permissions_hint:"Grant access by selecting a linked user and a fixed-door tag. Only active permissions are listed.", mobile_nfc_access:"Mobile NFC access", tag:"Tag", select_registered_tag:"Home Assistant tag", no_registered_tags:"No registered Home Assistant tags are available.", confirm_delete_mobile_nfc_tag:"Remove this mobile NFC door tag?", mobile_nfc_granted:"Mobile NFC access granted", mobile_nfc_denied:"Mobile NFC access denied", mobile_nfc_tag_saved:"Mobile NFC tag saved", mobile_nfc_tag_deleted:"Mobile NFC tag deleted", mobile_nfc_permission_changed:"Mobile NFC permission changed", grant_permission:"Grant permission", filter_door:"Filter by door", all_doors:"All doors", revoke:"Revoke",
+      mobile_nfc_tags:"Mobile NFC door tags", add_mobile_nfc_tag:"Add NFC tag", mobile_nfc_hint:"The tag identifies the door. The authenticated Home Assistant app account identifies the person.", mobile_nfc_permissions:"Mobile NFC permissions", mobile_nfc_permissions_hint:"Grant access to active linked identities. Suspended permissions remain visible so their Home Assistant link can be repaired or access revoked.", mobile_nfc_access:"Mobile NFC access", tag:"Tag", select_registered_tag:"Home Assistant tag", no_registered_tags:"No registered Home Assistant tags are available.", confirm_delete_mobile_nfc_tag:"Remove this mobile NFC door tag?", mobile_nfc_granted:"Mobile NFC access granted", mobile_nfc_denied:"Mobile NFC access denied", mobile_nfc_tag_saved:"Mobile NFC tag saved", mobile_nfc_tag_deleted:"Mobile NFC tag deleted", mobile_nfc_permission_changed:"Mobile NFC permission changed", grant_permission:"Grant permission", filter_door:"Filter by door", all_doors:"All doors", revoke:"Revoke",
       add_automation:"Add automation", automation_hint:"These are native Home Assistant automations. Access Manager only updates or deletes automations that it created and still owns.",
       automation_type:"Automation type", auto_lock:"Auto-lock", auto_lock_delay:"Lock after", door_open_alert:"Door left open alert", door_open_delay:"Alert after", denied_access_alert:"Denied access alert", denied_attempt_threshold:"Notify after", denied_attempt_window:"Within", edit_automation:"Edit automation", no_automations:"No managed automations", no_automation_slots:"No compatible door is available for another automation of this type.",
       door_sensor:"Door contact sensor", no_door_sensor:"No sensor (lock after unlock)", door_sensor_hint:"Optional for auto-lock. Closing the contact starts the delay; the lock runs only if the door remains closed.", door_sensor_required_hint:"Required. The alert starts only when this contact remains open for the selected time.",
@@ -647,6 +720,11 @@
       app_title:"Gestor de accesos", app_subtitle:"Usuarios · credenciales · lectores · puertas", language:"Idioma", installed_version:"Versión instalada",
       connecting:"Conectando…", connected:"Home Assistant conectado", disconnected:"Home Assistant desconectado", panel_updating:"Cargando el panel actualizado de Access Manager…", panel_update_failed:"No se pudo cargar el panel actualizado. Cierra y vuelve a abrir Access Manager e inténtalo de nuevo.",
       tab_people:"Usuarios y credenciales", tab_fingerprints:"Lectores de huellas", tab_keypads:"Keypads", tab_doors:"Puertas", tab_automations:"Automatizaciones", tab_settings:"Ajustes", tab_logs:"Registro",
+      section:"Sección", link_state_linked:"Vinculada", link_state_missing:"Persona ausente en Home Assistant", link_state_unknown:"Vínculo sin verificar", link_state_unlinked:"Sin vincular",
+      link_help_linked:"Vinculada con Home Assistant. Las credenciales y permisos de acceso están activos.", link_help_missing:"Esta persona ya no existe en Home Assistant. Las huellas y credenciales de keypad siguen activas y visibles; el acceso NFC móvil queda suspendido.", link_help_unknown:"Home Assistant no pudo verificar este vínculo. Las huellas y credenciales de keypad siguen activas y visibles; el acceso NFC móvil queda suspendido hasta poder verificarlo.", link_help_unlinked:"Esta identidad solo está guardada en Access Manager. Vincúlala antes de añadir credenciales o acceso NFC móvil.",
+      link_ha_person:"Vincular persona", relink_ha_person:"Volver a vincular", repair_link:"Reparar vínculo", unlink_ha_person:"Desvincular de Home Assistant", unlink_person_title:"¿Desvincular la persona de Home Assistant?", unlink_person_warning:"Se conservarán la identidad local, las huellas y los códigos. Los permisos NFC móvil quedarán suspendidos y el enlace automático seguirá desactivado.", confirm_unlink:"DESVINCULAR", relink_person_title:"Volver a vincular persona de Home Assistant", relink_person_warning:"Elige la persona de Home Assistant para esta identidad. Los permisos NFC móvil no se transfieren silenciosamente; permanecerán suspendidos hasta que los confirmes.", confirm_relink:"VINCULAR",
+      delete_person:"Eliminar identidad", delete_person_title:"¿Eliminar la identidad de Access Manager?", delete_person_intro:"Revisa todo lo que se revocará. Cada lector debe confirmar la eliminación de sus huellas antes de archivar la identidad.", fingerprints_count:"Huellas", keypad_count:"Credenciales de keypad", mobile_nfc_count:"Permisos NFC móvil", offline_readers:"Lectores sin conexión", deletion_pending_person:"Eliminación pendiente", deletion_progress:"{done} de {total} huellas eliminadas", deletion_blocked:"Esperando a: {readers}", deletion_waiting:"Esperando confirmación de los lectores.", view_deletion:"Ver eliminación", confirm_delete_person:"ELIMINAR IDENTIDAD",
+      nfc_permission_active:"Activo", nfc_permission_suspended:"Suspendido", nfc_suspended_reason:"Hay que reparar el vínculo con Home Assistant antes de reactivar este permiso.", repair_person_link:"Reparar vínculo de persona", confirm_nfc_permission:"Confirmar acceso", no_linked_people:"No hay personas vinculadas y activas disponibles.", credential_link_required:"Selecciona una identidad activa vinculada con Home Assistant.", person_unlinked:"Persona desvinculada", person_relinked:"Persona revinculada", person_deletion_requested:"Eliminación de persona solicitada",
       people:"Personas", credentials:"Credenciales", readers:"Lectores", doors:"Puertas", automations:"Automatizaciones", settings:"Ajustes", users_credentials:"Usuarios y credenciales",
       add_user:"Añadir usuario", user:"Usuario", linked_credentials:"Credenciales asociadas", fingerprint_readers:"Lectores de huellas",
       add_fingerprint_reader:"Añadir lector de huellas", reader:"Lector", name:"Nombre", door:"Puerta", availability:"Disponibilidad",
@@ -655,7 +733,7 @@
       physical_ids:"IDs físicos de huella", finger:"Dedo", status:"Estado", updated:"Actualización", keypads:"Keypads", add_keypad:"Añadir keypad",
       zigbee_hint:"Los keypads Zigbee suelen dormir. El estado indica si están configurados en Home Assistant, no si permanecen continuamente online.",
       ha_entities:"Entidades de Home Assistant", add_door:"Añadir puerta", door_hint:"Una credencial autorizada ejecuta directamente la acción predeterminada. En entidades lock, open solo aparece si el dispositivo declara esa capacidad.",
-      mobile_nfc_tags:"Tags NFC móviles de puerta", add_mobile_nfc_tag:"Añadir tag NFC", mobile_nfc_hint:"El tag identifica la puerta. La cuenta autenticada de la app de Home Assistant identifica a la persona.", mobile_nfc_permissions:"Permisos NFC móvil", mobile_nfc_permissions_hint:"Concede acceso seleccionando un usuario vinculado y un tag fijo de puerta. Solo se muestran permisos activos.", mobile_nfc_access:"Acceso NFC móvil", tag:"Tag", select_registered_tag:"Tag de Home Assistant", no_registered_tags:"No hay tags registrados disponibles en Home Assistant.", confirm_delete_mobile_nfc_tag:"¿Quitar este tag NFC móvil de puerta?", mobile_nfc_granted:"Acceso NFC móvil autorizado", mobile_nfc_denied:"Acceso NFC móvil denegado", mobile_nfc_tag_saved:"Tag NFC móvil guardado", mobile_nfc_tag_deleted:"Tag NFC móvil eliminado", mobile_nfc_permission_changed:"Permiso NFC móvil modificado", grant_permission:"Conceder permiso", filter_door:"Filtrar por puerta", all_doors:"Todas las puertas", revoke:"Revocar",
+      mobile_nfc_tags:"Tags NFC móviles de puerta", add_mobile_nfc_tag:"Añadir tag NFC", mobile_nfc_hint:"El tag identifica la puerta. La cuenta autenticada de la app de Home Assistant identifica a la persona.", mobile_nfc_permissions:"Permisos NFC móvil", mobile_nfc_permissions_hint:"Concede acceso solo a identidades activas y vinculadas. Los permisos suspendidos siguen visibles para reparar su vínculo con Home Assistant o revocarlos.", mobile_nfc_access:"Acceso NFC móvil", tag:"Tag", select_registered_tag:"Tag de Home Assistant", no_registered_tags:"No hay tags registrados disponibles en Home Assistant.", confirm_delete_mobile_nfc_tag:"¿Quitar este tag NFC móvil de puerta?", mobile_nfc_granted:"Acceso NFC móvil autorizado", mobile_nfc_denied:"Acceso NFC móvil denegado", mobile_nfc_tag_saved:"Tag NFC móvil guardado", mobile_nfc_tag_deleted:"Tag NFC móvil eliminado", mobile_nfc_permission_changed:"Permiso NFC móvil modificado", grant_permission:"Conceder permiso", filter_door:"Filtrar por puerta", all_doors:"Todas las puertas", revoke:"Revocar",
       add_automation:"Añadir automatización", automation_hint:"Son automatizaciones nativas de Home Assistant. Access Manager solo actualiza o borra las que ha creado y siguen siendo de su propiedad.",
       automation_type:"Tipo de automatización", auto_lock:"Cierre automático", auto_lock_delay:"Cerrar después de", door_open_alert:"Aviso de puerta abierta", door_open_delay:"Avisar después de", denied_access_alert:"Aviso de acceso denegado", denied_attempt_threshold:"Avisar tras", denied_attempt_window:"Dentro de", edit_automation:"Editar automatización", no_automations:"No hay automatizaciones gestionadas", no_automation_slots:"No hay una puerta compatible disponible para otra automatización de este tipo.",
       door_sensor:"Sensor de contacto de puerta", no_door_sensor:"Sin sensor (cerrar tras desbloquear)", door_sensor_hint:"Opcional para el cierre automático. Al cerrar el contacto empieza la espera; solo cerrará si la puerta sigue cerrada.", door_sensor_required_hint:"Obligatorio. El aviso solo se activa cuando este contacto permanece abierto durante el tiempo seleccionado.",
@@ -763,6 +841,9 @@
     document.title = t("app_title");
     $("#language").value = language;
     document.querySelectorAll("[data-i18n]").forEach(el => el.textContent = t(el.dataset.i18n));
+    const mobileTabSelect = $("#mobile-tab-select");
+    mobileTabSelect.value = activeTab;
+    mobileTabSelect.setAttribute("aria-label", t("section"));
     $("#name").placeholder = t("person_name");
     $("#finger-close").setAttribute("aria-label", t("close"));
     $("#keypad-close").setAttribute("aria-label", t("close"));
@@ -796,6 +877,8 @@
     activeTab = tab;
     document.querySelectorAll(".tab-button").forEach(button => button.classList.toggle("active", button.dataset.tab === tab));
     document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("active", panel.id === `tab-${tab}`));
+    const mobileTabSelect = $("#mobile-tab-select");
+    if (mobileTabSelect) mobileTabSelect.value = tab;
   }
 
   function readerName(id) { return data?.access_readers?.find(reader => reader.id === id)?.name || id; }
@@ -820,20 +903,62 @@
     return (data.ha_people || []).map(person => `<option value="${esc(person.entity_id)}">${esc(person.name)} · ${esc(person.entity_id)}</option>`).join("");
   }
 
+  function personLinkState(person) {
+    const state = String(person?.ha_link_state || person?.ha_link_status || "").toLowerCase();
+    return ["linked", "missing", "unknown", "unlinked"].includes(state)
+      ? state
+      : person?.ha_person_entity_id ? "linked" : "unlinked";
+  }
+  function personIsDeleting(person) { return person?.status === "deletion_pending"; }
+  function personCanReceiveCredentials(person) { return Boolean(person && personLinkState(person) === "linked" && !personIsDeleting(person) && person.status !== "archived"); }
+  function personDeletionSummary(person) {
+    const fingerprints = (person?.credentials || []).filter(item => item.type === "fingerprint");
+    const deletion = person?.deletion || {};
+    const total = Math.max(0, Number(deletion.total ?? fingerprints.length) || 0);
+    const done = Math.min(total, Math.max(0, Number(deletion.done ?? 0) || 0));
+    const pending = Math.max(0, Number(deletion.pending ?? total - done) || 0);
+    const blockedReaders = Array.isArray(deletion.blocked_readers) ? deletion.blocked_readers : [];
+    return {total, done, pending, blockedReaders};
+  }
+  function renderPersonLifecycle(person) {
+    if (personIsDeleting(person)) {
+      const deletion = personDeletionSummary(person);
+      const percent = deletion.total ? Math.round((deletion.done / deletion.total) * 100) : 100;
+      const waiting = deletion.blockedReaders.length
+        ? t("deletion_blocked", {readers:deletion.blockedReaders.map(readerName).join(", ")})
+        : deletion.pending ? t("deletion_waiting") : "";
+      return `<div class="person-lifecycle"><span class="status deleting">${esc(t("deletion_pending_person"))}</span><div class="deletion-progress"><strong>${esc(t("deletion_progress", {done:deletion.done, total:deletion.total}))}</strong><div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="${deletion.total}" aria-valuenow="${deletion.done}"><div class="progress-fill" style="width:${percent}%"></div></div>${waiting ? `<p>${esc(waiting)}</p>` : ""}</div></div>`;
+    }
+    const state = personLinkState(person);
+    const statusClass = state === "linked" ? "" : state === "missing" ? "pending" : state;
+    const entity = person.ha_person_entity_id ? `<span class="entity">${esc(person.ha_person_entity_id)}</span>` : "";
+    let actions = "";
+    if (state === "linked") {
+      actions = `<button class="secondary" onclick="openHaPersonLinkEditor(${Number(person.id)})">${esc(t("relink_ha_person"))}</button><button class="danger" onclick="unlinkHaPerson(${Number(person.id)})">${esc(t("unlink_ha_person"))}</button>`;
+    } else if (state === "missing" || state === "unknown") {
+      actions = `<button class="secondary" onclick="openHaPersonLinkEditor(${Number(person.id)})">${esc(t("repair_link"))}</button><button class="danger" onclick="unlinkHaPerson(${Number(person.id)})">${esc(t("unlink_ha_person"))}</button>`;
+    } else {
+      actions = `<button class="secondary" onclick="openHaPersonLinkEditor(${Number(person.id)})">${esc(t("link_ha_person"))}</button><button class="secondary" onclick="createHaPerson(${Number(person.id)})">${esc(t("create_in_ha"))}</button>`;
+    }
+    return `<div class="person-lifecycle"><div><span class="status ${statusClass}">${esc(t(`link_state_${state}`))}</span>${entity}</div><span class="muted">${esc(t(`link_help_${state}`))}</span><div class="person-link-actions">${actions}</div></div>`;
+  }
+
   function renderPeople() {
     const body = $("#people-body");
     body.innerHTML = (data.people || []).length ? data.people.map(person => {
-      const credentials = person.credentials.length ? person.credentials.map(credential => {
-        if (credential.type === "fingerprint") return `<span class="credential fingerprint">${t("fingerprint")} · ${esc(readerName(credential.reader_id))} · ${esc(fingerLabel(credential.finger))} · ID ${credential.slot}</span>`;
+      const deleting = personIsDeleting(person);
+      const canAddCredentials = personCanReceiveCredentials(person);
+      const credentials = (person.credentials || []).length ? person.credentials.map(credential => {
+        if (credential.type === "fingerprint") return `<span class="credential fingerprint">${t("fingerprint")} &middot; ${esc(readerName(credential.reader_id))} &middot; ${esc(fingerLabel(credential.finger))} &middot; ID ${credential.slot}</span>`;
         const credentialId = String(credential.id).split(":")[1];
-        const legacyAction = credential.legacy_action_scope ? ` · ${esc(credential.keypad_action)}` : "";
-        const reveal = data.privacy_mode && credential.revealable ? `<button title="${t("show_credential")}" aria-label="${t("show_credential")}" onclick="revealKeypadCredential(${credentialId})">👁</button>` : "";
-        return `<span class="credential keypad">${t("keypad")} · ${esc(readerName(credential.reader_id))} · <span id="credential-value-${credentialId}">${esc(codeHint(credential))}</span>${legacyAction}${reveal}<button title="${t("delete")}" aria-label="${t("delete")}" onclick="deleteKeypadCredential(${credentialId})">×</button></span>`;
+        const legacyAction = credential.legacy_action_scope ? ` &middot; ${esc(credential.keypad_action)}` : "";
+        const reveal = data.privacy_mode && credential.revealable ? `<button title="${t("show_credential")}" aria-label="${t("show_credential")}" onclick="revealKeypadCredential(${credentialId})" ${deleting ? "disabled" : ""}>&#128065;</button>` : "";
+        return `<span class="credential keypad">${t("keypad")} &middot; ${esc(readerName(credential.reader_id))} &middot; <span id="credential-value-${credentialId}">${esc(codeHint(credential))}</span>${legacyAction}${reveal}<button title="${t("delete")}" aria-label="${t("delete")}" onclick="deleteKeypadCredential(${credentialId})" ${deleting ? "disabled" : ""}>&times;</button></span>`;
       }).join("") : `<span class="muted">${t("no_credentials")}</span>`;
-      const association = person.ha_person_entity_id
-        ? `<span class="status">${esc(person.ha_person_entity_id)}</span>`
-        : `<div class="association-actions"><select onchange="linkHaPerson(${person.id},this.value)"><option value="">${t("associate_people")}</option>${haPersonOptions()}</select><button class="secondary" onclick="createHaPerson(${person.id})">${t("create_in_ha")}</button></div>`;
-      return `<tr><td><strong>${esc(person.name)}</strong><div style="margin-top:7px">${association}</div></td><td><div class="credential-list">${credentials}</div></td><td class="actions-cell"><button class="secondary" onclick="prepareFingerprint(${person.id})" ${person.ha_person_entity_id ? "" : "disabled"}>${t("add_fingerprint")}</button><button class="secondary" onclick="openKeypadModal(${person.id})" ${person.ha_person_entity_id ? "" : "disabled"}>${t("add_code")}</button><button class="secondary" onclick="renamePerson(${person.id})">${t("rename")}</button></td></tr>`;
+      const actions = deleting
+        ? `<button class="secondary" onclick="viewPersonDeletion(${Number(person.id)})">${esc(t("view_deletion"))}</button>`
+        : `<button class="secondary" onclick="prepareFingerprint(${Number(person.id)})" ${canAddCredentials ? "" : "disabled"}>${t("add_fingerprint")}</button><button class="secondary" onclick="openKeypadModal(${Number(person.id)})" ${canAddCredentials ? "" : "disabled"}>${t("add_code")}</button><button class="secondary" onclick="renamePerson(${Number(person.id)})">${t("rename")}</button><button class="danger" onclick="deletePerson(${Number(person.id)})">${t("delete_person")}</button>`;
+      return `<tr><td><div class="person-heading"><strong>${esc(person.name)}</strong></div>${renderPersonLifecycle(person)}</td><td><div class="credential-list">${credentials}</div></td><td class="actions-cell">${actions}</td></tr>`;
     }).join("") : `<tr><td colspan="3" class="empty">${t("no_users")}</td></tr>`;
   }
 
@@ -923,22 +1048,32 @@
     const selectedPerson = personSelect.value;
     const selectedTag = tagSelect.value;
     const selectedFilter = filterSelect.value;
-    const linkedPeople = (data.people || []).filter(person => person.ha_person_entity_id);
+    const linkedPeople = (data.people || []).filter(person => personLinkState(person) === "linked" && !personIsDeleting(person));
     const enabledTags = tags.filter(tag => tag.enabled);
-    personSelect.innerHTML = linkedPeople.map(person => `<option value="${person.id}" ${String(person.id)===selectedPerson?"selected":""}>${esc(person.name)} · ${esc(person.ha_person_entity_id)}</option>`).join("");
-    tagSelect.innerHTML = enabledTags.map(tag => { const door=(data.doors||[]).find(item=>item.id===tag.door_id); return `<option value="${esc(tag.tag_id)}" ${tag.tag_id===selectedTag?"selected":""}>${esc(tag.name)} · ${esc(door?.name||tag.door_id)}</option>`; }).join("");
+    personSelect.innerHTML = linkedPeople.length
+      ? linkedPeople.map(person => `<option value="${person.id}" ${String(person.id) === selectedPerson ? "selected" : ""}>${esc(person.name)} &middot; ${esc(person.ha_person_entity_id)}</option>`).join("")
+      : `<option value="">${esc(t("no_linked_people"))}</option>`;
+    tagSelect.innerHTML = enabledTags.map(tag => { const door=(data.doors||[]).find(item=>item.id===tag.door_id); return `<option value="${esc(tag.tag_id)}" ${tag.tag_id===selectedTag?"selected":""}>${esc(tag.name)} &middot; ${esc(door?.name||tag.door_id)}</option>`; }).join("");
     filterSelect.innerHTML = `<option value="">${t("all_doors")}</option>` + (data.doors || []).map(door => `<option value="${esc(door.id)}" ${door.id===selectedFilter?"selected":""}>${esc(door.name)}</option>`).join("");
     $("#add-mobile-nfc-permission").disabled = !linkedPeople.length || !enabledTags.length;
 
-    const activePermissions = (data.mobile_nfc_permissions || []).filter(item => item.enabled && (!filterSelect.value || item.door_id === filterSelect.value));
-    const rows = activePermissions.map(permission => {
-      const person = (data.people || []).find(item => item.id === permission.person_id);
+    const permissionRecords = data.mobile_nfc_permission_records || data.mobile_nfc_permissions || [];
+    const visiblePermissions = permissionRecords.filter(item => (item.enabled || item.suspended || item.requires_confirmation) && (!filterSelect.value || item.door_id === filterSelect.value));
+    const rows = visiblePermissions.map(permission => {
+      const person = (data.people || []).find(item => Number(item.id) === Number(permission.person_id));
       const door = (data.doors || []).find(item => item.id === permission.door_id);
+      const linkState = person ? personLinkState(person) : "missing";
+      const suspended = Boolean(permission.suspended || permission.requires_confirmation || !person || linkState !== "linked" || personIsDeleting(person));
       const permissionTags = tags.filter(tag => tag.door_id === permission.door_id);
       const tagLabels = permissionTags.length
         ? permissionTags.map(tag => `<span class="credential">${esc(tag.name)}<span class="entity">${esc(tag.tag_id)}</span></span>`).join("")
         : `<span class="muted">${t("no_records")}</span>`;
-      return `<tr><td data-label="${esc(t("user"))}"><strong>${esc(person?.name || permission.person_id)}</strong><div class="entity">${esc(person?.ha_person_entity_id || t("unlinked"))}</div></td><td data-label="${esc(t("tag"))}"><div class="credential-list">${tagLabels}</div></td><td data-label="${esc(t("door"))}">${esc(door?.name || permission.door_id)}</td><td class="actions-cell"><button class="danger" onclick="setMobileNfcPermission(${permission.person_id},'${esc(permission.door_id)}',false)">${t("revoke")}</button></td></tr>`;
+      const reason = personIsDeleting(person) ? t("deletion_pending_person") : permission.requires_confirmation && linkState === "linked" ? t("relink_person_warning") : t("nfc_suspended_reason");
+      const repair = suspended && person && !personIsDeleting(person) && linkState !== "linked"
+        ? `<button class="secondary" onclick="openHaPersonLinkEditor(${Number(person.id)})">${esc(t("repair_person_link"))}</button>` : "";
+      const confirmPermission = suspended && person && !personIsDeleting(person) && linkState === "linked"
+        ? `<button class="secondary" onclick="setMobileNfcPermission(${Number(permission.person_id)},'${esc(permission.door_id)}',true)">${esc(t("confirm_nfc_permission"))}</button>` : "";
+      return `<tr class="${suspended ? "nfc-suspended" : ""}"><td><strong>${esc(person?.name || permission.person_id)}</strong><div class="entity">${esc(person?.ha_person_entity_id || t(`link_state_${linkState}`))}</div></td><td><div class="credential-list">${tagLabels}</div></td><td>${esc(door?.name || permission.door_id)}</td><td><div class="nfc-state"><span class="status ${suspended ? "pending" : ""}">${esc(t(suspended ? "nfc_permission_suspended" : "nfc_permission_active"))}</span>${suspended ? `<span class="muted">${esc(reason)}</span>` : ""}<div class="person-link-actions">${repair}${confirmPermission}<button class="danger" onclick="setMobileNfcPermission(${Number(permission.person_id)},'${esc(permission.door_id)}',false)">${t("revoke")}</button></div></div></td></tr>`;
     });
     $("#mobile-nfc-permissions-body").innerHTML = rows.length ? rows.join("") : `<tr><td colspan="4" class="empty">${t("no_records")}</td></tr>`;
     document.querySelectorAll(".mobile-nfc-delete").forEach(button => button.addEventListener("click", () => deleteMobileNfcTag(button.dataset.tagId)));
@@ -1027,6 +1162,18 @@
     link.href=url;link.download=`${$("#esphome-device-name").value.trim()||"fingerprint-reader"}.yaml`;link.click();URL.revokeObjectURL(url);
   }
 
+  function enhanceResponsiveTables() {
+    document.querySelectorAll(".table-wrap table").forEach(table => {
+      table.classList.add("responsive-table");
+      const labels = [...table.querySelectorAll("thead th")].map(header => header.textContent.trim());
+      table.querySelectorAll("tbody tr").forEach(row => {
+        [...row.children].forEach((cell, index) => {
+          if (cell.tagName === "TD" && !cell.hasAttribute("colspan")) cell.dataset.label = labels[index] || "";
+        });
+      });
+    });
+  }
+
   function render() {
     const connection = $("#connection");
     const version = data.version || "development";
@@ -1046,9 +1193,9 @@
       + (data.shared_keypad_credentials || []).length;
     $("#person-count").textContent = data.people?.length ?? 0; $("#credential-count").textContent = credentials;
     $("#access-reader-count").textContent = data.access_readers?.length ?? 0; $("#door-count").textContent = data.doors?.length ?? 0;
-    $("#people-list").innerHTML = (data.people || []).map(person => `<option value="${esc(person.name)}"></option>`).join("");
+    $("#people-list").innerHTML = (data.people || []).filter(personCanReceiveCredentials).map(person => `<option value="${esc(person.name)}"></option>`).join("");
     $("#management").textContent = data.management_message || t("management_empty");
-    renderPeople(); renderSharedKeypadCredentials(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderMobileNfc(); renderAutomations(); renderSettings(); renderLogs(); renderCapture(); renderKeypadLearning();
+    renderPeople(); renderSharedKeypadCredentials(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderMobileNfc(); renderAutomations(); renderSettings(); renderLogs(); renderCapture(); renderKeypadLearning(); enhanceResponsiveTables();
   }
   function refresh() {
     if (refreshPromise) return refreshPromise;
@@ -1074,6 +1221,8 @@
   function openFingerModal(mode, existing = null) {
     const slot = existing ? Number(existing.slot) : Number($("#slot").value), name = existing ? existing.name : $("#name").value.trim();
     if (!selectedReader || !Number.isInteger(slot) || slot < 1 || slot > 50 || !name) { showError(t("choose_reader")); return; }
+    const person = (data.people || []).find(item => normalize(item.name) === normalize(name));
+    if (!personCanReceiveCredentials(person)) { showError(t("credential_link_required")); return; }
     if (mode !== "assign" && data.users.some(user => user.reader_id === selectedReader && Number(user.slot) === slot)) { showError(`ID ${slot} is already used on ${readerName(selectedReader)}`); return; }
     fingerModal = {mode, slot, name, reader_id:selectedReader}; selectedFinger = null;
     $("#finger-title").textContent = t(mode === "enroll" ? "select_finger" : mode === "import" ? "identify_finger" : "assign_finger");
@@ -1103,8 +1252,9 @@
     if(learningReaderId) await request(`keypads/${learningReaderId}/action-learning`,{method:"DELETE"}).catch(()=>{});
     learningReaderId=null; editorSubmit=null; $("#editor-modal").classList.remove("open"); $("#editor-modal").setAttribute("aria-hidden","true"); document.body.classList.remove("modal-open");
   }
-  function openConfirm({title,subtitle="",message,confirmLabel=null,danger=true,onConfirm}) {
-    confirmSubmit=onConfirm; $("#confirm-title").textContent=title; $("#confirm-subtitle").textContent=subtitle; $("#confirm-message").textContent=message;
+  function openConfirm({title,subtitle="",message="",html="",confirmLabel=null,danger=true,onConfirm}) {
+    confirmSubmit=onConfirm; $("#confirm-title").textContent=title; $("#confirm-subtitle").textContent=subtitle;
+    $("#confirm-message").innerHTML=`${message ? `<p>${esc(message)}</p>` : ""}${html}`;
     $("#confirm-message").className=`warning-box${danger?" danger":""}`; $("#confirm-action").textContent=confirmLabel||t("confirm"); $("#confirm-action").className=danger?"danger":"";
     $("#confirm-modal").classList.add("open"); $("#confirm-modal").setAttribute("aria-hidden","false"); document.body.classList.add("modal-open");
   }
@@ -1259,11 +1409,70 @@
     }});
   }
 
+  function openHaPersonLinkEditor(id) {
+    const person = (data.people || []).find(item => Number(item.id) === Number(id));
+    if (!person || personIsDeleting(person)) return;
+    const options = (data.ha_people || []).map(item => ({value:item.entity_id, label:`${item.name} - ${item.entity_id}`}));
+    if (!options.length) { showError(t("associate_people")); return; }
+    const state = personLinkState(person);
+    const selected = options.some(item => item.value === person.ha_person_entity_id) ? person.ha_person_entity_id : options[0].value;
+    const html = `<div class="form-grid">${selectField(t("link_person"),"ha_person_entity_id",options,selected,true)}<div class="form-section"><div class="warning-box">${esc(t(state === "unlinked" ? "link_help_unlinked" : "relink_person_warning"))}</div></div></div>`;
+    openEditor({title:t(state === "unlinked" ? "link_ha_person" : "relink_person_title"),subtitle:person.name,html,saveLabel:t(state === "unlinked" ? "link_ha_person" : "confirm_relink"),onSubmit:async form => {
+      const entity = String(form.get("ha_person_entity_id") || "");
+      if (!entity) throw new Error(t("associate_people"));
+      if (await mutate(`people/${id}/ha-person`,"PUT",{ha_person_entity_id:entity},{inline:true})) await closeEditor();
+    }});
+  }
+  function unlinkHaPerson(id) {
+    const person = (data.people || []).find(item => Number(item.id) === Number(id));
+    if (!person || personIsDeleting(person)) return;
+    openConfirm({title:t("unlink_person_title"),subtitle:person.name,message:t("unlink_person_warning"),confirmLabel:t("confirm_unlink"),onConfirm:async()=>{if(await mutate(`people/${id}/ha-person`,"DELETE"))closeConfirm();}});
+  }
+  function deletionPreviewCounts(preview) {
+    const counts = preview?.counts || {};
+    return {
+      fingerprints:Number(counts.fingerprints ?? preview?.fingerprints?.length ?? 0) || 0,
+      keypads:Number(counts.keypad_credentials ?? counts.keypads ?? preview?.keypad_credentials?.length ?? 0) || 0,
+      mobileNfc:Number(counts.mobile_nfc_permissions ?? counts.mobile_nfc ?? preview?.mobile_nfc_permissions?.length ?? 0) || 0
+    };
+  }
+  function renderDeletionPreview(preview) {
+    const counts = deletionPreviewCounts(preview);
+    const blockedReaders = Array.isArray(preview?.blocked_readers) ? preview.blocked_readers : [];
+    const fingerprints = (preview?.fingerprints || []).map(item => `<div><strong>${esc(item.reader_name || readerName(item.reader_id))}</strong> &middot; ID ${esc(item.slot)} &middot; ${esc(fingerLabel(item.finger))} &middot; ${esc(item.status || "active")}</div>`).join("");
+    const keypads = (preview?.keypad_credentials || []).map(item => `<div><strong>${esc(item.reader_name || readerName(item.reader_id))}</strong> &middot; ${esc(item.code_hint || t("credential_hidden"))}</div>`).join("");
+    const mobileNfc = (preview?.mobile_nfc_permissions || []).map(item => `<div><strong>${esc(item.door_name || item.door_id)}</strong> &middot; ${esc(item.ha_person_entity_id || "-")}</div>`).join("");
+    const blocked = blockedReaders.length ? `<div class="warning-box"><strong>${esc(t("offline_readers"))}</strong><div>${blockedReaders.map(item => esc(readerName(item))).join(", ")}</div></div>` : "";
+    const details = [fingerprints ? `<div><strong>${esc(t("fingerprints_count"))}</strong>${fingerprints}</div>` : "", keypads ? `<div><strong>${esc(t("keypad_count"))}</strong>${keypads}</div>` : "", mobileNfc ? `<div><strong>${esc(t("mobile_nfc_count"))}</strong>${mobileNfc}</div>` : ""].filter(Boolean).join("");
+    return `<div class="preview-summary"><div><strong>${esc(counts.fingerprints)}</strong><span>${esc(t("fingerprints_count"))}</span></div><div><strong>${esc(counts.keypads)}</strong><span>${esc(t("keypad_count"))}</span></div><div><strong>${esc(counts.mobileNfc)}</strong><span>${esc(t("mobile_nfc_count"))}</span></div></div>${blocked}<div class="preview-details">${details}</div>`;
+  }
+  async function loadPersonDeletionPreview(id) {
+    try { return await request(`people/${id}/deletion-preview`); }
+    catch (error) { showError(error.message); return null; }
+  }
+  async function deletePerson(id) {
+    const person = (data.people || []).find(item => Number(item.id) === Number(id));
+    if (!person || personIsDeleting(person)) return;
+    const preview = await loadPersonDeletionPreview(id);
+    if (!preview) return;
+    openConfirm({title:t("delete_person_title"),subtitle:person.name,message:t("delete_person_intro"),html:renderDeletionPreview(preview),confirmLabel:t("confirm_delete_person"),onConfirm:async()=>{if(await mutate(`people/${id}`,"DELETE"))closeConfirm();}});
+  }
+  async function viewPersonDeletion(id) {
+    const person = (data.people || []).find(item => Number(item.id) === Number(id));
+    const preview = await loadPersonDeletionPreview(id);
+    if (!preview) return;
+    openConfirm({title:t("deletion_pending_person"),subtitle:person?.name || "",html:renderDeletionPreview(preview),confirmLabel:t("close"),danger:false,onConfirm:closeConfirm});
+  }
+
+  window.openHaPersonLinkEditor = openHaPersonLinkEditor;
+  window.unlinkHaPerson = unlinkHaPerson;
+  window.deletePerson = deletePerson;
+  window.viewPersonDeletion = viewPersonDeletion;
   window.linkHaPerson = (id,entity) => entity && mutate(`people/${id}/ha-person`,"PUT",{ha_person_entity_id:entity});
   window.createHaPerson = id => { const person=data.people.find(item=>item.id===id); if(person)openConfirm({title:t("create_in_ha"),message:t("confirm_create_person",{name:person.name}),onConfirm:async()=>{if(await mutate(`people/${id}/create-ha-person`,"POST"))closeConfirm();}}); };
   window.renamePerson = id => openPersonEditor(id);
-  window.prepareFingerprint = id => { const person=data.people.find(item=>item.id===id); if(!person)return; switchTab("fingerprints"); $("#name").value=person.name; $("#slot").focus(); };
-  function openKeypadCredentialModal(owner) { const keypads=data.access_readers.filter(reader=>reader.reader_type==="keypad"&&reader.enabled&&reader.availability!=="missing"); if(!owner||!keypads.length){showError(t("no_keypad"));return;} keypadPerson=owner;keypadCapturing=false;const shared=Boolean(owner.shared);$("#keypad-title").textContent=t(shared?"add_shared_credential":"register_keypad");$("#keypad-person").textContent=shared?t("shared_capture_intro"):`${owner.name} · ${owner.ha_person_entity_id}`;$("#keypad-shared-label-field").hidden=!shared;$("#keypad-shared-label").value=shared?(owner.label||""):"";$("#keypad-reader").innerHTML=keypads.map(reader=>`<option value="${esc(reader.id)}">${esc(reader.name)}</option>`).join("");$("#keypad-manual-code").value="";$("#keypad-status").textContent=t(shared?"shared_capture_intro":"capture_intro");$("#keypad-start").disabled=false;$("#keypad-modal").classList.add("open");$("#keypad-modal").setAttribute("aria-hidden","false");document.body.classList.add("modal-open"); }
+  window.prepareFingerprint = id => { const person=data.people.find(item=>item.id===id); if(!personCanReceiveCredentials(person)){showError(t("credential_link_required"));return;} switchTab("fingerprints"); $("#name").value=person.name; $("#slot").focus(); };
+  function openKeypadCredentialModal(owner) { const keypads=data.access_readers.filter(reader=>reader.reader_type==="keypad"&&reader.enabled&&reader.availability!=="missing"); if(!owner||!keypads.length){showError(t("no_keypad"));return;} if(!owner.shared&&!personCanReceiveCredentials(owner)){showError(t("credential_link_required"));return;} keypadPerson=owner;keypadCapturing=false;const shared=Boolean(owner.shared);$("#keypad-title").textContent=t(shared?"add_shared_credential":"register_keypad");$("#keypad-person").textContent=shared?t("shared_capture_intro"):`${owner.name} · ${owner.ha_person_entity_id}`;$("#keypad-shared-label-field").hidden=!shared;$("#keypad-shared-label").value=shared?(owner.label||""):"";$("#keypad-reader").innerHTML=keypads.map(reader=>`<option value="${esc(reader.id)}">${esc(reader.name)}</option>`).join("");$("#keypad-manual-code").value="";$("#keypad-status").textContent=t(shared?"shared_capture_intro":"capture_intro");$("#keypad-start").disabled=false;$("#keypad-modal").classList.add("open");$("#keypad-modal").setAttribute("aria-hidden","false");document.body.classList.add("modal-open"); }
   window.openKeypadModal = id => { const person=data.people.find(item=>item.id===id); if(person)openKeypadCredentialModal(person); };
   window.openSharedKeypadModal = () => openKeypadCredentialModal({shared:true,label:""});
   window.revealKeypadCredential = async (id,shared=false) => { try { const ownerType=shared?"shared":"person",key=`${ownerType}:${id}`,path=shared?`keypad/shared-credentials/${id}/reveal`:`keypad/credentials/${id}/reveal`,result=await request(path,{method:"POST",body:"{}"}),expiresAt=Date.now()+15000;revealedCredentials.set(key,{value:result.value,expiresAt});renderPeople();renderSharedKeypadCredentials();setTimeout(()=>{const current=revealedCredentials.get(key);if(current&&current.expiresAt<=Date.now()){revealedCredentials.delete(key);if(data?.privacy_mode){renderPeople();renderSharedKeypadCredentials();}}},15100);}catch(error){showError(error.message);} };
@@ -1285,6 +1494,7 @@
 
   $("#language").addEventListener("change",event=>{language=event.target.value;applyLanguage();});
   document.querySelectorAll(".tab-button").forEach(button=>button.addEventListener("click",()=>switchTab(button.dataset.tab)));
+  $("#mobile-tab-select").addEventListener("change",event=>switchTab(event.target.value));
   $("#fingerprint-reader").addEventListener("change",event=>{selectedReader=event.target.value;renderFingerprintReaders();});
   $("#enroll").addEventListener("click",()=>openFingerModal("enroll")); $("#import").addEventListener("click",()=>openFingerModal("import"));
   $("#cancel").addEventListener("click",()=>mutate("enrollment/cancel","POST",{reader_id:selectedReader}));

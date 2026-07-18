@@ -74,7 +74,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.11.0"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.12.0"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
@@ -299,6 +299,15 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
         admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
         admin.registry = self.registry
         admin.ha = self.ha
+        self.ha.people_api_ready = True
+        self.ha.people_storage = [{
+            "id": "example_person",
+            "name": "Example Person",
+            "user_id": "ha-user-1",
+        }]
+        self.ha.people_storage_refreshed_at = (
+            asyncio.get_running_loop().time()
+        )
 
         class Request:
             headers = {"X-Fingerprint-Admin": "1"}

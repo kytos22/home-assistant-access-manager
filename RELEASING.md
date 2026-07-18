@@ -18,6 +18,6 @@ Every Access Manager release must use the same version in the add-on manifest, c
 7. Create and push an annotated `vX.Y.Z` tag at the merge commit.
 8. Publish the matching GitHub release from the changelog entry.
 9. Refresh the repository in Home Assistant and verify that the add-on offers or installs the same version.
-10. Verify `/health`, the sidebar panel, and the existing data after the update.
+10. Verify `/health`, the existing data, and the sidebar panel through Home Assistant ingress on both desktop and the mobile app. Confirm that the new panel build appears without clearing either cache.
 
 Home Assistant add-on auto-update only sees a release after the version in `access_manager/config.yaml` is available on the repository's default branch. Do not create the tag before that commit is on `main`.
