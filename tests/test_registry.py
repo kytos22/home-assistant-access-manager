@@ -292,9 +292,12 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
             self.ha.tags_storage_refreshed_at = asyncio.get_running_loop().time()
 
         self.ha.refresh_tags_storage = refresh_tags_storage
+        self.assertIsNone(self.ha.tags_storage_refreshed_at)
         self.ha.schedule_tags_refresh()
+        refresh_task = self.ha.tag_refresh_task
+        self.assertIsNotNone(refresh_task)
         self.ha.schedule_tags_refresh()
-        await self.ha.tag_refresh_task
+        await refresh_task
         self.ha.schedule_tags_refresh()
         self.assertEqual(refreshes, [True])
 

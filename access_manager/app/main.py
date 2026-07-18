@@ -1350,7 +1350,7 @@ class HomeAssistant:
         self.people_storage_refreshed_at = 0.0
         self.tags_api_ready = False
         self.tags_storage = []
-        self.tags_storage_refreshed_at = 0.0
+        self.tags_storage_refreshed_at = None
         self.tag_refresh_task = None
         self.tag_scan_tasks = set()
         self.recent_door_commands = {}
@@ -1678,7 +1678,10 @@ class HomeAssistant:
         now = asyncio.get_running_loop().time()
         if (
             self.tag_refresh_task
-            or now - self.tags_storage_refreshed_at < 60
+            or (
+                self.tags_storage_refreshed_at is not None
+                and now - self.tags_storage_refreshed_at < 60
+            )
         ):
             return
         # Set the timestamp before starting so a failing API cannot be retried
