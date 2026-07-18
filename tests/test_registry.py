@@ -74,7 +74,39 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.10.0"', html)
+        self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
+
+    def test_esphome_generator_pins_firmware_and_never_embeds_secrets(self):
+        generated = APP.esphome_reader_config({
+            "profile": "reader_only",
+            "device_name": "front-reader",
+            "friendly_name": "Front reader",
+            "board": "esp32-s3-devkitc-1",
+            "fingerprint_tx_pin": "GPIO17",
+            "fingerprint_rx_pin": "GPIO18",
+        })
+        self.assertIn("reader-only.yaml", generated)
+        self.assertIn(f"ref: v{APP.READER_FIRMWARE_VERSION}", generated)
+        self.assertIn('board: "esp32-s3-devkitc-1"', generated)
+        self.assertIn("wifi_password", generated)
+        self.assertNotIn("CHANGE_ME", generated)
+        with self.assertRaisesRegex(ValueError, "must be different"):
+            APP.esphome_reader_config({
+                "profile": "reader_only",
+                "device_name": "front-reader",
+                "friendly_name": "Front reader",
+                "fingerprint_tx_pin": "GPIO17",
+                "fingerprint_rx_pin": "GPIO17",
+            })
+
+    def test_index_disables_document_caching(self):
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        response = asyncio.run(admin.index(None))
+        self.assertIn("no-store", response.headers["Cache-Control"])
+        self.assertEqual(response.headers["Pragma"], "no-cache")
+        self.assertEqual(response.headers["X-Access-Manager-Version"], APP.APP_VERSION)
 
     def test_manifest_version_has_matching_changelog_entry(self):
         root = Path(__file__).parents[1]
@@ -862,20 +894,29 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
         await admin.handle_state_change(
             "binary_sensor.front_door_contact", {"state": "on"}, {"state": "off"}
         )
+        await admin.handle_state_change(
+            "lock.front_door", {"state": "locked"}, {"state": "unlocked"}
+        )
+        await admin.handle_state_change(
+            "binary_sensor.front_door_contact", {"state": "off"}, {"state": "on"}
+        )
 
         events = self.registry.events()
         self.assertEqual(
-            [event["event_type"] for event in events[:2]],
-            ["door_physically_opened", "door_lock_opened"],
+            [event["event_type"] for event in events[:4]],
+            [
+                "door_physically_closed", "door_lock_closed",
+                "door_physically_opened", "door_lock_opened",
+            ],
         )
-        self.assertEqual(events[0]["door_id"], "front_door")
+        self.assertEqual(events[2]["door_id"], "front_door")
         self.assertEqual(
-            events[0]["entity_id"], "binary_sensor.front_door_contact"
+            events[2]["entity_id"], "binary_sensor.front_door_contact"
         )
-        self.assertEqual(events[0]["source"], "external")
-        self.assertEqual(events[0]["previous_state"], "off")
-        self.assertEqual(events[0]["new_state"], "on")
-        self.assertEqual(events[1]["source"], "external")
+        self.assertEqual(events[2]["source"], "external")
+        self.assertEqual(events[2]["previous_state"], "off")
+        self.assertEqual(events[2]["new_state"], "on")
+        self.assertEqual(events[3]["source"], "external")
 
     async def test_lock_opening_ignores_initial_and_settling_states(self):
         admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)

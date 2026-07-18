@@ -22,6 +22,10 @@ HA_API = "http://supervisor/core/api"
 HA_WS = "ws://supervisor/core/websocket"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 APP_VERSION = os.environ.get("ACCESS_MANAGER_VERSION") or "development"
+READER_FIRMWARE_VERSION = "0.5.0"
+READER_FIRMWARE_REPOSITORY = (
+    "https://github.com/kytos22/esphome-fingerprint-access-reader"
+)
 OPTIONS_PATH = DATA_DIR / "options.json"
 
 LOG_LEVELS = {
@@ -63,6 +67,7 @@ LABELS = {
     "device_status": ("Estado conexion", "Estado conexión"),
     "assigned_door": ("Access Manager door ID",),
     "display_event": ("Access Manager display event",),
+    "firmware_version": ("Fingerprint reader firmware version",),
 }
 
 DOMAINS = {
@@ -81,6 +86,7 @@ DOMAINS = {
     "device_status": "binary_sensor",
     "assigned_door": "text",
     "display_event": "text",
+    "firmware_version": "sensor",
 }
 
 FINGER_LABELS = {
@@ -133,6 +139,60 @@ def now_iso():
 def normalized(value):
     text = unicodedata.normalize("NFKD", str(value or ""))
     return "".join(char for char in text if not unicodedata.combining(char)).lower().strip()
+
+
+def esphome_reader_config(payload):
+    profile = str(payload.get("profile", "reader_only")).strip().lower()
+    if profile not in {"reader_only", "display"}:
+        raise ValueError("Unsupported reader profile")
+    device_name = str(payload.get("device_name", "")).strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}[a-z0-9]", device_name):
+        raise ValueError("Device name must contain 2-32 lowercase letters, numbers or hyphens")
+    friendly_name = str(payload.get("friendly_name", "")).strip()[:50]
+    if not friendly_name or any(char in friendly_name for char in "\r\n"):
+        raise ValueError("Invalid friendly name")
+
+    substitutions = {
+        "device_name": device_name,
+        "friendly_name": friendly_name,
+    }
+    package_file = "access-reader.yaml" if profile == "display" else "reader-only.yaml"
+    if profile == "reader_only":
+        board = str(payload.get("board", "esp32dev")).strip().lower()
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{1,63}", board):
+            raise ValueError("Invalid ESPHome board ID")
+        substitutions["board"] = board
+        for key, default in (
+            ("fingerprint_tx_pin", "GPIO17"),
+            ("fingerprint_rx_pin", "GPIO16"),
+        ):
+            pin = str(payload.get(key, default)).strip().upper()
+            if not re.fullmatch(r"(?:GPIO)?[0-9]{1,2}", pin):
+                raise ValueError(f"Invalid {key.replace('_', ' ')}")
+            substitutions[key] = pin
+        if substitutions["fingerprint_tx_pin"] == substitutions["fingerprint_rx_pin"]:
+            raise ValueError("UART TX and RX pins must be different")
+
+    lines = ["substitutions:"]
+    for key, value in substitutions.items():
+        lines.append(f"  {key}: {json.dumps(value, ensure_ascii=False)}")
+    lines.extend(
+        [
+            "",
+            "packages:",
+            "  fingerprint_access_reader:",
+            f"    url: {READER_FIRMWARE_REPOSITORY}",
+            f"    ref: v{READER_FIRMWARE_VERSION}",
+            "    files:",
+            f"      - {package_file}",
+            "    refresh: 1d",
+            "",
+            "# Required keys in the ESPHome secrets.yaml file:",
+            "# wifi_ssid, wifi_password, api_encryption_key, ota_password",
+            "",
+        ]
+    )
+    return "\n".join(lines)
 
 
 class Registry:
@@ -2533,11 +2593,24 @@ class FingerprintAdmin:
             ):
                 event_type = "door_lock_opened"
             elif (
+                entity_id == door.get("entity_id")
+                and str(entity_id).startswith("lock.")
+                and new_value == "locked"
+                and old_value != "locked"
+            ):
+                event_type = "door_lock_closed"
+            elif (
                 entity_id == door.get("door_sensor_entity")
                 and old_value == "off"
                 and new_value == "on"
             ):
                 event_type = "door_physically_opened"
+            elif (
+                entity_id == door.get("door_sensor_entity")
+                and old_value == "on"
+                and new_value == "off"
+            ):
+                event_type = "door_physically_closed"
             if not event_type:
                 continue
             self.registry.add_event(
@@ -2804,7 +2877,12 @@ class FingerprintAdmin:
             raise web.HTTPForbidden(text="Unauthorized request")
 
     async def index(self, _request):
-        return web.FileResponse("/app/index.html")
+        response = web.FileResponse("/app/index.html")
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        response.headers["X-Access-Manager-Version"] = APP_VERSION
+        return response
 
     async def health(self, _request):
         response = web.json_response(
@@ -2870,6 +2948,18 @@ class FingerprintAdmin:
                 access_reader["availability"] = (
                     "available" if access_reader["available"] else "unavailable"
                 )
+                version_id = access_reader.get("config", {}).get(
+                    "firmware_version_entity"
+                )
+                access_reader["firmware_version"] = (
+                    self.ha.states.get(version_id, {}).get("state")
+                    if version_id else None
+                )
+                if access_reader["firmware_version"] in {
+                    "", "unknown", "unavailable"
+                }:
+                    access_reader["firmware_version"] = None
+                access_reader["latest_firmware_version"] = READER_FIRMWARE_VERSION
             else:
                 config = access_reader.get("config", {})
                 entity_id = config.get("transaction_entity") or config.get("access_event_entity")
@@ -2900,6 +2990,7 @@ class FingerprintAdmin:
         response = web.json_response(
             {
                 "version": APP_VERSION,
+                "reader_firmware_version": READER_FIRMWARE_VERSION,
                 "privacy_mode": self.registry.privacy_mode(),
                 "connected": self.ha.connected,
                 "reader_online": self.ha.device_online("display1"),
@@ -3440,6 +3531,21 @@ class FingerprintAdmin:
         )
         return web.json_response({"ok": True})
 
+    async def generate_esphome_config(self, request):
+        self.require_admin_request(request)
+        payload = await request.json()
+        try:
+            yaml = esphome_reader_config(payload)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise web.HTTPBadRequest(text=str(error))
+        return web.json_response(
+            {
+                "yaml": yaml,
+                "firmware_version": READER_FIRMWARE_VERSION,
+                "profile": str(payload.get("profile", "reader_only")),
+            }
+        )
+
     async def create_reader(self, request):
         self.require_admin_request(request)
         payload = await request.json()
@@ -3478,7 +3584,7 @@ class FingerprintAdmin:
                 text=f"Missing reader entities: {', '.join(missing)}"
             )
         optional = (
-            ("assigned_door_entity", "display_event_entity")
+            ("assigned_door_entity", "display_event_entity", "firmware_version_entity")
             if reader_type == "fingerprint"
             else ()
         )
@@ -3508,7 +3614,7 @@ class FingerprintAdmin:
                 )
         elif any(
             config.get(key) and not str(config[key]).startswith("text.")
-            for key in optional
+            for key in ("assigned_door_entity", "display_event_entity")
         ):
             raise web.HTTPBadRequest(
                 text="Display event and assigned door entities must use the text domain"
@@ -4038,6 +4144,9 @@ class FingerprintAdmin:
         )
         app.router.add_put(
             "/api/mobile-nfc/permissions", self.set_mobile_nfc_permission
+        )
+        app.router.add_post(
+            "/api/esphome/config", self.generate_esphome_config
         )
         app.router.add_post("/api/readers", self.create_reader)
         app.router.add_put("/api/readers/{reader_id}", self.update_reader)
