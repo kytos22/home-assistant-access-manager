@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <meta name="theme-color" content="#0b1118">
   <title>Access Manager</title>
   <style>
@@ -163,6 +166,8 @@
     .learning-status { margin-top: 9px; min-height: 22px; color: #bad3ff; }
     .mini-stat { color: var(--muted); font-size: .82rem; }
     .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(8,15,22,.45); }
+    .permission-toolbar { display: grid; grid-template-columns: minmax(170px,1fr) minmax(200px,1.2fr) auto minmax(170px,.8fr); gap: 10px; align-items: end; margin: 14px 0; }
+    .permission-toolbar label { margin-top: 0; }
     .settings-row h3, .settings-row p { margin: 0; }
     .settings-row p { margin-top: 6px; }
     body.modal-open { overflow: hidden; }
@@ -188,6 +193,7 @@
       .mobile-nfc-table td.actions-cell { display: flex; justify-content: flex-end; padding-top: 11px; }
       .mobile-nfc-table td.actions-cell::before, .mobile-nfc-table td.empty::before { display: none; }
       .mobile-nfc-table td.empty { display: block; }
+      .permission-toolbar { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -242,10 +248,24 @@
       </div>
     </section>
     <section class="card infrastructure">
+      <div class="section-head"><h2 data-i18n="shared_credentials">Shared keypad credentials</h2><button id="add-shared-keypad" class="secondary" data-i18n="add_shared_credential">Add shared code or tag</button></div>
+      <p class="hint" data-i18n="shared_credentials_hint">Shared credentials are not assigned to one person. They remain encrypted and are identified by a clear audit label.</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th data-i18n="label">Label</th><th data-i18n="keypad">Keypad</th><th data-i18n="door">Door</th><th data-i18n="credential">Credential</th><th></th></tr></thead>
+        <tbody id="shared-keypad-credentials-body"></tbody>
+      </table></div>
+    </section>
+    <section class="card infrastructure">
       <div class="section-head"><h2 data-i18n="mobile_nfc_permissions">Mobile NFC permissions</h2></div>
       <p class="hint" data-i18n="mobile_nfc_permissions_hint">Assign each fixed door tag to the users allowed to scan it with the Home Assistant app.</p>
+      <div class="permission-toolbar">
+        <div><label for="mobile-nfc-permission-person" data-i18n="user">User</label><select id="mobile-nfc-permission-person"></select></div>
+        <div><label for="mobile-nfc-permission-tag" data-i18n="tag">Tag</label><select id="mobile-nfc-permission-tag"></select></div>
+        <button id="add-mobile-nfc-permission" type="button" data-i18n="grant_permission">Grant permission</button>
+        <div><label for="mobile-nfc-door-filter" data-i18n="filter_door">Filter by door</label><select id="mobile-nfc-door-filter"></select></div>
+      </div>
       <div class="table-wrap"><table class="mobile-nfc-table">
-        <thead><tr><th data-i18n="user">User</th><th data-i18n="tag">Tag</th><th data-i18n="door">Door</th><th data-i18n="mobile_nfc_access">Mobile NFC access</th></tr></thead>
+        <thead><tr><th data-i18n="user">User</th><th data-i18n="tag">Tag</th><th data-i18n="door">Door</th><th></th></tr></thead>
         <tbody id="mobile-nfc-permissions-body"></tbody>
       </table></div>
     </section>
@@ -341,6 +361,7 @@
       <div class="section-head"><h2 data-i18n="esphome_configurator">ESPHome reader configurator</h2><span id="esphome-firmware-version" class="status">v…</span></div>
       <p class="hint" data-i18n="esphome_config_hint">Generate a ready-to-paste configuration. Network and API credentials stay in your ESPHome secrets file and are never sent to Access Manager.</p>
       <div class="config-grid">
+        <div><label for="esphome-install-mode" data-i18n="installation_mode">Installation</label><select id="esphome-install-mode"><option value="new" data-i18n="new_device">New device</option><option value="existing" data-i18n="existing_device">Update existing device</option></select></div>
         <div><label for="esphome-profile" data-i18n="hardware_profile">Hardware profile</label><select id="esphome-profile"><option value="reader_only" data-i18n="reader_only">Fingerprint reader only</option><option value="display" data-i18n="reader_display">Waveshare reader and display</option></select></div>
         <div><label for="esphome-device-name" data-i18n="device_name">Device name</label><input id="esphome-device-name" value="fingerprint-access-reader" maxlength="32"></div>
         <div><label for="esphome-friendly-name" data-i18n="friendly_name">Friendly name</label><input id="esphome-friendly-name" value="Fingerprint Access Reader" maxlength="50"></div>
@@ -348,6 +369,7 @@
         <div class="reader-only-option"><label for="esphome-tx-pin" data-i18n="uart_tx_pin">Reader UART TX pin</label><input id="esphome-tx-pin" value="GPIO17"></div>
         <div class="reader-only-option"><label for="esphome-rx-pin" data-i18n="uart_rx_pin">Reader UART RX pin</label><input id="esphome-rx-pin" value="GPIO16"></div>
       </div>
+      <div id="esphome-setup-guide" class="warning-box"></div>
       <div class="actions"><button id="generate-esphome" type="button" data-i18n="generate_config">Generate configuration</button><button id="copy-esphome" class="secondary" type="button" disabled data-i18n="copy">Copy</button><button id="download-esphome" class="secondary" type="button" disabled data-i18n="download_yaml">Download YAML</button></div>
       <textarea id="generated-esphome" class="generated-config" readonly hidden aria-label="Generated ESPHome YAML"></textarea>
     </section>
@@ -481,6 +503,10 @@
     </div>
     <div class="capture-box">
       <div class="capture-icon">⌨</div>
+      <div id="keypad-shared-label-field" hidden>
+        <label for="keypad-shared-label" data-i18n="shared_label">Shared credential label</label>
+        <input id="keypad-shared-label" maxlength="80" autocomplete="off">
+      </div>
       <label for="keypad-reader">Keypad</label>
       <select id="keypad-reader"></select>
       <div class="manual-credential">
@@ -534,7 +560,7 @@
 <script>
 (() => {
   const $ = selector => document.querySelector(selector);
-  const PANEL_BUILD_VERSION = "0.10.0";
+  const PANEL_BUILD_VERSION = "0.11.0";
   let data = null;
   let busy = false;
   let refreshPromise = null;
@@ -549,12 +575,13 @@
   let editorSubmit = null;
   let confirmSubmit = null;
   let learningReaderId = null;
+  let buildRecoveryPromise = null;
   const revealedCredentials = new Map();
 
   const messages = {
     en: {
       app_title:"Access Manager", app_subtitle:"Users · credentials · readers · doors", language:"Language", installed_version:"Installed version",
-      connecting:"Connecting…", connected:"Home Assistant connected", disconnected:"Home Assistant disconnected",
+      connecting:"Connecting…", connected:"Home Assistant connected", disconnected:"Home Assistant disconnected", panel_updating:"Loading the updated Access Manager panel…", panel_update_failed:"The updated panel could not be loaded. Close and reopen Access Manager, then try again.",
       tab_people:"Users & credentials", tab_fingerprints:"Fingerprint readers", tab_keypads:"Keypads", tab_doors:"Doors", tab_automations:"Automations", tab_settings:"Settings", tab_logs:"Log",
       people:"People", credentials:"Credentials", readers:"Readers", doors:"Doors", automations:"Automations", settings:"Settings", users_credentials:"Users and credentials",
       add_user:"Add user", user:"User", linked_credentials:"Linked credentials", fingerprint_readers:"Fingerprint readers",
@@ -564,14 +591,14 @@
       physical_ids:"Physical fingerprint IDs", finger:"Finger", status:"Status", updated:"Updated", keypads:"Keypads", add_keypad:"Add keypad",
       zigbee_hint:"Zigbee keypads normally sleep. Their status shows whether they are configured in Home Assistant, not whether they are continuously online.",
       ha_entities:"Home Assistant entities", add_door:"Add door", door_hint:"An authorized credential directly runs the selected default action. Lock entities expose open only when the device reports that capability.",
-      mobile_nfc_tags:"Mobile NFC door tags", add_mobile_nfc_tag:"Add NFC tag", mobile_nfc_hint:"The tag identifies the door. The authenticated Home Assistant app account identifies the person.", mobile_nfc_permissions:"Mobile NFC permissions", mobile_nfc_permissions_hint:"Assign each fixed door tag to the users allowed to scan it with the Home Assistant app. Access is denied by default.", mobile_nfc_access:"Mobile NFC access", tag:"Tag", select_registered_tag:"Home Assistant tag", no_registered_tags:"No registered Home Assistant tags are available.", confirm_delete_mobile_nfc_tag:"Remove this mobile NFC door tag?", mobile_nfc_granted:"Mobile NFC access granted", mobile_nfc_denied:"Mobile NFC access denied", mobile_nfc_tag_saved:"Mobile NFC tag saved", mobile_nfc_tag_deleted:"Mobile NFC tag deleted", mobile_nfc_permission_changed:"Mobile NFC permission changed",
+      mobile_nfc_tags:"Mobile NFC door tags", add_mobile_nfc_tag:"Add NFC tag", mobile_nfc_hint:"The tag identifies the door. The authenticated Home Assistant app account identifies the person.", mobile_nfc_permissions:"Mobile NFC permissions", mobile_nfc_permissions_hint:"Grant access by selecting a linked user and a fixed-door tag. Only active permissions are listed.", mobile_nfc_access:"Mobile NFC access", tag:"Tag", select_registered_tag:"Home Assistant tag", no_registered_tags:"No registered Home Assistant tags are available.", confirm_delete_mobile_nfc_tag:"Remove this mobile NFC door tag?", mobile_nfc_granted:"Mobile NFC access granted", mobile_nfc_denied:"Mobile NFC access denied", mobile_nfc_tag_saved:"Mobile NFC tag saved", mobile_nfc_tag_deleted:"Mobile NFC tag deleted", mobile_nfc_permission_changed:"Mobile NFC permission changed", grant_permission:"Grant permission", filter_door:"Filter by door", all_doors:"All doors", revoke:"Revoke",
       add_automation:"Add automation", automation_hint:"These are native Home Assistant automations. Access Manager only updates or deletes automations that it created and still owns.",
       automation_type:"Automation type", auto_lock:"Auto-lock", auto_lock_delay:"Lock after", door_open_alert:"Door left open alert", door_open_delay:"Alert after", denied_access_alert:"Denied access alert", denied_attempt_threshold:"Notify after", denied_attempt_window:"Within", edit_automation:"Edit automation", no_automations:"No managed automations", no_automation_slots:"No compatible door is available for another automation of this type.",
       door_sensor:"Door contact sensor", no_door_sensor:"No sensor (lock after unlock)", door_sensor_hint:"Optional for auto-lock. Closing the contact starts the delay; the lock runs only if the door remains closed.", door_sensor_required_hint:"Required. The alert starts only when this contact remains open for the selected time.",
       notification_target:"Notification target", persistent_notification:"Home Assistant persistent notification", notification_hint:"Persistent notifications work without additional setup. Available notify entities can be selected for device delivery.", one_attempt:"1 denied attempt", attempts:"{count} denied attempts", denied_summary:"{attempts} within {minutes}",
       minutes:"{count} minutes", one_hour:"1 hour", automation_native:"Native Home Assistant automation", confirm_delete_automation:"Delete this Access Manager automation from Home Assistant?",
       activity_log:"Activity log", retention:"Retention", retention_hint:"Expired entries are deleted automatically. A hard safety limit of 10,000 entries also applies.",
-      date:"Date", event:"Event", confidence:"Confidence", detail:"Detail", no_users:"No users", no_credentials:"No credentials",
+      date:"Date", event:"Event", confidence:"Confidence", detail:"Detail", no_users:"No users", no_credentials:"No credentials", label:"Label", credential:"Credential", shared_credentials:"Shared keypad credentials", add_shared_credential:"Add shared code or tag", shared_credentials_hint:"Shared credentials are not assigned to one person. They remain encrypted and are identified by a clear audit label.", shared_label:"Shared credential label", shared_capture_intro:"This code or tag will be shared. Its label is used for auditing and the keypad action is handled separately.", confirm_delete_shared_keypad:"Delete this shared keypad credential?",
       associate_people:"Link to Home Assistant People…", create_in_ha:"Create in HA", add_fingerprint:"Add fingerprint", add_code:"Add code/tag",
       rename:"Rename", delete:"Delete", save:"Save", edit:"Edit", configured:"Configured", available:"Available", unavailable:"Unavailable", missing:"Entity missing",
       active:"Active", pending:"Enrolling", deleting:"Pending deletion", delete_pending:"Deleting", unassigned:"Unassigned finger", assign_finger:"Assign finger", no_records:"No records",
@@ -602,7 +629,7 @@
       enroll_cancelled:"Enrollment cancelled", user_deleted:"Fingerprint deleted", delete_queued:"Deletion queued", delete_requested:"Deletion sent",
       delete_retry:"Retrying deletion", delete_failed:"Deletion not confirmed", existing_id_linked:"Existing ID linked", user_renamed:"Credential updated",
       person_created:"User created", person_linked:"Linked to Home Assistant", person_renamed:"User updated", keypad_credential_added:"Keypad credential added",
-      keypad_credential_deleted:"Keypad credential deleted", keypad_capture_failed:"Keypad capture failed", keypad_denied:"Keypad credential denied",
+      keypad_credential_deleted:"Keypad credential deleted", shared_keypad_credential_added:"Shared keypad credential added", shared_keypad_credential_deleted:"Shared keypad credential deleted", keypad_capture_failed:"Keypad capture failed", keypad_denied:"Keypad credential denied",
       door_action_executed:"Door action executed", door_action_failed:"Door action failed", local_lock_succeeded:"Local lock succeeded", local_lock_failed:"Local lock failed",
       door_test_succeeded:"Door test succeeded", door_test_failed:"Door test failed", keypad_button_detected:"Keypad button detected", keypad_action_ignored:"Keypad button ignored",
       automation_saved:"Automation saved", automation_deleted:"Automation deleted", privacy_mode_changed:"Privacy mode changed", door_lock_opened:"Door unlocked", door_lock_closed:"Door locked", door_physically_opened:"Door opened", door_physically_closed:"Door closed",
@@ -611,14 +638,14 @@
       confirm:"Confirm", important_warning:"Important warning", test_warning:"This sends a real command to {door}. Check the selected action before confirming.",
       confirm_action:"CONFIRM {action}", edit_keypad:"Edit keypad", edit_fingerprint_reader:"Edit fingerprint reader", add_person_title:"Add user", edit_person_title:"Edit user",
       link_person:"Home Assistant person", create_new_person:"Create a new Home Assistant Person", reader_settings:"Reader settings", entity_settings:"Home Assistant entities", firmware:"Firmware", firmware_current:"Up to date", firmware_update:"Update available", firmware_unknown:"Not configured",
-      esphome_configurator:"ESPHome reader configurator", esphome_config_hint:"Generate a ready-to-paste configuration. Network and API credentials stay in your ESPHome secrets file and are never sent to Access Manager.", hardware_profile:"Hardware profile", reader_only:"Fingerprint reader only", reader_display:"Waveshare reader and display", device_name:"Device name", friendly_name:"Friendly name", esp32_board:"ESP32 board ID", uart_tx_pin:"Reader UART TX pin", uart_rx_pin:"Reader UART RX pin", generate_config:"Generate configuration", copy:"Copy", download_yaml:"Download YAML", copied:"Configuration copied", source_access_manager:"Access Manager", source_external:"External / Home Assistant", transition:"Transition",
+      esphome_configurator:"ESPHome reader configurator", esphome_config_hint:"This creates a small package wrapper. ESPHome downloads the complete pinned firmware, compiles it, and installs it; Access Manager never compiles firmware or receives credentials.", installation_mode:"Installation", new_device:"New device", existing_device:"Update existing device", hardware_profile:"Hardware profile", reader_only:"Fingerprint reader only", reader_display:"Waveshare reader and display", device_name:"Device name", friendly_name:"Friendly name", esp32_board:"ESP32 board ID", uart_tx_pin:"Reader UART TX pin", uart_rx_pin:"Reader UART RX pin", generate_config:"Generate configuration", copy:"Copy", download_yaml:"Download YAML", copied:"Configuration copied", setup_new_title:"New device setup", setup_new_1:"Download the generated YAML and choose Import from File in ESPHome Device Builder.", setup_new_2:"Add the four required keys to ESPHome secrets.yaml, then validate the configuration.", setup_new_3:"Use Install. The first flash normally needs USB; later updates can use OTA.", setup_existing_title:"Existing device update", setup_existing_1:"Back up the current YAML and use exactly the same device name.", setup_existing_2:"Keep the existing Wi-Fi, API-encryption, and OTA secret values. Changing them can break connectivity or OTA access.", setup_existing_3:"Replace the YAML with the generated wrapper, validate it, and install wirelessly only after validation succeeds.", setup_credentials:"Required secret keys: wifi_ssid, wifi_password, api_encryption_key, ota_password. Their values stay only in ESPHome.", source_access_manager:"Access Manager", source_external:"External / Home Assistant", transition:"Transition",
       left_thumb:"Left thumb", left_index:"Left index", left_middle:"Left middle", left_ring:"Left ring", left_pinky:"Left little finger",
       right_thumb:"Right thumb", right_index:"Right index", right_middle:"Right middle", right_ring:"Right ring", right_pinky:"Right little finger",
       left_hand:"LEFT HAND", right_hand:"RIGHT HAND"
     },
     es: {
       app_title:"Gestor de accesos", app_subtitle:"Usuarios · credenciales · lectores · puertas", language:"Idioma", installed_version:"Versión instalada",
-      connecting:"Conectando…", connected:"Home Assistant conectado", disconnected:"Home Assistant desconectado",
+      connecting:"Conectando…", connected:"Home Assistant conectado", disconnected:"Home Assistant desconectado", panel_updating:"Cargando el panel actualizado de Access Manager…", panel_update_failed:"No se pudo cargar el panel actualizado. Cierra y vuelve a abrir Access Manager e inténtalo de nuevo.",
       tab_people:"Usuarios y credenciales", tab_fingerprints:"Lectores de huellas", tab_keypads:"Keypads", tab_doors:"Puertas", tab_automations:"Automatizaciones", tab_settings:"Ajustes", tab_logs:"Registro",
       people:"Personas", credentials:"Credenciales", readers:"Lectores", doors:"Puertas", automations:"Automatizaciones", settings:"Ajustes", users_credentials:"Usuarios y credenciales",
       add_user:"Añadir usuario", user:"Usuario", linked_credentials:"Credenciales asociadas", fingerprint_readers:"Lectores de huellas",
@@ -628,14 +655,14 @@
       physical_ids:"IDs físicos de huella", finger:"Dedo", status:"Estado", updated:"Actualización", keypads:"Keypads", add_keypad:"Añadir keypad",
       zigbee_hint:"Los keypads Zigbee suelen dormir. El estado indica si están configurados en Home Assistant, no si permanecen continuamente online.",
       ha_entities:"Entidades de Home Assistant", add_door:"Añadir puerta", door_hint:"Una credencial autorizada ejecuta directamente la acción predeterminada. En entidades lock, open solo aparece si el dispositivo declara esa capacidad.",
-      mobile_nfc_tags:"Tags NFC móviles de puerta", add_mobile_nfc_tag:"Añadir tag NFC", mobile_nfc_hint:"El tag identifica la puerta. La cuenta autenticada de la app de Home Assistant identifica a la persona.", mobile_nfc_permissions:"Permisos NFC móvil", mobile_nfc_permissions_hint:"Asigna cada tag fijo de puerta a los usuarios que pueden escanearlo con la app de Home Assistant. El acceso está denegado por defecto.", mobile_nfc_access:"Acceso NFC móvil", tag:"Tag", select_registered_tag:"Tag de Home Assistant", no_registered_tags:"No hay tags registrados disponibles en Home Assistant.", confirm_delete_mobile_nfc_tag:"¿Quitar este tag NFC móvil de puerta?", mobile_nfc_granted:"Acceso NFC móvil autorizado", mobile_nfc_denied:"Acceso NFC móvil denegado", mobile_nfc_tag_saved:"Tag NFC móvil guardado", mobile_nfc_tag_deleted:"Tag NFC móvil eliminado", mobile_nfc_permission_changed:"Permiso NFC móvil modificado",
+      mobile_nfc_tags:"Tags NFC móviles de puerta", add_mobile_nfc_tag:"Añadir tag NFC", mobile_nfc_hint:"El tag identifica la puerta. La cuenta autenticada de la app de Home Assistant identifica a la persona.", mobile_nfc_permissions:"Permisos NFC móvil", mobile_nfc_permissions_hint:"Concede acceso seleccionando un usuario vinculado y un tag fijo de puerta. Solo se muestran permisos activos.", mobile_nfc_access:"Acceso NFC móvil", tag:"Tag", select_registered_tag:"Tag de Home Assistant", no_registered_tags:"No hay tags registrados disponibles en Home Assistant.", confirm_delete_mobile_nfc_tag:"¿Quitar este tag NFC móvil de puerta?", mobile_nfc_granted:"Acceso NFC móvil autorizado", mobile_nfc_denied:"Acceso NFC móvil denegado", mobile_nfc_tag_saved:"Tag NFC móvil guardado", mobile_nfc_tag_deleted:"Tag NFC móvil eliminado", mobile_nfc_permission_changed:"Permiso NFC móvil modificado", grant_permission:"Conceder permiso", filter_door:"Filtrar por puerta", all_doors:"Todas las puertas", revoke:"Revocar",
       add_automation:"Añadir automatización", automation_hint:"Son automatizaciones nativas de Home Assistant. Access Manager solo actualiza o borra las que ha creado y siguen siendo de su propiedad.",
       automation_type:"Tipo de automatización", auto_lock:"Cierre automático", auto_lock_delay:"Cerrar después de", door_open_alert:"Aviso de puerta abierta", door_open_delay:"Avisar después de", denied_access_alert:"Aviso de acceso denegado", denied_attempt_threshold:"Avisar tras", denied_attempt_window:"Dentro de", edit_automation:"Editar automatización", no_automations:"No hay automatizaciones gestionadas", no_automation_slots:"No hay una puerta compatible disponible para otra automatización de este tipo.",
       door_sensor:"Sensor de contacto de puerta", no_door_sensor:"Sin sensor (cerrar tras desbloquear)", door_sensor_hint:"Opcional para el cierre automático. Al cerrar el contacto empieza la espera; solo cerrará si la puerta sigue cerrada.", door_sensor_required_hint:"Obligatorio. El aviso solo se activa cuando este contacto permanece abierto durante el tiempo seleccionado.",
       notification_target:"Destino de la notificación", persistent_notification:"Notificación persistente de Home Assistant", notification_hint:"Las notificaciones persistentes funcionan sin configuración adicional. También puedes seleccionar una entidad notify disponible para enviarla a un dispositivo.", one_attempt:"1 intento denegado", attempts:"{count} intentos denegados", denied_summary:"{attempts} en {minutes}",
       minutes:"{count} minutos", one_hour:"1 hora", automation_native:"Automatización nativa de Home Assistant", confirm_delete_automation:"¿Borrar esta automatización de Access Manager en Home Assistant?",
       activity_log:"Registro de actividad", retention:"Retención", retention_hint:"Las entradas caducadas se borran automáticamente. También se aplica un límite de seguridad de 10.000 entradas.",
-      date:"Fecha", event:"Evento", confidence:"Confianza", detail:"Detalle", no_users:"No hay usuarios", no_credentials:"Sin credenciales",
+      date:"Fecha", event:"Evento", confidence:"Confianza", detail:"Detalle", no_users:"No hay usuarios", no_credentials:"Sin credenciales", label:"Etiqueta", credential:"Credencial", shared_credentials:"Credenciales compartidas de keypad", add_shared_credential:"Añadir código o tag compartido", shared_credentials_hint:"Las credenciales compartidas no pertenecen a una sola persona. Permanecen cifradas y se identifican mediante una etiqueta clara en el registro.", shared_label:"Etiqueta de la credencial compartida", shared_capture_intro:"Este código o tag será compartido. Su etiqueta se utilizará en el registro y la acción del keypad se gestiona por separado.", confirm_delete_shared_keypad:"¿Borrar esta credencial compartida de keypad?",
       associate_people:"Asociar con People…", create_in_ha:"Crear en HA", add_fingerprint:"Añadir huella", add_code:"Añadir código/tag",
       rename:"Renombrar", delete:"Borrar", save:"Guardar", edit:"Editar", configured:"Configurado", available:"Disponible", unavailable:"No disponible", missing:"Falta la entidad",
       active:"Activa", pending:"Registrando", deleting:"Pendiente de borrar", delete_pending:"Borrando", unassigned:"Dedo sin asignar", assign_finger:"Asignar dedo", no_records:"No hay registros",
@@ -666,7 +693,7 @@
       enroll_cancelled:"Registro cancelado", user_deleted:"Huella borrada", delete_queued:"Borrado pendiente", delete_requested:"Borrado enviado",
       delete_retry:"Reintentando borrado", delete_failed:"Borrado no confirmado", existing_id_linked:"ID existente vinculado", user_renamed:"Credencial actualizada",
       person_created:"Usuario creado", person_linked:"Asociado con Home Assistant", person_renamed:"Usuario actualizado", keypad_credential_added:"Credencial keypad registrada",
-      keypad_credential_deleted:"Credencial keypad borrada", keypad_capture_failed:"Captura keypad fallida", keypad_denied:"Credencial keypad denegada",
+      keypad_credential_deleted:"Credencial keypad borrada", shared_keypad_credential_added:"Credencial compartida añadida", shared_keypad_credential_deleted:"Credencial compartida borrada", keypad_capture_failed:"Captura keypad fallida", keypad_denied:"Credencial keypad denegada",
       door_action_executed:"Acción de puerta ejecutada", door_action_failed:"Acción de puerta fallida", local_lock_succeeded:"Bloqueo local completado", local_lock_failed:"Bloqueo local fallido",
       door_test_succeeded:"Prueba de puerta completada", door_test_failed:"Prueba de puerta fallida", keypad_button_detected:"Tecla de keypad detectada", keypad_action_ignored:"Tecla de keypad ignorada",
       automation_saved:"Automatización guardada", automation_deleted:"Automatización borrada", privacy_mode_changed:"Modo de privacidad cambiado", door_lock_opened:"Puerta desbloqueada", door_lock_closed:"Puerta bloqueada", door_physically_opened:"Puerta abierta", door_physically_closed:"Puerta cerrada",
@@ -675,7 +702,7 @@
       confirm:"Confirmar", important_warning:"Aviso importante", test_warning:"Esto enviará una orden real a {door}. Comprueba la acción seleccionada antes de confirmar.",
       confirm_action:"CONFIRMAR {action}", edit_keypad:"Editar keypad", edit_fingerprint_reader:"Editar lector de huellas", add_person_title:"Añadir usuario", edit_person_title:"Editar usuario",
       link_person:"Persona de Home Assistant", create_new_person:"Crear una nueva persona en Home Assistant", reader_settings:"Configuración del lector", entity_settings:"Entidades de Home Assistant", firmware:"Firmware", firmware_current:"Actualizado", firmware_update:"Actualización disponible", firmware_unknown:"Sin configurar",
-      esphome_configurator:"Configurador de lector ESPHome", esphome_config_hint:"Genera una configuración lista para pegar. Las credenciales de red y API permanecen en secrets.yaml de ESPHome y nunca se envían a Access Manager.", hardware_profile:"Perfil de hardware", reader_only:"Solo lector de huellas", reader_display:"Lector y pantalla Waveshare", device_name:"Nombre del dispositivo", friendly_name:"Nombre visible", esp32_board:"ID de placa ESP32", uart_tx_pin:"Pin TX UART del lector", uart_rx_pin:"Pin RX UART del lector", generate_config:"Generar configuración", copy:"Copiar", download_yaml:"Descargar YAML", copied:"Configuración copiada", source_access_manager:"Access Manager", source_external:"Externo / Home Assistant", transition:"Transición",
+      esphome_configurator:"Configurador de lector ESPHome", esphome_config_hint:"Esto crea un pequeño envoltorio de paquete. ESPHome descarga el firmware completo fijado, lo compila y lo instala; Access Manager nunca compila firmware ni recibe credenciales.", installation_mode:"Instalación", new_device:"Dispositivo nuevo", existing_device:"Actualizar dispositivo existente", hardware_profile:"Perfil de hardware", reader_only:"Solo lector de huellas", reader_display:"Lector y pantalla Waveshare", device_name:"Nombre del dispositivo", friendly_name:"Nombre visible", esp32_board:"ID de placa ESP32", uart_tx_pin:"Pin TX UART del lector", uart_rx_pin:"Pin RX UART del lector", generate_config:"Generar configuración", copy:"Copiar", download_yaml:"Descargar YAML", copied:"Configuración copiada", setup_new_title:"Configuración de un dispositivo nuevo", setup_new_1:"Descarga el YAML generado y elige Importar desde archivo en ESPHome Device Builder.", setup_new_2:"Añade las cuatro claves requeridas a secrets.yaml de ESPHome y valida la configuración.", setup_new_3:"Pulsa Instalar. La primera carga normalmente requiere USB; las posteriores pueden hacerse por OTA.", setup_existing_title:"Actualización de un dispositivo existente", setup_existing_1:"Haz una copia del YAML actual y utiliza exactamente el mismo nombre de dispositivo.", setup_existing_2:"Conserva los valores actuales de Wi-Fi, cifrado API y OTA. Cambiarlos puede romper la conexión o las actualizaciones OTA.", setup_existing_3:"Sustituye el YAML por el envoltorio generado, valídalo e instálalo por Wi-Fi únicamente cuando la validación termine correctamente.", setup_credentials:"Claves requeridas: wifi_ssid, wifi_password, api_encryption_key y ota_password. Sus valores permanecen únicamente en ESPHome.", source_access_manager:"Access Manager", source_external:"Externo / Home Assistant", transition:"Transición",
       left_thumb:"Pulgar izquierdo", left_index:"Índice izquierdo", left_middle:"Corazón izquierdo", left_ring:"Anular izquierdo", left_pinky:"Meñique izquierdo",
       right_thumb:"Pulgar derecho", right_index:"Índice derecho", right_middle:"Corazón derecho", right_ring:"Anular derecho", right_pinky:"Meñique derecho",
       left_hand:"MANO IZQUIERDA", right_hand:"MANO DERECHA"
@@ -698,6 +725,29 @@
     const response = await fetch(apiUrl(path), { cache:"no-store", ...options, headers: {"Content-Type":"application/json", "X-Fingerprint-Admin":"1", "Accept-Language":language, ...(options.headers || {})} });
     if (!response.ok) throw new Error((await response.text()) || `Error ${response.status}`);
     return response.json();
+  }
+  function recoverPanelBuild(version) {
+    if (buildRecoveryPromise) return buildRecoveryPromise;
+    buildRecoveryPromise = (async () => {
+      showError(t("panel_updating"));
+      const url = new URL(panelBaseUrl);
+      url.searchParams.set("panel_build", version);
+      url.searchParams.set("cache_bust", `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+      const response = await fetch(url, {cache:"no-store",credentials:"same-origin",headers:{"Accept":"text/html","X-Access-Manager-Build":version}});
+      const html = await response.text();
+      const servedVersion = response.headers.get("X-Access-Manager-Version");
+      if (!response.ok || servedVersion !== version || !html.includes(`const PANEL_BUILD_VERSION = "${version}"`)) {
+        throw new Error(t("panel_update_failed"));
+      }
+      sessionStorage.setItem("access-manager-loaded-build", version);
+      document.open("text/html", "replace");
+      document.write(html);
+      document.close();
+    })().catch(error => {
+      buildRecoveryPromise = null;
+      showError(error.message || t("panel_update_failed"));
+    });
+    return buildRecoveryPromise;
   }
   function showError(message = "") { $("#notice").textContent = message; $("#notice").classList.toggle("visible", Boolean(message)); }
   async function mutate(path, method, payload, options = {}) {
@@ -755,9 +805,11 @@
   function codeHint(credential) {
     if (credential.display_value) return credential.display_value;
     const credentialId = String(credential.id || "").split(":")[1];
-    const revealed = revealedCredentials.get(credentialId);
+    const ownerType = String(credential.id || "").startsWith("shared:") ? "shared" : "person";
+    const revealKey = `${ownerType}:${credentialId}`;
+    const revealed = revealedCredentials.get(revealKey);
     if (revealed && revealed.expiresAt > Date.now()) return revealed.value;
-    if (revealed) revealedCredentials.delete(credentialId);
+    if (revealed) revealedCredentials.delete(revealKey);
     const hint = credential.code_hint || credential.label || t("code");
     return language === "es" ? hint.replace(/^Code/, "Código") : hint.replace(/^Código/, "Code");
   }
@@ -783,6 +835,19 @@
         : `<div class="association-actions"><select onchange="linkHaPerson(${person.id},this.value)"><option value="">${t("associate_people")}</option>${haPersonOptions()}</select><button class="secondary" onclick="createHaPerson(${person.id})">${t("create_in_ha")}</button></div>`;
       return `<tr><td><strong>${esc(person.name)}</strong><div style="margin-top:7px">${association}</div></td><td><div class="credential-list">${credentials}</div></td><td class="actions-cell"><button class="secondary" onclick="prepareFingerprint(${person.id})" ${person.ha_person_entity_id ? "" : "disabled"}>${t("add_fingerprint")}</button><button class="secondary" onclick="openKeypadModal(${person.id})" ${person.ha_person_entity_id ? "" : "disabled"}>${t("add_code")}</button><button class="secondary" onclick="renamePerson(${person.id})">${t("rename")}</button></td></tr>`;
     }).join("") : `<tr><td colspan="3" class="empty">${t("no_users")}</td></tr>`;
+  }
+
+  function renderSharedKeypadCredentials() {
+    const credentials = data.shared_keypad_credentials || [];
+    const body = $("#shared-keypad-credentials-body");
+    body.innerHTML = credentials.length ? credentials.map(credential => {
+      const reader = (data.access_readers || []).find(item => item.id === credential.reader_id);
+      const door = (data.doors || []).find(item => item.id === reader?.door_id);
+      const reveal = data.privacy_mode && credential.revealable
+        ? `<button title="${t("show_credential")}" aria-label="${t("show_credential")}" onclick="revealKeypadCredential(${credential.id},true)">👁</button>` : "";
+      return `<tr><td><strong>${esc(credential.label)}</strong></td><td>${esc(reader?.name || credential.reader_id)}<span class="entity">${esc(credential.reader_id)}</span></td><td>${esc(door?.name || reader?.door_id || "—")}</td><td><span class="credential keypad"><span>${esc(codeHint({...credential,id:`shared:${credential.id}`}))}</span>${reveal}</span></td><td class="actions-cell"><button class="danger" onclick="deleteSharedKeypadCredential(${credential.id})">${t("delete")}</button></td></tr>`;
+    }).join("") : `<tr><td colspan="5" class="empty">${t("no_records")}</td></tr>`;
+    $("#add-shared-keypad").disabled = !(data.access_readers || []).some(reader => reader.reader_type === "keypad" && reader.enabled && reader.availability !== "missing");
   }
 
   function renderFingerprintReaders() {
@@ -852,16 +917,29 @@
       const door = (data.doors || []).find(entry => entry.id === item.door_id);
       return `<tr><td data-label="${esc(t("tag"))}"><strong>${esc(item.name)}</strong><div class="entity">${esc(item.tag_id)}</div></td><td data-label="${esc(t("door"))}">${esc(door?.name || item.door_id)}</td><td data-label="${esc(t("status"))}"><span class="status ${item.enabled ? "" : "pending"}">${t(item.enabled ? "enabled" : "disabled")}</span></td><td class="actions-cell"><button class="secondary mobile-nfc-edit" data-tag-id="${esc(item.tag_id)}">${t("edit")}</button><button class="danger mobile-nfc-delete" data-tag-id="${esc(item.tag_id)}">${t("delete")}</button></td></tr>`;
     }).join("") : `<tr><td colspan="4" class="empty">${t("no_records")}</td></tr>`;
-    const permissions = new Set((data.mobile_nfc_permissions || []).filter(item => item.enabled).map(item => `${item.person_id}:${item.door_id}`));
-    const rows = [];
-    for (const person of (data.people || [])) {
-      for (const tag of tags) {
-        const door=(data.doors||[]).find(item=>item.id===tag.door_id);
-        const linked = Boolean(person.ha_person_entity_id);
-        const key = `${person.id}:${tag.door_id}`;
-        rows.push(`<tr><td data-label="${esc(t("user"))}"><strong>${esc(person.name)}</strong><div class="entity">${esc(person.ha_person_entity_id || t("unlinked"))}</div></td><td data-label="${esc(t("tag"))}"><strong>${esc(tag.name)}</strong><div class="entity">${esc(tag.tag_id)}</div></td><td data-label="${esc(t("door"))}">${esc(door?.name||tag.door_id)}</td><td data-label="${esc(t("mobile_nfc_access"))}"><label><input type="checkbox" ${permissions.has(key) ? "checked" : ""} ${linked&&tag.enabled ? "" : "disabled"} onchange="setMobileNfcPermission(${person.id},'${esc(tag.door_id)}',this.checked)"> ${t("enabled")}</label></td></tr>`);
-      }
-    }
+    const personSelect = $("#mobile-nfc-permission-person");
+    const tagSelect = $("#mobile-nfc-permission-tag");
+    const filterSelect = $("#mobile-nfc-door-filter");
+    const selectedPerson = personSelect.value;
+    const selectedTag = tagSelect.value;
+    const selectedFilter = filterSelect.value;
+    const linkedPeople = (data.people || []).filter(person => person.ha_person_entity_id);
+    const enabledTags = tags.filter(tag => tag.enabled);
+    personSelect.innerHTML = linkedPeople.map(person => `<option value="${person.id}" ${String(person.id)===selectedPerson?"selected":""}>${esc(person.name)} · ${esc(person.ha_person_entity_id)}</option>`).join("");
+    tagSelect.innerHTML = enabledTags.map(tag => { const door=(data.doors||[]).find(item=>item.id===tag.door_id); return `<option value="${esc(tag.tag_id)}" ${tag.tag_id===selectedTag?"selected":""}>${esc(tag.name)} · ${esc(door?.name||tag.door_id)}</option>`; }).join("");
+    filterSelect.innerHTML = `<option value="">${t("all_doors")}</option>` + (data.doors || []).map(door => `<option value="${esc(door.id)}" ${door.id===selectedFilter?"selected":""}>${esc(door.name)}</option>`).join("");
+    $("#add-mobile-nfc-permission").disabled = !linkedPeople.length || !enabledTags.length;
+
+    const activePermissions = (data.mobile_nfc_permissions || []).filter(item => item.enabled && (!filterSelect.value || item.door_id === filterSelect.value));
+    const rows = activePermissions.map(permission => {
+      const person = (data.people || []).find(item => item.id === permission.person_id);
+      const door = (data.doors || []).find(item => item.id === permission.door_id);
+      const permissionTags = tags.filter(tag => tag.door_id === permission.door_id);
+      const tagLabels = permissionTags.length
+        ? permissionTags.map(tag => `<span class="credential">${esc(tag.name)}<span class="entity">${esc(tag.tag_id)}</span></span>`).join("")
+        : `<span class="muted">${t("no_records")}</span>`;
+      return `<tr><td data-label="${esc(t("user"))}"><strong>${esc(person?.name || permission.person_id)}</strong><div class="entity">${esc(person?.ha_person_entity_id || t("unlinked"))}</div></td><td data-label="${esc(t("tag"))}"><div class="credential-list">${tagLabels}</div></td><td data-label="${esc(t("door"))}">${esc(door?.name || permission.door_id)}</td><td class="actions-cell"><button class="danger" onclick="setMobileNfcPermission(${permission.person_id},'${esc(permission.door_id)}',false)">${t("revoke")}</button></td></tr>`;
+    });
     $("#mobile-nfc-permissions-body").innerHTML = rows.length ? rows.join("") : `<tr><td colspan="4" class="empty">${t("no_records")}</td></tr>`;
     document.querySelectorAll(".mobile-nfc-delete").forEach(button => button.addEventListener("click", () => deleteMobileNfcTag(button.dataset.tagId)));
     document.querySelectorAll(".mobile-nfc-edit").forEach(button => button.addEventListener("click", () => openMobileNfcTagEditor(button.dataset.tagId)));
@@ -923,11 +1001,14 @@
 
   function renderEsphomeProfile(){
     document.querySelectorAll(".reader-only-option").forEach(element=>element.hidden=$("#esphome-profile").value!=="reader_only");
+    const existing=$("#esphome-install-mode").value==="existing";
+    const prefix=existing?"setup_existing":"setup_new";
+    $("#esphome-setup-guide").innerHTML=`<strong>${t(`${prefix}_title`)}</strong><ol><li>${t(`${prefix}_1`)}</li><li>${t(`${prefix}_2`)}</li><li>${t(`${prefix}_3`)}</li></ol><p>${t("setup_credentials")}</p>`;
   }
 
   async function generateEsphomeConfig(){
     const profile=$("#esphome-profile").value;
-    const payload={profile,device_name:$("#esphome-device-name").value.trim(),friendly_name:$("#esphome-friendly-name").value.trim()};
+    const payload={profile,install_mode:$("#esphome-install-mode").value,device_name:$("#esphome-device-name").value.trim(),friendly_name:$("#esphome-friendly-name").value.trim()};
     if(profile==="reader_only")Object.assign(payload,{board:$("#esphome-board").value.trim(),fingerprint_tx_pin:$("#esphome-tx-pin").value.trim(),fingerprint_rx_pin:$("#esphome-rx-pin").value.trim()});
     try{
       const result=await request("esphome/config",{method:"POST",body:JSON.stringify(payload)}),output=$("#generated-esphome");
@@ -949,10 +1030,7 @@
   function render() {
     const connection = $("#connection");
     const version = data.version || "development";
-    if(version!=="development"&&version!==PANEL_BUILD_VERSION&&sessionStorage.getItem("access-manager-reload-version")!==version){
-      sessionStorage.setItem("access-manager-reload-version",version);
-      const url=new URL(location.href);url.searchParams.set("v",version);location.replace(url);return;
-    }
+    if(version!=="development"&&version!==PANEL_BUILD_VERSION){recoverPanelBuild(version);return;}
     const privacyMode = data.privacy_mode !== false;
     const privacyStatus = $("#privacy-status"), privacyHint = $("#keypad-privacy-hint"), manualCode = $("#keypad-manual-code");
     privacyStatus.hidden = privacyMode; privacyStatus.textContent = t("privacy_disabled");
@@ -964,12 +1042,13 @@
     $("#app-version").setAttribute("aria-label", `${t("installed_version")}: ${version}`);
     connection.classList.toggle("online", Boolean(data.connected));
     connection.querySelector("span:last-child").textContent = data.connected ? t("connected") : t("disconnected");
-    const credentials = (data.people || []).reduce((sum, person) => sum + person.credentials.length, 0);
+    const credentials = (data.people || []).reduce((sum, person) => sum + person.credentials.length, 0)
+      + (data.shared_keypad_credentials || []).length;
     $("#person-count").textContent = data.people?.length ?? 0; $("#credential-count").textContent = credentials;
     $("#access-reader-count").textContent = data.access_readers?.length ?? 0; $("#door-count").textContent = data.doors?.length ?? 0;
     $("#people-list").innerHTML = (data.people || []).map(person => `<option value="${esc(person.name)}"></option>`).join("");
     $("#management").textContent = data.management_message || t("management_empty");
-    renderPeople(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderMobileNfc(); renderAutomations(); renderSettings(); renderLogs(); renderCapture(); renderKeypadLearning();
+    renderPeople(); renderSharedKeypadCredentials(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderMobileNfc(); renderAutomations(); renderSettings(); renderLogs(); renderCapture(); renderKeypadLearning();
   }
   function refresh() {
     if (refreshPromise) return refreshPromise;
@@ -1011,7 +1090,7 @@
     if (capture) { keypadCapturing=true; $("#keypad-status").textContent=t("capture_countdown",{seconds:capture.seconds_left}); $("#keypad-start").disabled=true; }
     else if (keypadCapturing) closeKeypadModal(false);
   }
-  async function closeKeypadModal(cancelRemote=true) { const readerId=$("#keypad-reader").value; if(cancelRemote&&keypadCapturing&&readerId) await request(`keypad/capture/${readerId}`,{method:"DELETE"}).catch(()=>{}); $("#keypad-manual-code").value=""; $("#keypad-modal").classList.remove("open"); $("#keypad-modal").setAttribute("aria-hidden","true"); document.body.classList.remove("modal-open"); keypadPerson=null; keypadCapturing=false; }
+  async function closeKeypadModal(cancelRemote=true) { const readerId=$("#keypad-reader").value; if(cancelRemote&&keypadCapturing&&readerId) await request(`keypad/capture/${readerId}`,{method:"DELETE"}).catch(()=>{}); $("#keypad-manual-code").value="";$("#keypad-shared-label").value="";$("#keypad-shared-label-field").hidden=true; $("#keypad-modal").classList.remove("open"); $("#keypad-modal").setAttribute("aria-hidden","true"); document.body.classList.remove("modal-open"); keypadPerson=null; keypadCapturing=false; }
 
   function openEditor({title,subtitle="",html,saveLabel=null,onSubmit}) {
     editorSubmit=onSubmit;
@@ -1184,10 +1263,13 @@
   window.createHaPerson = id => { const person=data.people.find(item=>item.id===id); if(person)openConfirm({title:t("create_in_ha"),message:t("confirm_create_person",{name:person.name}),onConfirm:async()=>{if(await mutate(`people/${id}/create-ha-person`,"POST"))closeConfirm();}}); };
   window.renamePerson = id => openPersonEditor(id);
   window.prepareFingerprint = id => { const person=data.people.find(item=>item.id===id); if(!person)return; switchTab("fingerprints"); $("#name").value=person.name; $("#slot").focus(); };
-  window.openKeypadModal = id => { const person=data.people.find(item=>item.id===id), keypads=data.access_readers.filter(reader=>reader.reader_type==="keypad"&&reader.enabled&&reader.availability!=="missing"); if(!person||!keypads.length){showError(t("no_keypad"));return;} keypadPerson=person;keypadCapturing=false;$("#keypad-person").textContent=`${person.name} · ${person.ha_person_entity_id}`;$("#keypad-reader").innerHTML=keypads.map(reader=>`<option value="${esc(reader.id)}">${esc(reader.name)}</option>`).join("");$("#keypad-manual-code").value="";$("#keypad-status").textContent=t("capture_intro");$("#keypad-start").disabled=false;$("#keypad-modal").classList.add("open");$("#keypad-modal").setAttribute("aria-hidden","false");document.body.classList.add("modal-open"); };
-  window.revealKeypadCredential = async id => { try { const key=String(id),result=await request(`keypad/credentials/${id}/reveal`,{method:"POST",body:"{}"}),expiresAt=Date.now()+15000;revealedCredentials.set(key,{value:result.value,expiresAt});renderPeople();setTimeout(()=>{const current=revealedCredentials.get(key);if(current&&current.expiresAt<=Date.now()){revealedCredentials.delete(key);if(data?.privacy_mode)renderPeople();}},15100);}catch(error){showError(error.message);} };
+  function openKeypadCredentialModal(owner) { const keypads=data.access_readers.filter(reader=>reader.reader_type==="keypad"&&reader.enabled&&reader.availability!=="missing"); if(!owner||!keypads.length){showError(t("no_keypad"));return;} keypadPerson=owner;keypadCapturing=false;const shared=Boolean(owner.shared);$("#keypad-title").textContent=t(shared?"add_shared_credential":"register_keypad");$("#keypad-person").textContent=shared?t("shared_capture_intro"):`${owner.name} · ${owner.ha_person_entity_id}`;$("#keypad-shared-label-field").hidden=!shared;$("#keypad-shared-label").value=shared?(owner.label||""):"";$("#keypad-reader").innerHTML=keypads.map(reader=>`<option value="${esc(reader.id)}">${esc(reader.name)}</option>`).join("");$("#keypad-manual-code").value="";$("#keypad-status").textContent=t(shared?"shared_capture_intro":"capture_intro");$("#keypad-start").disabled=false;$("#keypad-modal").classList.add("open");$("#keypad-modal").setAttribute("aria-hidden","false");document.body.classList.add("modal-open"); }
+  window.openKeypadModal = id => { const person=data.people.find(item=>item.id===id); if(person)openKeypadCredentialModal(person); };
+  window.openSharedKeypadModal = () => openKeypadCredentialModal({shared:true,label:""});
+  window.revealKeypadCredential = async (id,shared=false) => { try { const ownerType=shared?"shared":"person",key=`${ownerType}:${id}`,path=shared?`keypad/shared-credentials/${id}/reveal`:`keypad/credentials/${id}/reveal`,result=await request(path,{method:"POST",body:"{}"}),expiresAt=Date.now()+15000;revealedCredentials.set(key,{value:result.value,expiresAt});renderPeople();renderSharedKeypadCredentials();setTimeout(()=>{const current=revealedCredentials.get(key);if(current&&current.expiresAt<=Date.now()){revealedCredentials.delete(key);if(data?.privacy_mode){renderPeople();renderSharedKeypadCredentials();}}},15100);}catch(error){showError(error.message);} };
   window.deleteKeypadCredential = id => openConfirm({title:t("delete"),message:t("confirm_delete_keypad"),onConfirm:async()=>{if(await mutate(`keypad/credentials/${id}`,"DELETE"))closeConfirm();}});
-  window.changePrivacyMode = () => { const enabled=data.privacy_mode!==false;if(enabled){const credentials=(data.people||[]).flatMap(person=>person.credentials||[]).filter(item=>item.type==="keypad"),current=credentials.filter(item=>item.revealable).length,legacy=credentials.length-current;openConfirm({title:t("disable_privacy_title"),message:t("disable_privacy_warning",{current,legacy}),confirmLabel:t("confirm_disable_privacy"),danger:true,onConfirm:async()=>{if(await mutate("settings/privacy","PUT",{enabled:false,acknowledge:true})){revealedCredentials.clear();closeConfirm();}}});}else openConfirm({title:t("enable_privacy_title"),message:t("enable_privacy_warning"),confirmLabel:t("confirm_enable_privacy"),danger:false,onConfirm:async()=>{if(await mutate("settings/privacy","PUT",{enabled:true})){revealedCredentials.clear();renderPeople();closeConfirm();}}}); };
+  window.deleteSharedKeypadCredential = id => openConfirm({title:t("delete"),message:t("confirm_delete_shared_keypad"),onConfirm:async()=>{if(await mutate(`keypad/shared-credentials/${id}`,"DELETE"))closeConfirm();}});
+  window.changePrivacyMode = () => { const enabled=data.privacy_mode!==false;if(enabled){const personal=(data.people||[]).flatMap(person=>person.credentials||[]).filter(item=>item.type==="keypad"),shared=data.shared_keypad_credentials||[],credentials=[...personal,...shared],current=credentials.filter(item=>item.revealable).length,legacy=credentials.length-current;openConfirm({title:t("disable_privacy_title"),message:t("disable_privacy_warning",{current,legacy}),confirmLabel:t("confirm_disable_privacy"),danger:true,onConfirm:async()=>{if(await mutate("settings/privacy","PUT",{enabled:false,acknowledge:true})){revealedCredentials.clear();closeConfirm();}}});}else openConfirm({title:t("enable_privacy_title"),message:t("enable_privacy_warning"),confirmLabel:t("confirm_enable_privacy"),danger:false,onConfirm:async()=>{if(await mutate("settings/privacy","PUT",{enabled:true})){revealedCredentials.clear();renderPeople();renderSharedKeypadCredentials();closeConfirm();}}}); };
   window.associateReader = (id,doorId) => { const reader=data.access_readers.find(item=>item.id===id); if(reader) mutate(`readers/${id}`,"PUT",{name:reader.name,door_id:doorId,enabled:reader.enabled}); };
   window.assignFinger = (readerId,slot) => { selectedReader=readerId; $("#fingerprint-reader").value=readerId; const user=data.users.find(item=>item.reader_id===readerId&&Number(item.slot)===Number(slot)); if(user) openFingerModal("assign",user); };
   window.deleteFingerprint = (readerId,slot) => openConfirm({title:t("delete"),message:t("confirm_delete_fingerprint",{id:slot,reader:readerName(readerId)}),onConfirm:async()=>{if(await mutate(`users/${slot}?reader_id=${encodeURIComponent(readerId)}`,"DELETE"))closeConfirm();}});
@@ -1196,6 +1278,7 @@
   window.setMobileNfcPermission = async (personId,doorId,enabled) => {
     if(!await mutate("mobile-nfc/permissions","PUT",{person_id:personId,door_id:doorId,enabled}))renderMobileNfc();
   };
+  window.grantMobileNfcPermission = async () => { const personId=Number($("#mobile-nfc-permission-person").value),tagId=$("#mobile-nfc-permission-tag").value;if(!personId||!tagId)return;if(!await mutate("mobile-nfc/permissions","PUT",{person_id:personId,tag_id:tagId,enabled:true}))renderMobileNfc(); };
   window.editAutomation = id => openAutomationEditor(id);
   window.deleteAutomation = id => openConfirm({title:t("delete"),message:t("confirm_delete_automation"),onConfirm:async()=>{if(await mutate(`automations/${id}`,"DELETE"))closeConfirm();}});
   window.editReader = id => openReaderEditor(id);
@@ -1208,22 +1291,26 @@
   $("#finger-confirm").addEventListener("click",async()=>{if(!fingerModal||!selectedFinger)return;const payload={reader_id:fingerModal.reader_id,slot:fingerModal.slot,name:fingerModal.name,finger:selectedFinger};const ok=await mutate(fingerModal.mode==="enroll"?"users/enroll":fingerModal.mode==="import"?"users/import":`users/${fingerModal.slot}`,fingerModal.mode==="assign"?"PUT":"POST",payload);if(ok)closeFingerModal();});
   document.querySelectorAll(".hand-finger").forEach(el=>{el.addEventListener("click",()=>selectFinger(el.dataset.finger));el.addEventListener("keydown",event=>{if(event.key==="Enter"||event.key===" "){event.preventDefault();selectFinger(el.dataset.finger);}});});
   ["#finger-close","#finger-cancel"].forEach(id=>$(id).addEventListener("click",closeFingerModal)); $("#finger-modal").addEventListener("click",event=>event.target===$("#finger-modal")&&closeFingerModal());
-  $("#keypad-start").addEventListener("click",async()=>{if(!keypadPerson)return;const reader_id=$("#keypad-reader").value;const ok=await mutate("keypad/capture","POST",{person_id:keypadPerson.id,reader_id});if(ok){keypadCapturing=true;$("#keypad-start").disabled=true;$("#keypad-status").textContent=t("capture_wait");}});
-  $("#keypad-manual-save").addEventListener("click",async()=>{if(!keypadPerson)return;const code=$("#keypad-manual-code").value.trim(),reader_id=$("#keypad-reader").value;if(!code){$("#keypad-status").textContent=t("enter_code_or_tag");$("#keypad-manual-code").focus();return;}try{if(await mutate("keypad/credentials","POST",{person_id:keypadPerson.id,reader_id,code},{inline:true}))await closeKeypadModal();}catch(error){$("#keypad-status").textContent=error.message;}});
+  $("#keypad-start").addEventListener("click",async()=>{if(!keypadPerson)return;const reader_id=$("#keypad-reader").value,shared=Boolean(keypadPerson.shared),label=$("#keypad-shared-label").value.trim();if(shared&&!label){$("#keypad-status").textContent=t("shared_label");$("#keypad-shared-label").focus();return;}const path=shared?"keypad/shared-capture":"keypad/capture",payload=shared?{label,reader_id}:{person_id:keypadPerson.id,reader_id};const ok=await mutate(path,"POST",payload);if(ok){keypadCapturing=true;$("#keypad-start").disabled=true;$("#keypad-status").textContent=t("capture_wait");}});
+  $("#keypad-manual-save").addEventListener("click",async()=>{if(!keypadPerson)return;const code=$("#keypad-manual-code").value.trim(),reader_id=$("#keypad-reader").value,shared=Boolean(keypadPerson.shared),label=$("#keypad-shared-label").value.trim();if(shared&&!label){$("#keypad-status").textContent=t("shared_label");$("#keypad-shared-label").focus();return;}if(!code){$("#keypad-status").textContent=t("enter_code_or_tag");$("#keypad-manual-code").focus();return;}const path=shared?"keypad/shared-credentials":"keypad/credentials",payload=shared?{label,reader_id,code}:{person_id:keypadPerson.id,reader_id,code};try{if(await mutate(path,"POST",payload,{inline:true}))await closeKeypadModal();}catch(error){$("#keypad-status").textContent=error.message;}});
   $("#keypad-manual-code").addEventListener("keydown",event=>{if(event.key==="Enter"){event.preventDefault();$("#keypad-manual-save").click();}});
   ["#keypad-close","#keypad-cancel"].forEach(id=>$(id).addEventListener("click",()=>closeKeypadModal())); $("#keypad-modal").addEventListener("click",event=>event.target===$("#keypad-modal")&&closeKeypadModal());
   $("#editor-form").addEventListener("submit",async event=>{event.preventDefault();if(!editorSubmit||busy)return;const error=$("#editor-error");error.classList.remove("visible");try{await editorSubmit(new FormData(event.currentTarget));}catch(reason){error.textContent=reason.message;error.classList.add("visible");}});
   ["#editor-close","#editor-cancel"].forEach(id=>$(id).addEventListener("click",closeEditor)); $("#editor-modal").addEventListener("click",event=>event.target===$("#editor-modal")&&closeEditor());
   ["#confirm-close","#confirm-cancel"].forEach(id=>$(id).addEventListener("click",closeConfirm)); $("#confirm-modal").addEventListener("click",event=>event.target===$("#confirm-modal")&&closeConfirm()); $("#confirm-action").addEventListener("click",async()=>{if(confirmSubmit&&!busy)await confirmSubmit();});
   $("#add-person").addEventListener("click",()=>openPersonEditor());
+  $("#add-shared-keypad").addEventListener("click",()=>window.openSharedKeypadModal());
   $("#add-door").addEventListener("click",()=>openDoorEditor());
   $("#add-mobile-nfc-tag").addEventListener("click",()=>openMobileNfcTagEditor());
+  $("#add-mobile-nfc-permission").addEventListener("click",()=>window.grantMobileNfcPermission());
+  $("#mobile-nfc-door-filter").addEventListener("change",renderMobileNfc);
   $("#add-automation").addEventListener("click",()=>openAutomationEditor());
   $("#add-keypad").addEventListener("click",()=>openReaderEditor(null,"keypad"));
   $("#add-fingerprint-reader").addEventListener("click",()=>openReaderEditor(null,"fingerprint"));
   $("#log-retention").addEventListener("change",event=>mutate("settings/log-retention","PUT",{days:Number(event.target.value)}));
   $("#privacy-toggle").addEventListener("click",()=>window.changePrivacyMode());
   $("#esphome-profile").addEventListener("change",renderEsphomeProfile);
+  $("#esphome-install-mode").addEventListener("change",renderEsphomeProfile);
   $("#generate-esphome").addEventListener("click",generateEsphomeConfig);
   $("#copy-esphome").addEventListener("click",copyEsphomeConfig);
   $("#download-esphome").addEventListener("click",downloadEsphomeConfig);
@@ -1232,7 +1319,7 @@
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       revealedCredentials.clear();
-      if (data?.privacy_mode) renderPeople();
+      if (data?.privacy_mode) { renderPeople(); renderSharedKeypadCredentials(); }
     } else refresh();
   });
   applyLanguage();

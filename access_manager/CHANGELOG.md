@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.11.0
+
+- Adds reader-scoped shared keypad codes and tags with encrypted storage, privacy-aware reveal, physical or manual capture, duplicate prevention, revocation, and clear audit labels.
+- Replaces the mobile NFC permission matrix with a compact active-permissions list, guided user/tag assignment, door filtering, and direct revocation.
+- Expands the ESPHome configurator with separate new-device and existing-device update guidance, safer credential-preservation instructions, and a documented recovery path.
+- Strengthens administration-panel update recovery with version-verified cache busting, fresh document responses without file validators, and retryable stale-build replacement.
+
 ## 0.10.0
 
 - Adds a bilingual ESPHome configurator for the reference display terminal and generic ESP32 fingerprint-reader-only installations, using release-pinned packages without collecting Wi-Fi, API or OTA secrets.

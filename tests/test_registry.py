@@ -74,13 +74,14 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.10.0"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.11.0"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
     def test_esphome_generator_pins_firmware_and_never_embeds_secrets(self):
         generated = APP.esphome_reader_config({
             "profile": "reader_only",
+            "install_mode": "new",
             "device_name": "front-reader",
             "friendly_name": "Front reader",
             "board": "esp32-s3-devkitc-1",
@@ -92,6 +93,25 @@ class RegistryTests(unittest.TestCase):
         self.assertIn('board: "esp32-s3-devkitc-1"', generated)
         self.assertIn("wifi_password", generated)
         self.assertNotIn("CHANGE_ME", generated)
+        self.assertIn("import this file into ESPHome Device Builder", generated)
+
+        existing = APP.esphome_reader_config({
+            "profile": "display",
+            "install_mode": "existing",
+            "device_name": "existing-reader",
+            "friendly_name": "Existing reader",
+        })
+        self.assertIn("access-reader.yaml", existing)
+        self.assertIn("keep device_name and all existing secret", existing)
+        self.assertNotIn("secret-value", existing)
+
+        with self.assertRaisesRegex(ValueError, "installation mode"):
+            APP.esphome_reader_config({
+                "profile": "display",
+                "install_mode": "unsupported",
+                "device_name": "front-reader",
+                "friendly_name": "Front reader",
+            })
         with self.assertRaisesRegex(ValueError, "must be different"):
             APP.esphome_reader_config({
                 "profile": "reader_only",
@@ -107,6 +127,10 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("no-store", response.headers["Cache-Control"])
         self.assertEqual(response.headers["Pragma"], "no-cache")
         self.assertEqual(response.headers["X-Access-Manager-Version"], APP.APP_VERSION)
+        self.assertNotIn("ETag", response.headers)
+        self.assertNotIn("Last-Modified", response.headers)
+        self.assertIn(b'http-equiv="Cache-Control"', response.body)
+        self.assertIn(b"recoverPanelBuild", response.body)
 
     def test_manifest_version_has_matching_changelog_entry(self):
         root = Path(__file__).parents[1]
@@ -128,9 +152,47 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(registry.people(), [])
             self.assertEqual(registry.readers(), [])
             self.assertEqual(registry.doors(), [])
+            self.assertEqual(registry.shared_keypad_credentials(), [])
             self.assertEqual(registry.managed_automations(), [])
             self.assertEqual(registry.events(), [])
             self.assertEqual(registry.log_retention_days(), 30)
+            registry.connection.close()
+
+    def test_shared_keypad_credentials_are_encrypted_private_and_unique(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            registry = APP.Registry(Path(directory) / "shared.db")
+            person_id = registry.create_person("Example Person")
+            registry.create_reader(
+                "front_keypad", "Front keypad", "keypad", None, {}
+            )
+            credential_id = registry.add_shared_keypad_credential(
+                "Cleaner", "front_keypad", "0123"
+            )
+
+            row = registry.connection.execute(
+                "SELECT * FROM shared_keypad_credentials WHERE id = ?",
+                (credential_id,),
+            ).fetchone()
+            self.assertNotIn("0123", row["secret_ciphertext"])
+            self.assertNotEqual(row["secret_hash"], "0123")
+            public = registry.shared_keypad_credentials()[0]
+            self.assertEqual(public["label"], "Cleaner")
+            self.assertIsNone(public["display_value"])
+            self.assertNotIn("secret_hash", public)
+            self.assertNotIn("secret_ciphertext", public)
+            self.assertEqual(
+                registry.reveal_shared_keypad_credential(credential_id), "0123"
+            )
+
+            registry.set_privacy_mode(False)
+            self.assertEqual(
+                registry.shared_keypad_credentials()[0]["display_value"], "0123"
+            )
+            with self.assertRaisesRegex(ValueError, "already linked"):
+                registry.add_keypad_credential(
+                    person_id, "front_keypad", "0123"
+                )
             registry.connection.close()
 
 
@@ -228,6 +290,57 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(self.events[-1][1]["action_executed"])
         self.assertEqual(self.events[-1][1]["door_id"], "front_door")
+
+    async def test_mobile_nfc_permission_endpoint_uses_tag_and_allows_revoke(self):
+        self.registry.link_ha_person(self.person_id, "person.example_person")
+        self.registry.save_mobile_nfc_tag(
+            "door-tag", "Front door tag", "front_door", True
+        )
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+
+        class Request:
+            headers = {"X-Fingerprint-Admin": "1"}
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            async def json(self):
+                return self.payload
+
+        granted = await admin.set_mobile_nfc_permission(Request({
+            "person_id": self.person_id,
+            "tag_id": "door-tag",
+            "enabled": True,
+        }))
+        self.assertEqual(granted.status, 200)
+        self.assertTrue(
+            self.registry.mobile_nfc_allowed(self.person_id, "front_door")
+        )
+
+        self.registry.connection.execute(
+            "UPDATE people SET ha_person_entity_id = NULL WHERE id = ?",
+            (self.person_id,),
+        )
+        self.registry.connection.commit()
+        revoked = await admin.set_mobile_nfc_permission(Request({
+            "person_id": self.person_id,
+            "door_id": "front_door",
+            "enabled": False,
+        }))
+        self.assertEqual(revoked.status, 200)
+        self.assertFalse(
+            self.registry.mobile_nfc_allowed(self.person_id, "front_door")
+        )
+
+        with self.assertRaises(APP.web.HTTPBadRequest) as rejected:
+            await admin.set_mobile_nfc_permission(Request({
+                "person_id": self.person_id,
+                "tag_id": "door-tag",
+                "enabled": True,
+            }))
+        self.assertIn("Link the user", rejected.exception.text)
 
     async def test_mobile_nfc_event_id_and_short_repeats_are_deduplicated(self):
         self.registry.link_ha_person(self.person_id, "person.example_person")
@@ -459,6 +572,38 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
             self.registry.reader("front_keypad"), "3", "1234", "unknown_button"
         )
         self.assertEqual(self.service_calls, [])
+
+    async def test_shared_keypad_credential_executes_and_is_auditable(self):
+        self.registry.create_reader(
+            "shared_keypad", "Shared keypad", "keypad", "front_door", {
+                "transaction_entity": "sensor.shared_transaction",
+                "code_entity": "sensor.shared_code",
+                "action_entity": "sensor.shared_action",
+                "action_map": {"disarm": "open"},
+            }
+        )
+        credential_id = self.registry.add_shared_keypad_credential(
+            "Cleaner", "shared_keypad", "0123"
+        )
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+        admin.capture_sessions = {}
+
+        await admin.process_keypad_event(
+            self.registry.reader("shared_keypad"), "38", "0123", "disarm"
+        )
+
+        self.assertEqual(
+            self.service_calls[-1],
+            ("lock", "open", {"entity_id": "lock.front_door"}),
+        )
+        payload = self.events[-1][1]
+        self.assertEqual(payload["credential_type"], "shared_keypad")
+        self.assertEqual(payload["credential_id"], str(credential_id))
+        self.assertEqual(payload["credential_label"], "Cleaner")
+        self.assertIsNone(payload["person_id"])
+        self.assertTrue(payload["action_executed"])
 
     async def test_keypad_capture_accepts_unmapped_action(self):
         self.registry.create_reader(

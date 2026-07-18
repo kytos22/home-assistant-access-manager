@@ -30,6 +30,7 @@ The image identifies the exact display/controller used by the reference firmware
 - Explicit links to Home Assistant `person.*` entities.
 - Multiple fingerprint readers with independent physical ID spaces.
 - Per-person keypad credentials identified by `code/tag`, with physical capture or protected manual entry; the keypad itself does not know users.
+- Reader-scoped shared keypad codes or tags for visitors, contractors, or household-wide credentials, with a clear audit label and the same encrypted storage and privacy controls as personal credentials.
 - Debounced keypad packet assembly that preserves transient transaction, code/tag, and action events before Home Assistant clears their states.
 - Keyed HMAC storage for keypad credentials; plaintext secrets are never persisted.
 - Doors backed by an existing Home Assistant `lock`, `switch`, `button`, `input_button` or `cover` entity.
@@ -101,7 +102,11 @@ The administrator-only **Settings** tab provides **Privacy mode**, enabled by de
 
 The panel never writes decrypted values to application or activity logs. A value must exist briefly in the administrator's browser memory and page when it is displayed.
 
-The same tab includes the **ESPHome reader configurator**. Choose the reference display terminal or a reader-only profile, enter the ESPHome device name and hardware pins, then copy or download the generated YAML. It pins a known compatible reader release and refers only to keys in ESPHome's `secrets.yaml`; Access Manager never asks for or stores Wi-Fi, API-encryption, or OTA credentials.
+The same tab includes the **ESPHome reader configurator**. Choose the reference display terminal or a reader-only profile, then select whether this is a new device or an update of an existing one. The downloaded file is intentionally small: it is a release-pinned ESPHome package wrapper, and ESPHome retrieves and compiles the complete firmware during validation or installation.
+
+For a new device, import the downloaded file with **ESPHome Device Builder → New device → Import from file**, add the four named keys to ESPHome's `secrets.yaml`, validate, and install. The first installation normally uses USB; later updates can use OTA.
+
+For an existing device, create a backup first, enter its exact current ESPHome device name, and keep the existing `wifi_ssid`, `wifi_password`, `api_encryption_key`, and `ota_password` values unchanged. Validate before using OTA. Changing the device name or either authentication secret can make Home Assistant adoption or OTA updates require manual recovery. Access Manager only names these secret keys; it never requests, receives, embeds, or stores their values. See [Firmware delivery and credential safety](FIRMWARE_DELIVERY.md) for the evaluated delivery options and recovery notes.
 
 ### Updating
 
@@ -155,6 +160,8 @@ data:
   action_error: null
 ```
 
+For a shared keypad credential, `credential_type` is `shared_keypad`, `person_id` and `person_name` are `null`, and `credential_label` contains the administrator-defined audit label. The code or tag value is never included in the event.
+
 Example failure-notification automation:
 
 ```yaml
@@ -174,13 +181,13 @@ actions:
       message: "{{ trigger.event.data.action_error }}"
 ```
 
-Fingerprint readers use the door default unless their event requests `open`, `unlock` or `lock`. A keypad code or tag is enrolled once per keypad. The separate keypad action determines whether Access Manager requests `open`, `unlock`, `lock`, or ignores the attempt according to the current action mapping.
+Fingerprint readers use the door default unless their event requests `open`, `unlock` or `lock`. A personal or shared keypad code/tag is enrolled once per keypad. The separate keypad action determines whether Access Manager requests `open`, `unlock`, `lock`, or ignores the attempt according to the current action mapping.
 
 ### Dumb keypad model
 
-The keypad reports a transaction, a code/tag, and a semantic action such as `disarm` or `arm_all_zones`. It never stores or resolves an Access Manager user. Access Manager stores a keyed HMAC for the `reader + code/tag` combination and links that credential to a person. At authentication time the code/tag identifies the person, while the keypad reader's current action mapping determines the requested door action. Changing `disarm` from `open` to `lock`, for example, immediately changes the behavior of every credential on that keypad.
+The keypad reports a transaction, a code/tag, and a semantic action such as `disarm` or `arm_all_zones`. It never stores or resolves an Access Manager user. Access Manager stores a keyed HMAC for the `reader + code/tag` combination and links the credential either to a person or to a named shared purpose. At authentication time the code/tag identifies its owner, while the keypad reader's current action mapping determines the requested door action. Changing `disarm` from `open` to `lock`, for example, immediately changes the behavior of every credential on that keypad.
 
-Codes and tags can be captured from the physical keypad or entered manually from the user credential dialog. Values are treated as opaque strings, preserving leading zeroes in PINs and supporting tag values such as `+0A1B2C3`. Access Manager does not impose a four-digit PIN limit; the physical keypad and Zigbee/MQTT integration determine which PIN lengths they can emit.
+Personal and shared codes/tags can be captured from the physical keypad or entered manually. Use **Add shared code/tag** when the credential should carry an audit label instead of belonging to one person. Shared credentials are scoped to the selected keypad and therefore inherit that keypad's assigned door and current action mapping. Values are treated as opaque strings, preserving leading zeroes in PINs and supporting tag values such as `+0A1B2C3`. Access Manager does not impose a four-digit PIN limit; the physical keypad and Zigbee/MQTT integration determine which PIN lengths they can emit.
 
 Actions with no current mapping are ignored and logged. They never fall through to an arbitrary Home Assistant service.
 
@@ -241,11 +248,11 @@ For `source: display`, Access Manager accepts only `lock`. Door tests are restri
 
 ## Fingerprint reader firmware
 
-Fingerprint templates remain in the sensor. The **Settings** configurator generates a small release-pinned YAML for either the reference display terminal or a generic reader-only ESP32. The compatible firmware project is maintained separately:
+Fingerprint templates remain in the sensor. The **Settings** configurator generates a small release-pinned package wrapper for either the reference display terminal or a generic reader-only ESP32. ESPHome downloads and compiles the compatible firmware project, which is maintained separately:
 
 <https://github.com/kytos22/esphome-fingerprint-access-reader>
 
-The shared entity contract and setup sequence are documented in [INTEGRATION.md](INTEGRATION.md).
+The shared entity contract and setup sequence are documented in [INTEGRATION.md](INTEGRATION.md). Delivery choices, credential-preservation rules, and recovery guidance are documented in [FIRMWARE_DELIVERY.md](FIRMWARE_DELIVERY.md).
 
 Firmware 0.5.0 exposes ESPHome project metadata and a `Fingerprint reader firmware version` diagnostic sensor. Map that sensor in the reader editor to see the installed and recommended versions. Compatible display firmware also exposes optional `Access Manager door ID` and `Access Manager display event` text entities. Add both to enable panel feedback. Access Manager synchronizes the assigned door ID and sends only door-matching, credential-free display messages; readers without these entities continue to work without display feedback.
 
