@@ -61,6 +61,8 @@ LABELS = {
     "last_finger_id": ("Ultimo ID huella", "Último ID huella"),
     "last_confidence": ("Ultima confianza", "Última confianza"),
     "device_status": ("Estado conexion", "Estado conexión"),
+    "assigned_door": ("Access Manager door ID",),
+    "display_event": ("Access Manager display event",),
 }
 
 DOMAINS = {
@@ -77,6 +79,8 @@ DOMAINS = {
     "last_finger_id": "sensor",
     "last_confidence": "sensor",
     "device_status": "binary_sensor",
+    "assigned_door": "text",
+    "display_event": "text",
 }
 
 FINGER_LABELS = {
@@ -117,6 +121,9 @@ DENIED_ATTEMPT_THRESHOLDS = (1, 2, 3, 5, 10)
 DENIED_ATTEMPT_WINDOWS = (1, 2, 5, 10, 15, 30)
 KEYPAD_PACKET_SETTLE_SECONDS = 0.1
 KEYPAD_PACKET_MAX_SPAN_SECONDS = 2.0
+DOOR_COMMAND_CORRELATION_SECONDS = 10.0
+DISPLAY_EVENT_KINDS = {"door_opened", "credential_captured", "keypad_denied"}
+DISPLAY_OPENING_ACTIONS = {"open", "unlock", "turn_on", "press", "open_cover"}
 
 
 def now_iso():
@@ -153,7 +160,12 @@ class Registry:
                 event_type TEXT NOT NULL,
                 slot INTEGER,
                 confidence INTEGER,
-                detail TEXT
+                detail TEXT,
+                door_id TEXT,
+                entity_id TEXT,
+                source TEXT,
+                previous_state TEXT,
+                new_state TEXT
             );
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -184,6 +196,7 @@ class Registry:
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 entity_id TEXT,
+                door_sensor_entity TEXT NOT NULL DEFAULT '',
                 open_action TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
@@ -223,6 +236,26 @@ class Registry:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 UNIQUE(automation_type, door_id)
+            );
+            CREATE TABLE IF NOT EXISTS mobile_nfc_tags (
+                tag_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                door_id TEXT NOT NULL REFERENCES doors(id),
+                enabled INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS mobile_nfc_permissions (
+                person_id INTEGER NOT NULL REFERENCES people(id),
+                door_id TEXT NOT NULL REFERENCES doors(id),
+                enabled INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY(person_id, door_id)
+            );
+            CREATE TABLE IF NOT EXISTS mobile_nfc_event_ids (
+                event_id TEXT PRIMARY KEY,
+                occurred_at TEXT NOT NULL
             );
             """
         )
@@ -303,6 +336,42 @@ class Registry:
             self.connection.execute(
                 "ALTER TABLE doors ADD COLUMN open_action TEXT NOT NULL DEFAULT ''"
             )
+        if "door_sensor_entity" not in door_columns:
+            self.connection.execute(
+                "ALTER TABLE doors ADD COLUMN door_sensor_entity TEXT NOT NULL DEFAULT ''"
+            )
+            automation_rows = self.connection.execute(
+                """
+                SELECT door_id, config_json
+                FROM managed_automations
+                WHERE automation_type IN ('door_open', 'auto_lock')
+                ORDER BY CASE automation_type WHEN 'door_open' THEN 0 ELSE 1 END
+                """
+            ).fetchall()
+            migrated_doors = set()
+            for row in automation_rows:
+                if row["door_id"] in migrated_doors:
+                    continue
+                try:
+                    config = json.loads(row["config_json"] or "{}")
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                sensor_entity = str(config.get("door_sensor_entity", "")).strip()
+                if not sensor_entity:
+                    continue
+                self.connection.execute(
+                    "UPDATE doors SET door_sensor_entity = ? WHERE id = ?",
+                    (sensor_entity, row["door_id"]),
+                )
+                migrated_doors.add(row["door_id"])
+        event_columns = {
+            row[1] for row in self.connection.execute("PRAGMA table_info(events)").fetchall()
+        }
+        for column in (
+            "door_id", "entity_id", "source", "previous_state", "new_state"
+        ):
+            if column not in event_columns:
+                self.connection.execute(f"ALTER TABLE events ADD COLUMN {column} TEXT")
         people_columns = {
             row[1] for row in self.connection.execute("PRAGMA table_info(people)").fetchall()
         }
@@ -762,6 +831,121 @@ class Registry:
             doors.append(door)
         return doors
 
+    def mobile_nfc_tags(self):
+        rows = self.connection.execute(
+            "SELECT * FROM mobile_nfc_tags ORDER BY name COLLATE NOCASE, tag_id"
+        ).fetchall()
+        return [dict(row) | {"enabled": bool(row["enabled"])} for row in rows]
+
+    def mobile_nfc_tag(self, tag_id):
+        row = self.connection.execute(
+            "SELECT * FROM mobile_nfc_tags WHERE tag_id = ?", (str(tag_id),)
+        ).fetchone()
+        return (dict(row) | {"enabled": bool(row["enabled"])}) if row else None
+
+    def save_mobile_nfc_tag(self, tag_id, name, door_id, enabled=True):
+        tag_id = str(tag_id).strip()
+        name = str(name).strip()
+        if not tag_id or len(tag_id) > 128 or not name or len(name) > 80:
+            raise ValueError("Invalid Home Assistant tag")
+        if not any(door["id"] == door_id for door in self.doors()):
+            raise ValueError("Door not found")
+        timestamp = now_iso()
+        self.connection.execute(
+            """
+            INSERT INTO mobile_nfc_tags(tag_id, name, door_id, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(tag_id) DO UPDATE SET
+                name = excluded.name,
+                door_id = excluded.door_id,
+                enabled = excluded.enabled,
+                updated_at = excluded.updated_at
+            """,
+            (tag_id, name, door_id, int(bool(enabled)), timestamp, timestamp),
+        )
+        self.connection.commit()
+
+    def delete_mobile_nfc_tag(self, tag_id):
+        cursor = self.connection.execute(
+            "DELETE FROM mobile_nfc_tags WHERE tag_id = ?", (str(tag_id),)
+        )
+        self.connection.commit()
+        return cursor.rowcount > 0
+
+    def mobile_nfc_permissions(self):
+        rows = self.connection.execute(
+            "SELECT * FROM mobile_nfc_permissions WHERE enabled = 1"
+        ).fetchall()
+        return [dict(row) | {"enabled": True} for row in rows]
+
+    def mobile_nfc_allowed(self, person_id, door_id):
+        row = self.connection.execute(
+            """
+            SELECT enabled FROM mobile_nfc_permissions
+            WHERE person_id = ? AND door_id = ?
+            """,
+            (person_id, door_id),
+        ).fetchone()
+        return bool(row and row["enabled"])
+
+    def set_mobile_nfc_permission(self, person_id, door_id, enabled):
+        if not self.person(person_id):
+            raise ValueError("Person not found")
+        if not any(door["id"] == door_id for door in self.doors()):
+            raise ValueError("Door not found")
+        timestamp = now_iso()
+        self.connection.execute(
+            """
+            INSERT INTO mobile_nfc_permissions(
+                person_id, door_id, enabled, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(person_id, door_id) DO UPDATE SET
+                enabled = excluded.enabled,
+                updated_at = excluded.updated_at
+            """,
+            (person_id, door_id, int(bool(enabled)), timestamp, timestamp),
+        )
+        self.connection.commit()
+
+    def claim_mobile_nfc_event(self, event_id):
+        event_id = str(event_id or "").strip()
+        if not event_id:
+            return True
+        try:
+            with self.connection:
+                self.connection.execute(
+                    "INSERT INTO mobile_nfc_event_ids(event_id, occurred_at) VALUES (?, ?)",
+                    (event_id, now_iso()),
+                )
+                self.connection.execute(
+                    """
+                    DELETE FROM mobile_nfc_event_ids
+                    WHERE event_id NOT IN (
+                        SELECT event_id FROM mobile_nfc_event_ids
+                        ORDER BY occurred_at DESC LIMIT 1000
+                    )
+                    """
+                )
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def doors_for_activity_entity(self, entity_id):
+        rows = self.connection.execute(
+            """
+            SELECT * FROM doors
+            WHERE entity_id = ? OR door_sensor_entity = ?
+            ORDER BY name COLLATE NOCASE
+            """,
+            (entity_id, entity_id),
+        ).fetchall()
+        doors = []
+        for row in rows:
+            door = dict(row)
+            door["default_action"] = door["open_action"]
+            doors.append(door)
+        return doors
+
     def readers(self):
         readers = []
         rows = self.connection.execute(
@@ -780,28 +964,47 @@ class Registry:
     def reader(self, reader_id):
         return next((reader for reader in self.readers() if reader["id"] == reader_id), None)
 
-    def create_door(self, door_id, name, entity_id, open_action):
+    def create_door(
+        self, door_id, name, entity_id, open_action, door_sensor_entity=""
+    ):
         timestamp = now_iso()
         self.connection.execute(
             """
-            INSERT INTO doors(id, name, entity_id, open_action, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO doors(
+                id, name, entity_id, door_sensor_entity, open_action,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (door_id, name, entity_id, open_action, timestamp, timestamp),
+            (
+                door_id, name, entity_id, door_sensor_entity, open_action,
+                timestamp, timestamp,
+            ),
         )
         self.connection.commit()
 
-    def update_door(self, door_id, name, entity_id, open_action):
+    def update_door(
+        self, door_id, name, entity_id, open_action, door_sensor_entity=None
+    ):
         cursor = self.connection.execute(
             """
-            UPDATE doors SET name = ?, entity_id = ?, open_action = ?, updated_at = ?
+            UPDATE doors SET name = ?, entity_id = ?,
+                   door_sensor_entity = COALESCE(?, door_sensor_entity),
+                   open_action = ?, updated_at = ?
             WHERE id = ?
             """,
-            (name, entity_id, open_action, now_iso(), door_id),
+            (name, entity_id, door_sensor_entity, open_action, now_iso(), door_id),
         )
         self.connection.commit()
         if cursor.rowcount == 0:
             raise ValueError("Door not found")
+
+    def set_door_sensor(self, door_id, door_sensor_entity):
+        self.connection.execute(
+            "UPDATE doors SET door_sensor_entity = ?, updated_at = ? WHERE id = ?",
+            (door_sensor_entity, now_iso(), door_id),
+        )
+        self.connection.commit()
 
     def managed_automations(self):
         items = []
@@ -1068,10 +1271,22 @@ class Registry:
         self.connection.commit()
         return cursor.rowcount > 0
 
-    def add_event(self, event_type, slot=None, confidence=None, detail=None):
+    def add_event(
+        self, event_type, slot=None, confidence=None, detail=None, *, door_id=None,
+        entity_id=None, source=None, previous_state=None, new_state=None,
+    ):
         self.connection.execute(
-            "INSERT INTO events(occurred_at, event_type, slot, confidence, detail) VALUES (?, ?, ?, ?, ?)",
-            (now_iso(), event_type, slot, confidence, detail),
+            """
+            INSERT INTO events(
+                occurred_at, event_type, slot, confidence, detail, door_id,
+                entity_id, source, previous_state, new_state
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                now_iso(), event_type, slot, confidence, detail, door_id,
+                entity_id, source, previous_state, new_state,
+            ),
         )
         self.purge_events(commit=False)
         self.connection.commit()
@@ -1129,7 +1344,16 @@ class HomeAssistant:
         self.management_message = ""
         self.names_synced = False
         self.state_change_handler = None
+        self.tag_scan_handler = None
         self.people_api_ready = False
+        self.people_storage = []
+        self.people_storage_refreshed_at = 0.0
+        self.tags_api_ready = False
+        self.tags_storage = []
+        self.tags_storage_refreshed_at = None
+        self.tag_refresh_task = None
+        self.tag_scan_tasks = set()
+        self.recent_door_commands = {}
 
     async def start(self):
         if not TOKEN:
@@ -1142,18 +1366,35 @@ class HomeAssistant:
             await self.refresh_states()
             await self.replay_current_events()
             await self.sync_all_names()
+            await self.sync_all_reader_doors()
             try:
-                await self.websocket_command({"type": "person/list"})
+                await self.refresh_people_storage()
                 self.people_api_ready = True
                 LOGGER.info("Home Assistant People integration is available")
             except Exception as error:
                 self.people_api_ready = False
                 LOGGER.warning("Home Assistant People API is unavailable: %s", error)
+            try:
+                await self.refresh_tags_storage()
+                self.tags_api_ready = True
+                LOGGER.info("Home Assistant Tag registry is available")
+            except Exception as error:
+                self.tags_api_ready = False
+                LOGGER.warning("Home Assistant Tag registry is unavailable: %s", error)
         except Exception as error:
             self.connected = False
             LOGGER.warning("Home Assistant is not available yet: %s", error)
 
     async def close(self):
+        if self.tag_refresh_task:
+            self.tag_refresh_task.cancel()
+            await asyncio.gather(self.tag_refresh_task, return_exceptions=True)
+            self.tag_refresh_task = None
+        for task in self.tag_scan_tasks:
+            task.cancel()
+        if self.tag_scan_tasks:
+            await asyncio.gather(*self.tag_scan_tasks, return_exceptions=True)
+        self.tag_scan_tasks.clear()
         if self.session:
             await self.session.close()
 
@@ -1268,7 +1509,36 @@ class HomeAssistant:
                 f"Action {action or '(empty)'} is not supported by {entity_id}"
             )
         domain = entity_id.split(".", 1)[0]
-        await self.call_service(domain, action, {"entity_id": entity_id})
+        expected_states = {
+            "open": {"open", "unlocked"},
+            "unlock": {"open", "unlocked"},
+            "lock": {"locked"},
+        }.get(action, set())
+        if expected_states:
+            self.recent_door_commands[entity_id] = {
+                "expected_states": expected_states,
+                "created_at": asyncio.get_running_loop().time(),
+            }
+        try:
+            await self.call_service(domain, action, {"entity_id": entity_id})
+        except Exception:
+            self.recent_door_commands.pop(entity_id, None)
+            raise
+
+    def door_change_source(self, entity_id, new_state):
+        now = asyncio.get_running_loop().time()
+        expired = [
+            pending_entity
+            for pending_entity, command in self.recent_door_commands.items()
+            if now - command["created_at"] > DOOR_COMMAND_CORRELATION_SECONDS
+        ]
+        for pending_entity in expired:
+            self.recent_door_commands.pop(pending_entity, None)
+        command = self.recent_door_commands.get(entity_id)
+        if command and new_state in command["expected_states"]:
+            self.recent_door_commands.pop(entity_id, None)
+            return "access_manager"
+        return "external"
 
     async def emit_door_action_event(
         self, door, action, source, event_id, reader=None, local_only=False,
@@ -1314,6 +1584,11 @@ class HomeAssistant:
                 source, payload["door_id"], reader_id, payload["action"], error,
             )
         await self.fire_event("access_manager_door_action", payload)
+        if payload["action_executed"] and payload["action"] in DISPLAY_OPENING_ACTIONS:
+            await self.emit_display_event(
+                payload["door_id"], "door_opened", payload["event_id"],
+                reader["name"] if reader else door["name"],
+            )
         return payload
 
     async def fire_event(self, event_type, payload):
@@ -1353,6 +1628,120 @@ class HomeAssistant:
                 }
             )
         return sorted(people, key=lambda item: normalized(item["name"]))
+
+    def ha_tags(self):
+        tags = {}
+        for item in self.tags_storage:
+            tag_id = str(item.get("id", item.get("tag_id", ""))).strip()
+            if not tag_id:
+                continue
+            tags[tag_id] = {
+                "tag_id": tag_id,
+                "name": str(item.get("name") or tag_id),
+                "entity_id": None,
+            }
+        for entity_id, state in self.states.items():
+            if not entity_id.startswith("tag."):
+                continue
+            attributes = state.get("attributes", {})
+            tag_id = str(attributes.get("tag_id", "")).strip()
+            if not tag_id:
+                continue
+            tags.setdefault(tag_id, {
+                "tag_id": tag_id,
+                "name": attributes.get("friendly_name") or entity_id.split(".", 1)[1],
+                "entity_id": entity_id,
+            })
+        return sorted(tags.values(), key=lambda item: normalized(item["name"]))
+
+    async def refresh_tags_storage(self):
+        result = await self.websocket_command({"type": "tag/list"})
+        if not isinstance(result, list):
+            raise RuntimeError("Home Assistant returned an invalid Tag registry response")
+        self.tags_storage = [item for item in result if isinstance(item, dict)]
+        self.tags_storage_refreshed_at = asyncio.get_running_loop().time()
+        self.tags_api_ready = True
+        return self.tags_storage
+
+    async def refresh_tags_storage_safely(self):
+        try:
+            await self.refresh_tags_storage()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self.tags_api_ready = False
+            LOGGER.warning("Could not refresh Home Assistant Tags: %s", error)
+        finally:
+            self.tag_refresh_task = None
+
+    def schedule_tags_refresh(self):
+        now = asyncio.get_running_loop().time()
+        if (
+            self.tag_refresh_task
+            or (
+                self.tags_storage_refreshed_at is not None
+                and now - self.tags_storage_refreshed_at < 60
+            )
+        ):
+            return
+        # Set the timestamp before starting so a failing API cannot be retried
+        # on every panel poll.
+        self.tags_storage_refreshed_at = now
+        self.tag_refresh_task = asyncio.create_task(
+            self.refresh_tags_storage_safely()
+        )
+
+    async def refresh_people_storage(self):
+        result = await self.websocket_command({"type": "person/list"})
+        self.people_storage = result.get("storage", []) if isinstance(result, dict) else []
+        self.people_storage_refreshed_at = asyncio.get_running_loop().time()
+        return self.people_storage
+
+    async def access_person_for_user_id(self, user_id):
+        user_id = str(user_id or "").strip()
+        if not user_id:
+            return None
+        now = asyncio.get_running_loop().time()
+        item = next(
+            (candidate for candidate in self.people_storage if candidate.get("user_id") == user_id),
+            None,
+        )
+        refresh_after = 300 if item is not None else 60
+        if now - self.people_storage_refreshed_at >= refresh_after:
+            self.people_storage_refreshed_at = now
+            try:
+                await self.refresh_people_storage()
+            except Exception as error:
+                LOGGER.warning("Could not refresh Home Assistant People: %s", error)
+            item = next(
+                (candidate for candidate in self.people_storage if candidate.get("user_id") == user_id),
+                None,
+            )
+        if not item or not item.get("id"):
+            return None
+        entity_id = f"person.{item['id']}"
+        return next(
+            (
+                person for person in self.registry.people()
+                if person.get("ha_person_entity_id") == entity_id
+            ),
+            None,
+        )
+
+    async def dispatch_tag_scan(self, event):
+        if not self.tag_scan_handler:
+            return
+        try:
+            await self.tag_scan_handler(event)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            LOGGER.exception("Unexpected error while processing a mobile NFC scan")
+
+    def schedule_tag_scan(self, event):
+        task = asyncio.create_task(self.dispatch_tag_scan(event))
+        self.tag_scan_tasks.add(task)
+        task.add_done_callback(self.tag_scan_tasks.discard)
 
     def door_entities(self):
         result = []
@@ -1519,6 +1908,16 @@ class HomeAssistant:
                     door["id"], door.get("entity_id"), resolved_action, error,
                 )
         await self.fire_event("access_manager_credential", payload)
+        if payload["action_executed"] and resolved_action in DISPLAY_OPENING_ACTIONS:
+            await self.emit_display_event(
+                payload["door_id"], "door_opened", payload["event_id"],
+                payload["person_name"] or reader["name"],
+            )
+        elif not payload["authorized"] and credential_type == "keypad":
+            await self.emit_display_event(
+                payload["door_id"], "keypad_denied", payload["event_id"],
+                reader["name"],
+            )
         LOGGER.info(
             "Access event emitted: door=%s reader=%s person=%s action=%s executed=%s",
             payload["door_id"], reader_id, payload["person_name"],
@@ -1543,6 +1942,8 @@ class HomeAssistant:
                 "name_registry": "name_registry_entity",
                 "access_event": "access_event_entity",
                 "management_event": "management_event_entity",
+                "assigned_door": "assigned_door_entity",
+                "display_event": "display_event_entity",
                 "fingerprint_count": "fingerprint_count_entity",
                 "reader_capacity": "reader_capacity_entity",
                 "reader_status": "reader_status_entity",
@@ -1601,6 +2002,90 @@ class HomeAssistant:
             },
         )
 
+    @staticmethod
+    def clean_display_field(value, max_bytes=48):
+        text = (
+            str(value or "")
+            .replace("|", " ")
+            .replace("\n", " ")
+            .replace("\r", " ")
+            .replace("\t", " ")
+            .strip()
+        )
+        encoded = text.encode("utf-8")[:max_bytes]
+        while encoded:
+            try:
+                return encoded.decode("utf-8")
+            except UnicodeDecodeError:
+                encoded = encoded[:-1]
+        return ""
+
+    async def sync_reader_door(self, reader_id):
+        reader = self.registry.reader(reader_id)
+        if not reader or reader["reader_type"] != "fingerprint":
+            return False
+        entity_id = self.reader_entity(reader_id, "assigned_door", required=False)
+        if not entity_id or entity_id not in self.states:
+            return False
+        door_id = self.clean_display_field(reader.get("door_id"), max_bytes=64)
+        if str(self.states[entity_id].get("state", "")) == door_id:
+            return True
+        try:
+            await self.call_service(
+                entity_id.split(".", 1)[0], "set_value",
+                {"entity_id": entity_id, "value": door_id},
+            )
+            self.states[entity_id]["state"] = door_id
+            return True
+        except Exception as error:
+            LOGGER.warning(
+                "Could not synchronize door %s to display reader %s: %s",
+                door_id or "(none)", reader_id, error,
+            )
+            return False
+
+    async def sync_all_reader_doors(self):
+        for reader in self.registry.readers():
+            if reader["reader_type"] == "fingerprint":
+                await self.sync_reader_door(reader["id"])
+
+    async def emit_display_event(self, door_id, kind, event_id, detail=""):
+        if kind not in DISPLAY_EVENT_KINDS or not door_id:
+            return 0
+        clean_event_id = self.clean_display_field(event_id, max_bytes=48)
+        clean_door_id = self.clean_display_field(door_id, max_bytes=64)
+        clean_detail = self.clean_display_field(detail, max_bytes=48)
+        if not clean_event_id or not clean_door_id:
+            return 0
+        value = f"v1|{clean_event_id}|{clean_door_id}|{kind}|{clean_detail}"
+        delivered = 0
+        for reader in self.registry.readers():
+            if (
+                reader["reader_type"] != "fingerprint"
+                or not reader["enabled"]
+                or reader.get("door_id") != door_id
+            ):
+                continue
+            display_entity = self.reader_entity(
+                reader["id"], "display_event", required=False
+            )
+            if not display_entity or display_entity not in self.states:
+                continue
+            if not await self.sync_reader_door(reader["id"]):
+                continue
+            try:
+                await self.call_service(
+                    display_entity.split(".", 1)[0], "set_value",
+                    {"entity_id": display_entity, "value": value},
+                )
+                delivered += 1
+            except Exception as error:
+                LOGGER.warning(
+                    "Could not send display event %s to reader %s: %s",
+                    kind, reader["id"], error,
+                )
+        return delivered
+
     async def sync_all_names(self):
         if self.names_synced:
             return
@@ -1639,6 +2124,7 @@ class HomeAssistant:
                 await self.refresh_states()
                 await self.replay_current_events()
                 await self.sync_all_names()
+                await self.sync_all_reader_doors()
                 async with self.session.ws_connect(HA_WS, heartbeat=30) as socket:
                     message = await socket.receive_json()
                     if message.get("type") != "auth_required":
@@ -1648,6 +2134,7 @@ class HomeAssistant:
                     if message.get("type") != "auth_ok":
                         raise RuntimeError("Home Assistant rejected WebSocket authentication")
                     await socket.send_json({"id": 1, "type": "subscribe_events", "event_type": "state_changed"})
+                    await socket.send_json({"id": 2, "type": "subscribe_events", "event_type": "tag_scanned"})
                     self.connected = True
                     LOGGER.info("Connected to Home Assistant WebSocket")
                     async for message in socket:
@@ -1656,8 +2143,14 @@ class HomeAssistant:
                         payload = json.loads(message.data)
                         if payload.get("type") != "event":
                             continue
-                        data = payload.get("event", {}).get("data", {})
+                        event = payload.get("event", {})
+                        if payload.get("id") == 2 or event.get("event_type") == "tag_scanned":
+                            if self.tag_scan_handler:
+                                self.schedule_tag_scan(event)
+                            continue
+                        data = event.get("data", {})
                         entity_id = data.get("entity_id")
+                        old_state = data.get("old_state")
                         state = data.get("new_state")
                         if not entity_id or not state:
                             continue
@@ -1680,7 +2173,9 @@ class HomeAssistant:
                                     state.get("state", ""), reader["id"]
                                 )
                         if self.state_change_handler:
-                            asyncio.create_task(self.state_change_handler(entity_id, state))
+                            asyncio.create_task(
+                                self.state_change_handler(entity_id, state, old_state)
+                            )
             except asyncio.CancelledError:
                 raise
             except Exception as error:
@@ -1813,6 +2308,7 @@ class FingerprintAdmin:
         self.registry = Registry(DB_PATH)
         self.ha = HomeAssistant(self.registry)
         self.ha.state_change_handler = self.handle_state_change
+        self.ha.tag_scan_handler = self.handle_mobile_tag_scan
         self.websocket_task = None
         self.deletion_task = None
         self.deletion_lock = asyncio.Lock()
@@ -1821,6 +2317,98 @@ class FingerprintAdmin:
         self.last_keypad_actions = {}
         self.keypad_packet_tasks = {}
         self.keypad_packet_buffers = {}
+        self.recent_mobile_tag_scans = {}
+
+    async def handle_mobile_tag_scan(self, event):
+        data = event.get("data", {}) if isinstance(event, dict) else {}
+        context = event.get("context", {}) if isinstance(event, dict) else {}
+        tag_id = str(data.get("tag_id", "")).strip()
+        event_id = str(context.get("id", "")).strip()
+        user_id = str(context.get("user_id", "")).strip()
+        scanner_device_id = str(data.get("device_id", "")).strip()
+        if not tag_id:
+            return
+        mapping = self.registry.mobile_nfc_tag(tag_id)
+        if not mapping or not mapping.get("enabled"):
+            return
+        # Claim the authenticated Home Assistant event before any side effect.
+        if not self.registry.claim_mobile_nfc_event(event_id):
+            return
+        door = next(
+            (item for item in self.registry.doors() if item["id"] == mapping["door_id"]),
+            None,
+        )
+        person = await self.ha.access_person_for_user_id(user_id)
+        authorized = bool(
+            door and person and scanner_device_id
+            and self.registry.mobile_nfc_allowed(person["id"], mapping["door_id"])
+        )
+        source_id = event_id or f"{tag_id}:{now_iso()}"
+        payload = {
+            "event_id": f"mobile_nfc:{source_id}",
+            "door_id": mapping["door_id"],
+            "door_entity_id": door.get("entity_id") if door else None,
+            "reader_id": "home_assistant_mobile_app",
+            "reader_type": "mobile_nfc",
+            "person_id": person["id"] if person else None,
+            "person_name": person["name"] if person else None,
+            "ha_person_entity_id": person.get("ha_person_entity_id") if person else None,
+            "credential_type": "mobile_nfc",
+            "credential_id": tag_id,
+            "tag_name": mapping["name"],
+            "scanner_device_id": scanner_device_id or None,
+            "source": "home_assistant_mobile_app",
+            "authorized": authorized,
+            "requested_action": "default",
+            "action": door.get("default_action") if door else None,
+            "door_default_action": door.get("default_action") if door else None,
+            "door_open_action": door.get("default_action") if door else None,
+            "action_executed": False,
+            "action_error": None,
+        }
+        if authorized:
+            scan_key = (tag_id, user_id)
+            now = asyncio.get_running_loop().time()
+            previous = self.recent_mobile_tag_scans.get(scan_key)
+            self.recent_mobile_tag_scans = {
+                key: value for key, value in self.recent_mobile_tag_scans.items()
+                if now - value < 10
+            }
+            if previous is not None and now - previous < 5:
+                payload["authorized"] = False
+                payload["action_error"] = "Duplicate mobile NFC scan"
+            else:
+                self.recent_mobile_tag_scans[scan_key] = now
+                try:
+                    await self.ha.execute_door_action(door, payload["action"])
+                    payload["action_executed"] = True
+                except Exception as error:
+                    payload["action_error"] = str(error)[:240]
+        reason = (
+            "granted" if payload["action_executed"] else
+            "duplicate" if payload["action_error"] == "Duplicate mobile NFC scan" else
+            "unidentified_user" if not person else
+            "invalid_source" if not scanner_device_id else
+            "not_authorized" if not authorized else "action_failed"
+        )
+        payload["authorization_reason"] = reason
+        self.registry.add_event(
+            "mobile_nfc_granted" if payload["action_executed"] else "mobile_nfc_denied",
+            detail=f"{mapping['name']} · {person['name'] if person else 'Unknown user'} · {reason}",
+            door_id=mapping["door_id"],
+            entity_id=door.get("entity_id") if door else None,
+            source="home_assistant_mobile_app",
+        )
+        await self.ha.fire_event("access_manager_credential", payload)
+        if payload["action_executed"] and payload["action"] in DISPLAY_OPENING_ACTIONS:
+            await self.ha.emit_display_event(
+                mapping["door_id"], "door_opened", payload["event_id"], person["name"]
+            )
+        LOGGER.info(
+            "Mobile NFC event: door=%s person=%s authorized=%s executed=%s reason=%s",
+            mapping["door_id"], person["name"] if person else None,
+            payload["authorized"], payload["action_executed"], reason,
+        )
 
     async def startup(self, _app):
         await self.ha.start()
@@ -1871,7 +2459,8 @@ class FingerprintAdmin:
             for reader_id, session in self.keypad_learning_sessions.items()
         ]
 
-    async def handle_state_change(self, entity_id, state):
+    async def handle_state_change(self, entity_id, state, old_state=None):
+        self.record_door_activity(entity_id, state, old_state)
         for reader in self.registry.readers():
             if not reader["enabled"] or reader["reader_type"] != "keypad":
                 continue
@@ -1921,6 +2510,46 @@ class FingerprintAdmin:
                 previous.cancel()
             self.keypad_packet_tasks[reader["id"]] = asyncio.create_task(
                 self.consume_keypad_packet(reader["id"])
+            )
+
+    def record_door_activity(self, entity_id, state, old_state):
+        if not str(entity_id).startswith(("lock.", "binary_sensor.")):
+            return
+        doors = self.registry.doors_for_activity_entity(entity_id)
+        if not doors:
+            return
+        new_value = str((state or {}).get("state", "")).strip().lower()
+        old_value = str((old_state or {}).get("state", "")).strip().lower()
+        source = self.ha.door_change_source(entity_id, new_value)
+        if not old_value or old_value in {"unknown", "unavailable"}:
+            return
+        for door in doors:
+            event_type = None
+            if (
+                entity_id == door.get("entity_id")
+                and str(entity_id).startswith("lock.")
+                and new_value in {"open", "unlocked"}
+                and old_value not in {"open", "unlocked"}
+            ):
+                event_type = "door_lock_opened"
+            elif (
+                entity_id == door.get("door_sensor_entity")
+                and old_value == "off"
+                and new_value == "on"
+            ):
+                event_type = "door_physically_opened"
+            if not event_type:
+                continue
+            self.registry.add_event(
+                event_type,
+                detail=(
+                    f"{door['name']} · {source} · {old_value} → {new_value}"
+                ),
+                door_id=door["id"],
+                entity_id=entity_id,
+                source=source,
+                previous_state=old_value,
+                new_state=new_value,
             )
 
     def record_learned_keypad_action(self, reader, raw_action, learning):
@@ -2063,6 +2692,10 @@ class FingerprintAdmin:
                     "Keypad credential %d captured for person %d",
                     credential_id, capture["person_id"],
                 )
+                await self.ha.emit_display_event(
+                    reader.get("door_id"), "credential_captured",
+                    f"capture:{reader['id']}:{transaction}", capture["person_name"],
+                )
             except ValueError as error:
                 self.ha.management_message = str(error)
                 self.registry.add_event("keypad_capture_failed", detail=str(error))
@@ -2180,6 +2813,7 @@ class FingerprintAdmin:
                 "version": APP_VERSION,
                 "home_assistant": self.ha.connected,
                 "ha_people_api": self.ha.people_api_ready,
+                "ha_tags_api": self.ha.tags_api_ready,
             }
         )
         response.headers["Cache-Control"] = "no-store, max-age=0"
@@ -2187,6 +2821,7 @@ class FingerprintAdmin:
         return response
 
     async def state(self, _request):
+        self.ha.schedule_tags_refresh()
         reader = {}
         for key in (
             "fingerprint_count",
@@ -2284,7 +2919,11 @@ class FingerprintAdmin:
                 "people": self.registry.people(),
                 "ha_people": ha_people,
                 "ha_people_api_ready": self.ha.people_api_ready,
+                "ha_tags_api_ready": self.ha.tags_api_ready,
                 "doors": doors,
+                "ha_tags": self.ha.ha_tags(),
+                "mobile_nfc_tags": self.registry.mobile_nfc_tags(),
+                "mobile_nfc_permissions": self.registry.mobile_nfc_permissions(),
                 "door_entities": self.ha.door_entities(),
                 "door_sensors": self.ha.door_sensor_entities(),
                 "notification_entities": self.ha.notification_entities(),
@@ -2530,7 +3169,10 @@ class FingerprintAdmin:
         self.require_admin_request(request)
         payload = await request.json()
         try:
-            person_id = int(payload.get("person_id"))
+            raw_person_id = payload.get("person_id")
+            if isinstance(raw_person_id, bool):
+                raise ValueError("Invalid person")
+            person_id = int(raw_person_id)
         except (TypeError, ValueError):
             raise web.HTTPBadRequest(text="Invalid person")
         reader_id = str(payload.get("reader_id", ""))
@@ -2579,6 +3221,10 @@ class FingerprintAdmin:
         )
         self.ha.management_message = (
             f"Credential saved for {person['name']} on {reader['name']}"
+        )
+        await self.ha.emit_display_event(
+            reader.get("door_id"), "credential_captured",
+            f"manual:{reader['id']}:{credential_id}", person["name"],
         )
         return web.json_response({"ok": True, "credential_id": credential_id})
 
@@ -2657,11 +3303,15 @@ class FingerprintAdmin:
         default_action = str(
             payload.get("default_action", payload.get("open_action", ""))
         ).strip()
+        door_sensor_entity = str(payload.get("door_sensor_entity", "")).strip()
         self.validate_door(entity_id, default_action)
+        self.validate_door_sensor(door_sensor_entity)
         if not door_id or not name:
             raise web.HTTPBadRequest(text="Door ID and name are required")
         try:
-            self.registry.create_door(door_id, name, entity_id, default_action)
+            self.registry.create_door(
+                door_id, name, entity_id, default_action, door_sensor_entity
+            )
         except sqlite3.IntegrityError:
             raise web.HTTPConflict(text="A door with that ID already exists")
         return web.json_response({"ok": True, "door_id": door_id})
@@ -2679,6 +3329,12 @@ class FingerprintAdmin:
                 )
             )
 
+    def validate_door_sensor(self, door_sensor_entity):
+        if door_sensor_entity and not self.ha.is_door_sensor(door_sensor_entity):
+            raise web.HTTPBadRequest(
+                text="Select an available binary sensor with the door device class"
+            )
+
     async def update_door(self, request):
         self.require_admin_request(request)
         door_id = str(request.match_info["door_id"])
@@ -2688,11 +3344,19 @@ class FingerprintAdmin:
         default_action = str(
             payload.get("default_action", payload.get("open_action", ""))
         ).strip()
+        door_sensor_entity = (
+            str(payload.get("door_sensor_entity", "")).strip()
+            if "door_sensor_entity" in payload
+            else None
+        )
         if not name:
             raise web.HTTPBadRequest(text="Door name is required")
         self.validate_door(entity_id, default_action)
+        self.validate_door_sensor(door_sensor_entity)
         try:
-            self.registry.update_door(door_id, name, entity_id, default_action)
+            self.registry.update_door(
+                door_id, name, entity_id, default_action, door_sensor_entity
+            )
         except ValueError as error:
             raise web.HTTPNotFound(text=str(error))
         return web.json_response({"ok": True})
@@ -2715,6 +3379,67 @@ class FingerprintAdmin:
         status = 200 if result["action_executed"] else 502
         return web.json_response(result, status=status)
 
+    async def save_mobile_nfc_tag(self, request):
+        self.require_admin_request(request)
+        payload = await request.json()
+        tag_id = str(payload.get("tag_id", "")).strip()
+        known_tag = next(
+            (item for item in self.ha.ha_tags() if item["tag_id"] == tag_id), None
+        )
+        if not known_tag:
+            raise web.HTTPBadRequest(text="Select a tag registered in Home Assistant")
+        door_id = str(payload.get("door_id", "")).strip()
+        enabled = payload.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise web.HTTPBadRequest(text="Invalid enabled value")
+        try:
+            self.registry.save_mobile_nfc_tag(
+                tag_id, known_tag["name"], door_id, enabled
+            )
+        except ValueError as error:
+            raise web.HTTPBadRequest(text=str(error))
+        self.registry.add_event(
+            "mobile_nfc_tag_saved",
+            detail=f"{known_tag['name']} · {door_id}",
+            door_id=door_id,
+            source="access_manager",
+        )
+        return web.json_response({"ok": True, "tag_id": tag_id})
+
+    async def delete_mobile_nfc_tag(self, request):
+        self.require_admin_request(request)
+        tag_id = str(request.match_info["tag_id"])
+        if not self.registry.delete_mobile_nfc_tag(tag_id):
+            raise web.HTTPNotFound(text="Mobile NFC tag not found")
+        self.registry.add_event(
+            "mobile_nfc_tag_deleted", detail=tag_id, source="access_manager"
+        )
+        return web.json_response({"ok": True})
+
+    async def set_mobile_nfc_permission(self, request):
+        self.require_admin_request(request)
+        payload = await request.json()
+        try:
+            person_id = int(payload.get("person_id"))
+            door_id = str(payload.get("door_id", "")).strip()
+            enabled = payload.get("enabled")
+            if not isinstance(enabled, bool):
+                raise ValueError("Invalid enabled value")
+            self.registry.set_mobile_nfc_permission(person_id, door_id, enabled)
+        except (TypeError, ValueError) as error:
+            raise web.HTTPBadRequest(text=str(error))
+        person = self.registry.person(person_id)
+        self.registry.add_event(
+            "mobile_nfc_permission_changed",
+            detail=(
+                f"{person['name']} · {door_id} · "
+                f"{'enabled' if enabled else 'disabled'}"
+            ),
+            door_id=door_id,
+            source="access_manager",
+        )
+        return web.json_response({"ok": True})
+
     async def create_reader(self, request):
         self.require_admin_request(request)
         payload = await request.json()
@@ -2735,6 +3460,7 @@ class FingerprintAdmin:
             )
         except (ValueError, sqlite3.IntegrityError) as error:
             raise web.HTTPConflict(text=str(error))
+        await self.ha.sync_reader_door(reader_id)
         return web.json_response({"ok": True, "reader_id": reader_id})
 
     def validate_reader_config(self, reader_type, config):
@@ -2751,8 +3477,16 @@ class FingerprintAdmin:
             raise web.HTTPBadRequest(
                 text=f"Missing reader entities: {', '.join(missing)}"
             )
+        optional = (
+            ("assigned_door_entity", "display_event_entity")
+            if reader_type == "fingerprint"
+            else ()
+        )
+        configured = tuple(required) + tuple(
+            key for key in optional if str(config.get(key, "")).strip()
+        )
         unknown = [
-            config[key] for key in required
+            config[key] for key in configured
             if config.get(key) not in self.ha.states
         ]
         if unknown:
@@ -2772,6 +3506,13 @@ class FingerprintAdmin:
                 raise web.HTTPBadRequest(
                     text=f"Invalid keypad door actions: {', '.join(invalid_actions)}"
                 )
+        elif any(
+            config.get(key) and not str(config[key]).startswith("text.")
+            for key in optional
+        ):
+            raise web.HTTPBadRequest(
+                text="Display event and assigned door entities must use the text domain"
+            )
 
     async def update_reader(self, request):
         self.require_admin_request(request)
@@ -2793,6 +3534,7 @@ class FingerprintAdmin:
             )
         except ValueError as error:
             raise web.HTTPBadRequest(text=str(error))
+        await self.ha.sync_reader_door(reader_id)
         return web.json_response({"ok": True})
 
     @staticmethod
@@ -3136,7 +3878,7 @@ class FingerprintAdmin:
         config = self.build_auto_lock_config(
             door, config_id, delay_minutes, door_sensor_entity
         )
-        return await self.persist_managed_automation(
+        response = await self.persist_managed_automation(
             "auto_lock", door, config_id, enabled, config,
             {
                 "delay_minutes": delay_minutes,
@@ -3144,6 +3886,9 @@ class FingerprintAdmin:
             },
             f"{door['name']} · auto-lock · {delay_minutes} min",
         )
+        if door_sensor_entity:
+            self.registry.set_door_sensor(door["id"], door_sensor_entity)
+        return response
 
     async def save_door_open_automation(self, request):
         self.require_admin_request(request)
@@ -3168,7 +3913,7 @@ class FingerprintAdmin:
             door, config_id, delay_minutes, door_sensor_entity,
             notification_entity,
         )
-        return await self.persist_managed_automation(
+        response = await self.persist_managed_automation(
             "door_open", door, config_id, enabled, config,
             {
                 "delay_minutes": delay_minutes,
@@ -3177,6 +3922,8 @@ class FingerprintAdmin:
             },
             f"{door['name']} · door-open alert · {delay_minutes} min",
         )
+        self.registry.set_door_sensor(door["id"], door_sensor_entity)
+        return response
 
     async def save_denied_access_automation(self, request):
         self.require_admin_request(request)
@@ -3285,6 +4032,13 @@ class FingerprintAdmin:
         app.router.add_post("/api/doors", self.create_door)
         app.router.add_put("/api/doors/{door_id}", self.update_door)
         app.router.add_post("/api/doors/{door_id}/test", self.test_door_action)
+        app.router.add_put("/api/mobile-nfc/tags", self.save_mobile_nfc_tag)
+        app.router.add_delete(
+            "/api/mobile-nfc/tags/{tag_id}", self.delete_mobile_nfc_tag
+        )
+        app.router.add_put(
+            "/api/mobile-nfc/permissions", self.set_mobile_nfc_permission
+        )
         app.router.add_post("/api/readers", self.create_reader)
         app.router.add_put("/api/readers/{reader_id}", self.update_reader)
         app.router.add_put("/api/automations/auto-lock", self.save_auto_lock_automation)

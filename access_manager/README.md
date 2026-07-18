@@ -16,6 +16,9 @@ Access Manager is an administrator-only Home Assistant add-on for managing peopl
 - Provides English and Spanish interfaces.
 - Shows the installed app version in the header.
 - Creates guided native auto-lock, door-left-open, and denied-access rules with one rule of each type per door.
+- Assigns optional door contact sensors and records lock or physical-door openings even when they happen outside Access Manager.
+- Uses Home Assistant mobile-app NFC tags as fixed door identifiers with explicit person-to-door permissions.
+- Sends door-scoped opening, keypad-capture, and denied-code feedback to compatible ESPHome reader displays.
 - Exposes `warning`, `info`, and `debug` application log levels in the Home Assistant app configuration; routine HTTP request logging remains disabled.
 - Applies configurable, time-based log retention and a 10,000-row safety cap.
 
