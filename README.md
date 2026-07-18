@@ -33,11 +33,15 @@ The image identifies the exact display/controller used by the reference firmware
 - Debounced keypad packet assembly that preserves transient transaction, code/tag, and action events before Home Assistant clears their states.
 - Keyed HMAC storage for keypad credentials; plaintext secrets are never persisted.
 - Doors backed by an existing Home Assistant `lock`, `switch`, `button`, `input_button` or `cover` entity.
+- Optional per-door contact sensors for recording physical openings and reusing the same entity in managed automations.
 - Capability-aware direct door actions after successful authentication.
 - Per-door default action plus centrally managed keypad button mappings.
 - Capability-aware administrator door tests with an explicit confirmation step.
 - Two-tap local display lock requests from compatible readers; unauthenticated local open/unlock requests are rejected.
+- Door-scoped display feedback for successful opening actions, keypad credential capture, and denied keypad codes on compatible ESPHome readers.
 - Configurable log retention with a 10,000-row hard safety limit.
+- Structured activity records for lock openings and physical door openings, including the door, entity, state transition, and whether the lock command came from Access Manager or elsewhere.
+- Door-mounted NFC tags scanned by the Home Assistant mobile app, with explicit per-person and per-door authorization.
 - Native Home Assistant app log-level configuration while routine HTTP request logging remains disabled.
 - Guided native Home Assistant automations for auto-lock, door-left-open alerts, and denied-access alerts.
 - One automation of each type per door, with optional `notify.*` delivery or persistent Home Assistant notifications for alerts.
@@ -104,7 +108,7 @@ Create a Home Assistant backup before updating. Then open **Settings â†’ Apps â†
 Access Manager intentionally starts with an empty database.
 
 1. Add or link users in **Users & credentials**.
-2. Add a door in **Doors** and choose an existing Home Assistant entity plus its default authentication action.
+2. Add a door in **Doors** and choose an existing Home Assistant entity, its default authentication action, and optionally its contact sensor.
 3. Add fingerprint readers or keypads and assign each one to a door.
 4. Enroll or link credentials.
 5. Optionally add native auto-lock, door-left-open, or denied-access rules in **Automations**. Alerts can use a persistent Home Assistant notification or an available `notify.*` entity.
@@ -178,6 +182,14 @@ Actions with no current mapping are ignored and logged. They never fall through 
 
 The three Home Assistant entities may update a few milliseconds apart. Access Manager listens to all three, waits briefly for the packet to settle, and only marks a transaction as consumed after transaction, code/tag, and action are all present.
 
+## Mobile-app NFC door access
+
+Home Assistant tags can be assigned to a door from the **Doors** tab. The physical tag identifies only the door; it is not a personal credential. The authenticated `user_id` in Home Assistant's `tag_scanned` event is resolved to a linked Access Manager person.
+
+The selector reads the registered Home Assistant Tag list and refreshes it through a bounded background cache. Tag IDs do not need to be copied into Access Manager manually.
+
+Mobile NFC access is denied by default. Enable it explicitly for each person and door combination. A successful scan must include the Home Assistant scanner `device_id`, uses the door's normal default action, and emits the same `access_manager_credential` event flow as other credentials with `credential_type: mobile_nfc`. Unidentified users, missing or invalid scanner origins, missing permissions, action failures, and duplicate scans are rejected and recorded. Keypad-scanned personal NFC credentials remain a separate feature.
+
 ## Managed Home Assistant automations
 
 The **Automations** tab creates guided, ordinary Home Assistant automations. Select the type first, then the door and its settings. Access Manager allows one rule of each type per door:
@@ -186,9 +198,20 @@ The **Automations** tab creates guided, ordinary Home Assistant automations. Sel
 - **Door left open** requires a door contact sensor and sends an alert after the contact has remained open for the selected delay.
 - **Denied access** listens for Access Manager credential events for that door and sends an alert after the selected number of denied attempts occurs within the configured time window.
 
+The automation editor defaults to the contact sensor assigned to the door. Saving an older managed automation that already contains a contact sensor also associates that sensor with the door, preserving existing installations.
+
 Alert rules default to a persistent Home Assistant notification, which needs no additional setup. If Home Assistant exposes compatible `notify.*` entities, the editor also offers them as delivery targets.
 
 Access Manager records every automation it creates and gives it a dedicated `access_manager_*` configuration ID, an `[Access Manager]` alias, and an ownership description. Update and delete operations require the local record and those Home Assistant ownership markers to agree. The panel does not list, import, edit, or delete automations outside that scope.
+
+## Door activity records
+
+Access Manager listens to Home Assistant state changes for every configured door. The activity log records two distinct events:
+
+- **Door lock opened** when a configured `lock.*` changes from a closed state to `unlocked` or `open`.
+- **Door physically opened** when the door's contact sensor changes from `off` (closed) to `on` (open).
+
+Each record stores `door_id`, `entity_id`, `previous_state`, `new_state`, and `source`. Lock changes that follow a successful Access Manager service call within the correlation window use `source: access_manager`; other changes use `source: external`. Initial, unavailable, and unknown states are ignored so an app restart does not create false activity.
 
 ### Door action event
 
@@ -217,6 +240,8 @@ Fingerprint templates remain in the sensor. A compatible ESPHome example that st
 <https://github.com/kytos22/esphome-fingerprint-access-reader>
 
 The shared entity contract and setup sequence are documented in [INTEGRATION.md](INTEGRATION.md).
+
+Compatible firmware exposes optional `Access Manager door ID` and `Access Manager display event` text entities. Add both entities to the fingerprint-reader configuration to enable panel feedback. Access Manager synchronizes the assigned door ID and sends only door-matching, credential-free display messages; readers without these entities continue to work without display feedback.
 
 ## Data and backups
 

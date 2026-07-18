@@ -172,6 +172,16 @@
       .finger-summary { grid-template-columns: 1fr; }
       .settings-row { align-items: stretch; flex-direction: column; }
       .hand-stage { margin-inline: 10px; padding: 2px; }
+      .mobile-nfc-table { min-width: 0; }
+      .mobile-nfc-table thead { display: none; }
+      .mobile-nfc-table tbody, .mobile-nfc-table tr, .mobile-nfc-table td { display: block; width: 100%; }
+      .mobile-nfc-table tr { margin-top: 10px; padding: 12px; border: 1px solid rgba(61,83,105,.65); border-radius: 12px; background: rgba(8,15,22,.42); }
+      .mobile-nfc-table td { display: grid; grid-template-columns: minmax(92px,.45fr) minmax(0,1fr); gap: 10px; align-items: center; padding: 8px 0; border-bottom: 1px solid rgba(40,57,75,.55); overflow-wrap: anywhere; }
+      .mobile-nfc-table td:last-child { border-bottom: 0; }
+      .mobile-nfc-table td::before { content: attr(data-label); color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .07em; }
+      .mobile-nfc-table td.actions-cell { display: flex; justify-content: flex-end; padding-top: 11px; }
+      .mobile-nfc-table td.actions-cell::before, .mobile-nfc-table td.empty::before { display: none; }
+      .mobile-nfc-table td.empty { display: block; }
     }
   </style>
 </head>
@@ -286,6 +296,22 @@
       <div class="section-head"><h2 data-i18n="doors">Doors</h2><button id="add-door" class="secondary" data-i18n="add_door">Add door</button></div>
       <p class="hint" data-i18n="door_hint">Every door must use an existing Home Assistant lock, switch, button, input button or cover and a compatible open action.</p>
       <div id="doors-body"></div>
+    </section>
+    <section class="card infrastructure">
+      <div class="section-head"><h2 data-i18n="mobile_nfc_tags">Mobile NFC door tags</h2><button id="add-mobile-nfc-tag" class="secondary" data-i18n="add_mobile_nfc_tag">Add NFC tag</button></div>
+      <p class="hint" data-i18n="mobile_nfc_hint">The tag identifies the door. The authenticated Home Assistant app account identifies the person.</p>
+      <div class="table-wrap"><table class="mobile-nfc-table">
+        <thead><tr><th data-i18n="tag">Tag</th><th data-i18n="door">Door</th><th data-i18n="status">Status</th><th></th></tr></thead>
+        <tbody id="mobile-nfc-tags-body"></tbody>
+      </table></div>
+    </section>
+    <section class="card infrastructure">
+      <div class="section-head"><h2 data-i18n="mobile_nfc_permissions">Mobile NFC permissions</h2></div>
+      <p class="hint" data-i18n="mobile_nfc_permissions_hint">Access is denied by default. Enable each person and door combination explicitly.</p>
+      <div class="table-wrap"><table class="mobile-nfc-table">
+        <thead><tr><th data-i18n="user">User</th><th data-i18n="door">Door</th><th data-i18n="mobile_nfc_access">Mobile NFC access</th></tr></thead>
+        <tbody id="mobile-nfc-permissions-body"></tbody>
+      </table></div>
     </section>
   </section>
 
@@ -517,6 +543,7 @@
       physical_ids:"Physical fingerprint IDs", finger:"Finger", status:"Status", updated:"Updated", keypads:"Keypads", add_keypad:"Add keypad",
       zigbee_hint:"Zigbee keypads normally sleep. Their status shows whether they are configured in Home Assistant, not whether they are continuously online.",
       ha_entities:"Home Assistant entities", add_door:"Add door", door_hint:"An authorized credential directly runs the selected default action. Lock entities expose open only when the device reports that capability.",
+      mobile_nfc_tags:"Mobile NFC door tags", add_mobile_nfc_tag:"Add NFC tag", mobile_nfc_hint:"The tag identifies the door. The authenticated Home Assistant app account identifies the person.", mobile_nfc_permissions:"Mobile NFC permissions", mobile_nfc_permissions_hint:"Access is denied by default. Enable each person and door combination explicitly.", mobile_nfc_access:"Mobile NFC access", tag:"Tag", select_registered_tag:"Home Assistant tag", no_registered_tags:"No registered Home Assistant tags are available.", confirm_delete_mobile_nfc_tag:"Remove this mobile NFC door tag?", mobile_nfc_granted:"Mobile NFC access granted", mobile_nfc_denied:"Mobile NFC access denied", mobile_nfc_tag_saved:"Mobile NFC tag saved", mobile_nfc_tag_deleted:"Mobile NFC tag deleted", mobile_nfc_permission_changed:"Mobile NFC permission changed",
       add_automation:"Add automation", automation_hint:"These are native Home Assistant automations. Access Manager only updates or deletes automations that it created and still owns.",
       automation_type:"Automation type", auto_lock:"Auto-lock", auto_lock_delay:"Lock after", door_open_alert:"Door left open alert", door_open_delay:"Alert after", denied_access_alert:"Denied access alert", denied_attempt_threshold:"Notify after", denied_attempt_window:"Within", edit_automation:"Edit automation", no_automations:"No managed automations", no_automation_slots:"No compatible door is available for another automation of this type.",
       door_sensor:"Door contact sensor", no_door_sensor:"No sensor (lock after unlock)", door_sensor_hint:"Optional for auto-lock. Closing the contact starts the delay; the lock runs only if the door remains closed.", door_sensor_required_hint:"Required. The alert starts only when this contact remains open for the selected time.",
@@ -546,9 +573,9 @@
       prompt_code_entity:"Code/tag entity:", prompt_action_entity:"Action entity:", prompt_slot_entity:"Slot number entity:", prompt_enroll_entity:"Enroll button entity:",
       prompt_cancel_entity:"Cancel button entity:", prompt_delete_entity:"Delete button entity:", prompt_registry_entity:"Name registry text entity:",
       prompt_access_entity:"Access event entity:", prompt_management_entity:"Management event entity:", prompt_count_entity:"Fingerprint count entity (optional):",
-      prompt_capacity_entity:"Reader capacity entity (optional):", prompt_device_entity:"Device availability entity (optional):",
+      prompt_capacity_entity:"Reader capacity entity (optional):", prompt_device_entity:"Device availability entity (optional):", prompt_assigned_door_entity:"Access Manager door ID text entity (optional):", prompt_display_event_entity:"Access Manager display event text entity (optional):",
       prompt_key_open:"Raw keypad action for OPEN (optional):", prompt_key_unlock:"Raw keypad action for UNLOCK (optional):", prompt_key_lock:"Raw keypad action for LOCK (optional):",
-      choose_door_entity:"Select a Home Assistant entity for this door.", choose_action:"Select the default authentication action.", linked:"Linked", management_empty:"No recent management action.",
+      choose_door_entity:"Select a Home Assistant entity for this door.", choose_action:"Select the default authentication action.", linked:"Linked", unlinked:"Not linked", management_empty:"No recent management action.",
       access_granted:"Access recognized", scan_unmatched:"Fingerprint not recognized", scan_invalid:"Invalid scan", scan_misplaced:"Finger misplaced",
       enrollment_requested:"Enrollment started", enrollment_scan:"Enrollment scan", enrollment_done:"Enrollment completed", enroll_failed:"Enrollment failed",
       enroll_cancelled:"Enrollment cancelled", user_deleted:"Fingerprint deleted", delete_queued:"Deletion queued", delete_requested:"Deletion sent",
@@ -557,7 +584,7 @@
       keypad_credential_deleted:"Keypad credential deleted", keypad_capture_failed:"Keypad capture failed", keypad_denied:"Keypad credential denied",
       door_action_executed:"Door action executed", door_action_failed:"Door action failed", local_lock_succeeded:"Local lock succeeded", local_lock_failed:"Local lock failed",
       door_test_succeeded:"Door test succeeded", door_test_failed:"Door test failed", keypad_button_detected:"Keypad button detected", keypad_action_ignored:"Keypad button ignored",
-      automation_saved:"Automation saved", automation_deleted:"Automation deleted", privacy_mode_changed:"Privacy mode changed",
+      automation_saved:"Automation saved", automation_deleted:"Automation deleted", privacy_mode_changed:"Privacy mode changed", door_lock_opened:"Door lock opened", door_physically_opened:"Door physically opened",
       test_actions:"Test actions", edit_door:"Edit door", add_mapping:"Add mapping", detect_button:"Detect action", detecting_button:"Complete a keypad action · {seconds}s",
       raw_action:"Keypad action", mapped_action:"Door action", ignore:"Ignore", enabled:"Enabled", disabled:"Disabled", internal_id:"Internal ID", save_changes:"Save changes",
       confirm:"Confirm", important_warning:"Important warning", test_warning:"This sends a real command to {door}. Check the selected action before confirming.",
@@ -579,6 +606,7 @@
       physical_ids:"IDs físicos de huella", finger:"Dedo", status:"Estado", updated:"Actualización", keypads:"Keypads", add_keypad:"Añadir keypad",
       zigbee_hint:"Los keypads Zigbee suelen dormir. El estado indica si están configurados en Home Assistant, no si permanecen continuamente online.",
       ha_entities:"Entidades de Home Assistant", add_door:"Añadir puerta", door_hint:"Una credencial autorizada ejecuta directamente la acción predeterminada. En entidades lock, open solo aparece si el dispositivo declara esa capacidad.",
+      mobile_nfc_tags:"Tags NFC móviles de puerta", add_mobile_nfc_tag:"Añadir tag NFC", mobile_nfc_hint:"El tag identifica la puerta. La cuenta autenticada de la app de Home Assistant identifica a la persona.", mobile_nfc_permissions:"Permisos NFC móvil", mobile_nfc_permissions_hint:"El acceso está denegado por defecto. Habilita explícitamente cada combinación de persona y puerta.", mobile_nfc_access:"Acceso NFC móvil", tag:"Tag", select_registered_tag:"Tag de Home Assistant", no_registered_tags:"No hay tags registrados disponibles en Home Assistant.", confirm_delete_mobile_nfc_tag:"¿Quitar este tag NFC móvil de puerta?", mobile_nfc_granted:"Acceso NFC móvil autorizado", mobile_nfc_denied:"Acceso NFC móvil denegado", mobile_nfc_tag_saved:"Tag NFC móvil guardado", mobile_nfc_tag_deleted:"Tag NFC móvil eliminado", mobile_nfc_permission_changed:"Permiso NFC móvil modificado",
       add_automation:"Añadir automatización", automation_hint:"Son automatizaciones nativas de Home Assistant. Access Manager solo actualiza o borra las que ha creado y siguen siendo de su propiedad.",
       automation_type:"Tipo de automatización", auto_lock:"Cierre automático", auto_lock_delay:"Cerrar después de", door_open_alert:"Aviso de puerta abierta", door_open_delay:"Avisar después de", denied_access_alert:"Aviso de acceso denegado", denied_attempt_threshold:"Avisar tras", denied_attempt_window:"Dentro de", edit_automation:"Editar automatización", no_automations:"No hay automatizaciones gestionadas", no_automation_slots:"No hay una puerta compatible disponible para otra automatización de este tipo.",
       door_sensor:"Sensor de contacto de puerta", no_door_sensor:"Sin sensor (cerrar tras desbloquear)", door_sensor_hint:"Opcional para el cierre automático. Al cerrar el contacto empieza la espera; solo cerrará si la puerta sigue cerrada.", door_sensor_required_hint:"Obligatorio. El aviso solo se activa cuando este contacto permanece abierto durante el tiempo seleccionado.",
@@ -608,9 +636,9 @@
       prompt_code_entity:"Entidad de código/tag:", prompt_action_entity:"Entidad de tecla de acción:", prompt_slot_entity:"Entidad number del ID:", prompt_enroll_entity:"Entidad button de registro:",
       prompt_cancel_entity:"Entidad button de cancelación:", prompt_delete_entity:"Entidad button de borrado:", prompt_registry_entity:"Entidad text del registro de nombres:",
       prompt_access_entity:"Entidad del evento de acceso:", prompt_management_entity:"Entidad del evento de gestión:", prompt_count_entity:"Entidad del contador de huellas (opcional):",
-      prompt_capacity_entity:"Entidad de capacidad (opcional):", prompt_device_entity:"Entidad de disponibilidad del dispositivo (opcional):",
+      prompt_capacity_entity:"Entidad de capacidad (opcional):", prompt_device_entity:"Entidad de disponibilidad del dispositivo (opcional):", prompt_assigned_door_entity:"Entidad text del ID de puerta de Access Manager (opcional):", prompt_display_event_entity:"Entidad text de eventos de pantalla de Access Manager (opcional):",
       prompt_key_open:"Acción bruta del keypad para OPEN (opcional):", prompt_key_unlock:"Acción bruta del keypad para UNLOCK (opcional):", prompt_key_lock:"Acción bruta del keypad para LOCK (opcional):",
-      choose_door_entity:"Selecciona una entidad de Home Assistant para esta puerta.", choose_action:"Selecciona la acción predeterminada al autenticar.", linked:"Asociada", management_empty:"Sin acciones recientes de gestión.",
+      choose_door_entity:"Selecciona una entidad de Home Assistant para esta puerta.", choose_action:"Selecciona la acción predeterminada al autenticar.", linked:"Asociada", unlinked:"Sin asociar", management_empty:"Sin acciones recientes de gestión.",
       access_granted:"Acceso reconocido", scan_unmatched:"Huella no reconocida", scan_invalid:"Lectura inválida", scan_misplaced:"Dedo mal colocado",
       enrollment_requested:"Registro iniciado", enrollment_scan:"Lectura de registro", enrollment_done:"Registro completado", enroll_failed:"Registro fallido",
       enroll_cancelled:"Registro cancelado", user_deleted:"Huella borrada", delete_queued:"Borrado pendiente", delete_requested:"Borrado enviado",
@@ -619,7 +647,7 @@
       keypad_credential_deleted:"Credencial keypad borrada", keypad_capture_failed:"Captura keypad fallida", keypad_denied:"Credencial keypad denegada",
       door_action_executed:"Acción de puerta ejecutada", door_action_failed:"Acción de puerta fallida", local_lock_succeeded:"Bloqueo local completado", local_lock_failed:"Bloqueo local fallido",
       door_test_succeeded:"Prueba de puerta completada", door_test_failed:"Prueba de puerta fallida", keypad_button_detected:"Tecla de keypad detectada", keypad_action_ignored:"Tecla de keypad ignorada",
-      automation_saved:"Automatización guardada", automation_deleted:"Automatización borrada", privacy_mode_changed:"Modo de privacidad cambiado",
+      automation_saved:"Automatización guardada", automation_deleted:"Automatización borrada", privacy_mode_changed:"Modo de privacidad cambiado", door_lock_opened:"Cerradura de puerta abierta", door_physically_opened:"Puerta abierta físicamente",
       test_actions:"Probar acciones", edit_door:"Editar puerta", add_mapping:"Añadir asignación", detect_button:"Detectar acción", detecting_button:"Completa una acción en el keypad · {seconds}s",
       raw_action:"Acción del keypad", mapped_action:"Acción de puerta", ignore:"Ignorar", enabled:"Activado", disabled:"Desactivado", internal_id:"ID interno", save_changes:"Guardar cambios",
       confirm:"Confirmar", important_warning:"Aviso importante", test_warning:"Esto enviará una orden real a {door}. Comprueba la acción seleccionada antes de confirmar.",
@@ -775,12 +803,35 @@
   function renderDoors() {
     $("#doors-body").innerHTML = (data.doors || []).map(door => {
       const entity = (data.door_entities || []).find(item => item.entity_id === door.entity_id);
+      const sensor = (data.door_sensors || []).find(item => item.entity_id === door.door_sensor_entity);
       return `<article class="door-card" data-door="${esc(door.id)}">
         <div class="door-card-head"><div><h3>${esc(door.name)}</h3><span class="entity">${esc(door.id)}</span></div><span class="status">${esc(door.state || "—")}</span></div>
         <div class="door-card-grid"><div><span>${t("ha_entities")}</span><strong>${esc(entity?.name || door.entity_id)}</strong><span class="entity">${esc(door.entity_id)}</span></div><div><span>${t("default_action")}</span><strong>${esc(door.default_action || door.open_action)}</strong></div></div>
+        ${door.door_sensor_entity ? `<div class="door-card-grid"><div><span>${t("door_sensor")}</span><strong>${esc(sensor?.name || door.door_sensor_entity)}</strong><span class="entity">${esc(door.door_sensor_entity)}</span></div></div>` : ""}
         <div class="door-card-actions"><button class="secondary" onclick="openDoorEditor('${door.id}')">${t("edit")}</button><button class="danger" onclick="openDoorTest('${door.id}')">${t("test_actions")}</button></div>
       </article>`;
     }).join("");
+  }
+
+  function renderMobileNfc() {
+    const tags = data.mobile_nfc_tags || [];
+    $("#mobile-nfc-tags-body").innerHTML = tags.length ? tags.map(item => {
+      const door = (data.doors || []).find(entry => entry.id === item.door_id);
+      return `<tr><td data-label="${esc(t("tag"))}"><strong>${esc(item.name)}</strong><div class="entity">${esc(item.tag_id)}</div></td><td data-label="${esc(t("door"))}">${esc(door?.name || item.door_id)}</td><td data-label="${esc(t("status"))}"><span class="status ${item.enabled ? "" : "pending"}">${t(item.enabled ? "enabled" : "disabled")}</span></td><td class="actions-cell"><button class="secondary mobile-nfc-edit" data-tag-id="${esc(item.tag_id)}">${t("edit")}</button><button class="danger mobile-nfc-delete" data-tag-id="${esc(item.tag_id)}">${t("delete")}</button></td></tr>`;
+    }).join("") : `<tr><td colspan="4" class="empty">${t("no_records")}</td></tr>`;
+    const permissions = new Set((data.mobile_nfc_permissions || []).filter(item => item.enabled).map(item => `${item.person_id}:${item.door_id}`));
+    const rows = [];
+    for (const person of (data.people || [])) {
+      for (const door of (data.doors || [])) {
+        const linked = Boolean(person.ha_person_entity_id);
+        const key = `${person.id}:${door.id}`;
+        rows.push(`<tr><td data-label="${esc(t("user"))}"><strong>${esc(person.name)}</strong><div class="entity">${esc(person.ha_person_entity_id || t("unlinked"))}</div></td><td data-label="${esc(t("door"))}">${esc(door.name)}</td><td data-label="${esc(t("mobile_nfc_access"))}"><label><input type="checkbox" ${permissions.has(key) ? "checked" : ""} ${linked ? "" : "disabled"} onchange="setMobileNfcPermission(${person.id},'${esc(door.id)}',this.checked)"> ${t("enabled")}</label></td></tr>`);
+      }
+    }
+    $("#mobile-nfc-permissions-body").innerHTML = rows.length ? rows.join("") : `<tr><td colspan="3" class="empty">${t("no_records")}</td></tr>`;
+    document.querySelectorAll(".mobile-nfc-delete").forEach(button => button.addEventListener("click", () => deleteMobileNfcTag(button.dataset.tagId)));
+    document.querySelectorAll(".mobile-nfc-edit").forEach(button => button.addEventListener("click", () => openMobileNfcTagEditor(button.dataset.tagId)));
+    $("#add-mobile-nfc-tag").disabled = !(data.ha_tags || []).length || !(data.doors || []).length;
   }
 
   function renderAutomations() {
@@ -845,7 +896,7 @@
     $("#access-reader-count").textContent = data.access_readers?.length ?? 0; $("#door-count").textContent = data.doors?.length ?? 0;
     $("#people-list").innerHTML = (data.people || []).map(person => `<option value="${esc(person.name)}"></option>`).join("");
     $("#management").textContent = data.management_message || t("management_empty");
-    renderPeople(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderAutomations(); renderSettings(); renderLogs(); renderCapture(); renderKeypadLearning();
+    renderPeople(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderMobileNfc(); renderAutomations(); renderSettings(); renderLogs(); renderCapture(); renderKeypadLearning();
   }
   function refresh() {
     if (refreshPromise) return refreshPromise;
@@ -939,9 +990,11 @@
     const selectedEntity=door?.entity_id||(data.door_entities?.[0]?.entity_id||"");
     const entities=(data.door_entities||[]).map(item=>({value:item.entity_id,label:`${item.name} · ${item.entity_id}`}));
     const actions=(data.door_entities||[]).find(item=>item.entity_id===selectedEntity)?.actions||[];
-    const html=`<div class="form-grid">${inputField(t("name"),"name",door?.name||"")}${inputField(t("internal_id"),"id",door?.id||"",true,door?"readonly":"")}${selectField(t("ha_entities"),"entity_id",entities,selectedEntity,true)}${selectField(t("default_action"),"default_action",actions.map(action=>({value:action,label:action})),door?.default_action||actions[0]||"",true)}</div>`;
+    const sensors=doorSensorSelectItems();
+    if(door?.door_sensor_entity&&!sensors.some(sensor=>sensor.value===door.door_sensor_entity))sensors.push({value:door.door_sensor_entity,label:door.door_sensor_entity});
+    const html=`<div class="form-grid">${inputField(t("name"),"name",door?.name||"")}${inputField(t("internal_id"),"id",door?.id||"",true,door?"readonly":"")}${selectField(t("ha_entities"),"entity_id",entities,selectedEntity,true)}${selectField(t("default_action"),"default_action",actions.map(action=>({value:action,label:action})),door?.default_action||actions[0]||"",true)}${selectField(t("door_sensor"),"door_sensor_entity",sensors,door?.door_sensor_entity||"",true)}</div>`;
     openEditor({title:t(door?"edit_door":"add_door"),subtitle:door?.id||"",html,onSubmit:async form=>{
-      const payload={id:String(form.get("id")||"").trim(),name:String(form.get("name")||"").trim(),entity_id:String(form.get("entity_id")||""),default_action:String(form.get("default_action")||"")};
+      const payload={id:String(form.get("id")||"").trim(),name:String(form.get("name")||"").trim(),entity_id:String(form.get("entity_id")||""),default_action:String(form.get("default_action")||""),door_sensor_entity:String(form.get("door_sensor_entity")||"")};
       const ok=await mutate(door?`doors/${door.id}`:"doors",door?"PUT":"POST",payload,{inline:true}); if(ok)await closeEditor();
     }});
     const entitySelect=$("#editor-form [name=entity_id]"), actionSelect=$("#editor-form [name=default_action]");
@@ -959,31 +1012,48 @@
     const update=()=>{const dangerous=select.value!=="lock";warning.textContent=t("test_warning",{door:door.name});warning.className=`warning-box wide${dangerous?" danger":""}`;save.className=dangerous?"danger":"";save.textContent=t("confirm_action",{action:select.value.toUpperCase()});}; select.addEventListener("change",update);update();
   }
 
+  function openMobileNfcTagEditor(tagId=null) {
+    const current = tagId ? (data.mobile_nfc_tags || []).find(item => item.tag_id === tagId) : null;
+    const used = new Set((data.mobile_nfc_tags || []).map(item => item.tag_id));
+    const tags = (data.ha_tags || []).filter(item => item.tag_id === tagId || !used.has(item.tag_id));
+    if (!tags.length) { showError(t("no_registered_tags")); return; }
+    const tagItems = tags.map(item => ({value:item.tag_id,label:`${item.name} · ${item.tag_id}`}));
+    const doorItems = (data.doors || []).map(item => ({value:item.id,label:`${item.name} · ${item.id}`}));
+    const html = `<div class="form-grid">${selectField(t("select_registered_tag"),"tag_id",tagItems,current?.tag_id||tags[0].tag_id,true)}${selectField(t("door"),"door_id",doorItems,current?.door_id||doorItems[0]?.value||"",true)}${selectField(t("status"),"enabled",[{value:"true",label:t("enabled")},{value:"false",label:t("disabled")}],String(current?.enabled??true),true)}<div class="form-section"><p class="muted">${t("mobile_nfc_permissions_hint")}</p></div></div>`;
+    openEditor({title:t("add_mobile_nfc_tag"),html,onSubmit:async form=>{
+      const payload={tag_id:String(form.get("tag_id")||""),door_id:String(form.get("door_id")||""),enabled:String(form.get("enabled"))==="true"};
+      if(await mutate("mobile-nfc/tags","PUT",payload,{inline:true}))await closeEditor();
+    }});
+  }
+
   function openAutomationEditor(id=null) {
     const item=id?(data.managed_automations||[]).find(entry=>entry.id===id):null;
     const availableTypes=item?[item.automation_type]:automationTypes.filter(type=>automationEligibleDoors(type).length);
     if(!availableTypes.length){showError(t("no_automation_slots"));return;}
     let selectedType=item?.automation_type||availableTypes[0];
+    let selectedDoorId=item?.door_id||"";
     const optionLabel=value=>Number(value)===60?t("one_hour"):t("minutes",{count:value});
     const renderFields=()=>{
       const doors=item
         ? (data.doors||[]).filter(door=>door.id===item.door_id)
         : automationEligibleDoors(selectedType);
       if(!doors.length){showError(t("no_automation_slots"));return;}
-      const selectedDoor=item?.door_id||doors[0].id;
+      const selectedDoor=doors.some(door=>door.id===selectedDoorId)?selectedDoorId:doors[0].id;
+      selectedDoorId=selectedDoor;
+      const doorSensor=String(doors.find(door=>door.id===selectedDoor)?.door_sensor_entity||"");
       const typeItems=availableTypes.map(type=>({value:type,label:automationTypeLabel(type)}));
       const doorItems=doors.map(door=>({value:door.id,label:`${door.name} · ${door.entity_id}`}));
       const enabled=String(item?.enabled??true);
       let specific="";
       if(selectedType==="auto_lock"){
         const delays=(data.auto_lock_delays||[5,10,15,20,30,60]).map(value=>({value:String(value),label:optionLabel(value)}));
-        const selectedSensor=String(item?.config?.door_sensor_entity||"");
+        const selectedSensor=String(item?.config?.door_sensor_entity||doorSensor);
         const sensors=doorSensorSelectItems();
         if(selectedSensor&&!sensors.some(sensor=>sensor.value===selectedSensor))sensors.push({value:selectedSensor,label:selectedSensor});
         specific=`${selectField(t("auto_lock_delay"),"delay_minutes",delays,String(item?.config?.delay_minutes||10),true)}${selectField(t("door_sensor"),"door_sensor_entity",sensors,selectedSensor,true)}<div class="form-section"><p class="muted">${t("door_sensor_hint")}</p></div>`;
       }else if(selectedType==="door_open"){
         const delays=(data.door_open_delays||[1,2,5,10,15,20,30,60]).map(value=>({value:String(value),label:optionLabel(value)}));
-        const selectedSensor=String(item?.config?.door_sensor_entity||(data.door_sensors?.[0]?.entity_id||""));
+        const selectedSensor=String(item?.config?.door_sensor_entity||doorSensor||(data.door_sensors?.[0]?.entity_id||""));
         const sensors=doorSensorSelectItems().slice(1);
         if(selectedSensor&&!sensors.some(sensor=>sensor.value===selectedSensor))sensors.push({value:selectedSensor,label:selectedSensor});
         const selectedNotification=String(item?.config?.notification_entity||"");
@@ -1000,7 +1070,9 @@
       }
       $("#editor-fields").innerHTML=`<div class="form-grid">${selectField(t("automation_type"),"automation_type",typeItems,selectedType,true)}${selectField(t("door"),"door_id",doorItems,selectedDoor,true)}${specific}${selectField(t("status"),"enabled",[{value:"true",label:t("enabled")},{value:"false",label:t("disabled")}],enabled,true)}<div class="form-section"><p class="muted">${t("automation_hint")}</p></div></div>`;
       const typeSelect=$("#editor-form [name=automation_type]");
-      if(!item)typeSelect.addEventListener("change",()=>{selectedType=typeSelect.value;renderFields();});
+      const doorSelect=$("#editor-form [name=door_id]");
+      if(!item)typeSelect.addEventListener("change",()=>{selectedType=typeSelect.value;selectedDoorId="";renderFields();});
+      doorSelect.addEventListener("change",()=>{selectedDoorId=doorSelect.value;renderFields();});
     };
     openEditor({title:t(item?"edit_automation":"add_automation"),subtitle:item?.ha_entity_id||t("automation_native"),html:"",onSubmit:async form=>{
       const type=String(form.get("automation_type")||selectedType);
@@ -1025,7 +1097,7 @@
     const config={...(reader?.config||{})}, prefix=normalize(reader?.name||type).replace(/[^a-z0-9]+/g,"_");
     const common=`${inputField(t("name"),"name",reader?.name||"")}${inputField(t("internal_id"),"id",reader?.id||"",true,reader?"readonly":"")}${selectField(t("door"),"door_id",doorSelectItems(),reader?.door_id||data.doors?.[0]?.id||"",true)}${selectField(t("enabled"),"enabled",[{value:"true",label:t("enabled")},{value:"false",label:t("disabled")}],String(reader?.enabled??true),true)}`;
     const keypadFields=`<div class="form-section"><h3>${t("entity_settings")}</h3></div>${inputField(t("prompt_transaction"),"transaction_entity",config.transaction_entity||`sensor.${prefix}_action_transaction`)}${inputField(t("prompt_code_entity"),"code_entity",config.code_entity||`sensor.${prefix}_action_code`)}${inputField(t("prompt_action_entity"),"action_entity",config.action_entity||`sensor.${prefix}_action`)}<div class="form-section"><h3>${t("action_map")}</h3><p class="muted">${t("capture_intro")}</p><div id="keymap-list" class="keymap-list">${Object.entries(config.action_map||{disarm:"open",arm_all_zones:"lock"}).map(([raw,action])=>keymapRow(raw,action)).join("")}</div><div class="actions"><button type="button" class="secondary" onclick="addKeymapRow()">${t("add_mapping")}</button><button type="button" class="secondary" ${reader?`onclick="startKeypadLearning('${reader.id}')"`:"disabled"}>${t("detect_button")}</button></div><div id="keypad-learning-status" class="learning-status"></div></div>`;
-    const fpDefinitions=[["slot_entity","prompt_slot_entity",true],["enroll_entity","prompt_enroll_entity",true],["cancel_entity","prompt_cancel_entity",true],["delete_entity","prompt_delete_entity",true],["name_registry_entity","prompt_registry_entity",true],["access_event_entity","prompt_access_entity",true],["management_event_entity","prompt_management_entity",true],["fingerprint_count_entity","prompt_count_entity",false],["reader_capacity_entity","prompt_capacity_entity",false],["device_status_entity","prompt_device_entity",false]];
+    const fpDefinitions=[["slot_entity","prompt_slot_entity",true],["enroll_entity","prompt_enroll_entity",true],["cancel_entity","prompt_cancel_entity",true],["delete_entity","prompt_delete_entity",true],["name_registry_entity","prompt_registry_entity",true],["access_event_entity","prompt_access_entity",true],["management_event_entity","prompt_management_entity",true],["fingerprint_count_entity","prompt_count_entity",false],["reader_capacity_entity","prompt_capacity_entity",false],["device_status_entity","prompt_device_entity",false],["assigned_door_entity","prompt_assigned_door_entity",false],["display_event_entity","prompt_display_event_entity",false]];
     const fpFields=config.legacy_autodiscovery?`<div class="form-section"><p class="muted">Legacy entity discovery is active for this reader.</p></div>`:`<div class="form-section"><h3>${t("entity_settings")}</h3></div>${fpDefinitions.map(([key,label,required])=>inputField(t(label),key,config[key]||"",required)).join("")}`;
     openEditor({title:t(type==="keypad"?"edit_keypad":"edit_fingerprint_reader"),subtitle:reader?.id||"",html:`<div class="form-grid">${common}${type==="keypad"?keypadFields:fpFields}</div>`,onSubmit:async form=>{
       const payload={id:String(form.get("id")||"").trim(),name:String(form.get("name")||"").trim(),reader_type:type,door_id:String(form.get("door_id")||""),enabled:String(form.get("enabled"))==="true",config:{}};
@@ -1047,6 +1119,10 @@
   window.assignFinger = (readerId,slot) => { selectedReader=readerId; $("#fingerprint-reader").value=readerId; const user=data.users.find(item=>item.reader_id===readerId&&Number(item.slot)===Number(slot)); if(user) openFingerModal("assign",user); };
   window.deleteFingerprint = (readerId,slot) => openConfirm({title:t("delete"),message:t("confirm_delete_fingerprint",{id:slot,reader:readerName(readerId)}),onConfirm:async()=>{if(await mutate(`users/${slot}?reader_id=${encodeURIComponent(readerId)}`,"DELETE"))closeConfirm();}});
   window.openDoorEditor=openDoorEditor; window.openDoorTest=openDoorTest;
+  window.deleteMobileNfcTag = tagId => openConfirm({title:t("delete"),message:t("confirm_delete_mobile_nfc_tag"),onConfirm:async()=>{if(await mutate(`mobile-nfc/tags/${encodeURIComponent(tagId)}`,"DELETE"))closeConfirm();}});
+  window.setMobileNfcPermission = async (personId,doorId,enabled) => {
+    if(!await mutate("mobile-nfc/permissions","PUT",{person_id:personId,door_id:doorId,enabled}))renderMobileNfc();
+  };
   window.editAutomation = id => openAutomationEditor(id);
   window.deleteAutomation = id => openConfirm({title:t("delete"),message:t("confirm_delete_automation"),onConfirm:async()=>{if(await mutate(`automations/${id}`,"DELETE"))closeConfirm();}});
   window.editReader = id => openReaderEditor(id);
@@ -1068,6 +1144,7 @@
   ["#confirm-close","#confirm-cancel"].forEach(id=>$(id).addEventListener("click",closeConfirm)); $("#confirm-modal").addEventListener("click",event=>event.target===$("#confirm-modal")&&closeConfirm()); $("#confirm-action").addEventListener("click",async()=>{if(confirmSubmit&&!busy)await confirmSubmit();});
   $("#add-person").addEventListener("click",()=>openPersonEditor());
   $("#add-door").addEventListener("click",()=>openDoorEditor());
+  $("#add-mobile-nfc-tag").addEventListener("click",()=>openMobileNfcTagEditor());
   $("#add-automation").addEventListener("click",()=>openAutomationEditor());
   $("#add-keypad").addEventListener("click",()=>openReaderEditor(null,"keypad"));
   $("#add-fingerprint-reader").addEventListener("click",()=>openReaderEditor(null,"fingerprint"));

@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import inspect
 import re
@@ -151,6 +152,152 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["action"], "open")
         self.assertEqual(self.events[0][0], "access_manager_credential")
 
+    async def test_mobile_nfc_requires_linked_person_and_explicit_door_permission(self):
+        self.registry.link_ha_person(self.person_id, "person.example_person")
+        self.registry.save_mobile_nfc_tag(
+            "door-tag", "Front door tag", "front_door", True
+        )
+        self.ha.people_storage = [{
+            "id": "example_person", "user_id": "ha-user-1"
+        }]
+        self.ha.people_storage_refreshed_at = asyncio.get_running_loop().time()
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+        admin.recent_mobile_tag_scans = {}
+        denied_event = {
+            "data": {"tag_id": "door-tag", "device_id": "phone-device"},
+            "context": {"id": "scan-1", "user_id": "ha-user-1"},
+        }
+        await admin.handle_mobile_tag_scan(denied_event)
+        self.assertEqual(self.service_calls, [])
+        self.assertFalse(self.events[-1][1]["authorized"])
+        self.assertEqual(self.events[-1][1]["credential_type"], "mobile_nfc")
+
+        await admin.handle_mobile_tag_scan({
+            "data": {"tag_id": "door-tag", "device_id": "phone-device"},
+            "context": {"id": "scan-unknown", "user_id": "unknown-user"},
+        })
+        self.assertIsNone(self.events[-1][1]["person_id"])
+        self.assertEqual(self.events[-1][1]["scanner_device_id"], "phone-device")
+        self.assertEqual(self.service_calls, [])
+
+        self.registry.set_mobile_nfc_permission(
+            self.person_id, "front_door", True
+        )
+        granted_event = {
+            "data": {"tag_id": "door-tag", "device_id": "phone-device"},
+            "context": {"id": "scan-2", "user_id": "ha-user-1"},
+        }
+        await admin.handle_mobile_tag_scan(granted_event)
+        self.assertEqual(
+            self.service_calls[-1],
+            ("lock", "open", {"entity_id": "lock.front_door"}),
+        )
+        self.assertTrue(self.events[-1][1]["action_executed"])
+        self.assertEqual(self.events[-1][1]["door_id"], "front_door")
+
+    async def test_mobile_nfc_event_id_and_short_repeats_are_deduplicated(self):
+        self.registry.link_ha_person(self.person_id, "person.example_person")
+        self.registry.save_mobile_nfc_tag(
+            "door-tag", "Front door tag", "front_door", True
+        )
+        self.registry.set_mobile_nfc_permission(self.person_id, "front_door", True)
+        self.ha.people_storage = [{
+            "id": "example_person", "user_id": "ha-user-1"
+        }]
+        self.ha.people_storage_refreshed_at = asyncio.get_running_loop().time()
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+        admin.recent_mobile_tag_scans = {}
+        event = {
+            "data": {"tag_id": "door-tag", "device_id": "phone-device"},
+            "context": {"id": "scan-1", "user_id": "ha-user-1"},
+        }
+        await admin.handle_mobile_tag_scan(event)
+        await admin.handle_mobile_tag_scan(event)
+        self.assertEqual(len(self.service_calls), 1)
+        await admin.handle_mobile_tag_scan({
+            "data": {"tag_id": "door-tag", "device_id": "phone-device"},
+            "context": {"id": "scan-2", "user_id": "ha-user-1"},
+        })
+        self.assertEqual(len(self.service_calls), 1)
+        self.assertEqual(self.events[-1][1]["action_error"], "Duplicate mobile NFC scan")
+        await admin.handle_mobile_tag_scan({
+            "data": {"tag_id": "door-tag"},
+            "context": {"id": "scan-3", "user_id": "ha-user-1"},
+        })
+        self.assertEqual(len(self.service_calls), 1)
+        self.assertFalse(self.events[-1][1]["authorized"])
+        self.assertIsNone(self.events[-1][1]["scanner_device_id"])
+        self.assertEqual(self.events[-1][1]["authorization_reason"], "invalid_source")
+
+    async def test_mobile_nfc_user_mapping_is_refreshed_when_stale(self):
+        self.registry.link_ha_person(self.person_id, "person.example_person")
+        replacement_id = self.registry.create_person("Replacement Person")
+        self.registry.link_ha_person(replacement_id, "person.replacement_person")
+        self.ha.people_storage = [{
+            "id": "example_person", "user_id": "ha-user-1"
+        }]
+        self.ha.people_storage_refreshed_at = (
+            asyncio.get_running_loop().time() - 301
+        )
+
+        async def refresh_people_storage():
+            self.ha.people_storage = [{
+                "id": "replacement_person", "user_id": "ha-user-1"
+            }]
+            self.ha.people_storage_refreshed_at = asyncio.get_running_loop().time()
+            return self.ha.people_storage
+
+        self.ha.refresh_people_storage = refresh_people_storage
+        person = await self.ha.access_person_for_user_id("ha-user-1")
+        self.assertEqual(person["id"], replacement_id)
+
+    async def test_home_assistant_tags_use_the_websocket_registry(self):
+        commands = []
+
+        async def websocket_command(command):
+            commands.append(command)
+            return [
+                {"id": "door-tag", "name": "Front door tag"},
+                {"id": "unnamed-tag"},
+            ]
+
+        self.ha.websocket_command = websocket_command
+        await self.ha.refresh_tags_storage()
+        self.assertEqual(commands, [{"type": "tag/list"}])
+        self.assertEqual(
+            self.ha.ha_tags(),
+            [
+                {
+                    "tag_id": "door-tag",
+                    "name": "Front door tag",
+                    "entity_id": None,
+                },
+                {
+                    "tag_id": "unnamed-tag",
+                    "name": "unnamed-tag",
+                    "entity_id": None,
+                },
+            ],
+        )
+
+    async def test_home_assistant_tag_refresh_is_bounded(self):
+        refreshes = []
+
+        async def refresh_tags_storage():
+            refreshes.append(True)
+            self.ha.tags_storage_refreshed_at = asyncio.get_running_loop().time()
+
+        self.ha.refresh_tags_storage = refresh_tags_storage
+        self.ha.schedule_tags_refresh()
+        self.ha.schedule_tags_refresh()
+        await self.ha.tag_refresh_task
+        self.ha.schedule_tags_refresh()
+        self.assertEqual(refreshes, [True])
+
     async def test_keypad_can_override_default_with_lock(self):
         person = self.registry.person(self.person_id)
         payload = await self.ha.emit_credential_event(
@@ -297,6 +444,13 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
                 "expires_at": APP.asyncio.get_running_loop().time() + 60,
             }
         }
+        display_events = []
+
+        async def emit_display_event(door_id, kind, event_id, detail=""):
+            display_events.append((door_id, kind, event_id, detail))
+            return 1
+
+        self.ha.emit_display_event = emit_display_event
         await admin.process_keypad_event(
             self.registry.reader("capture_keypad"),
             "1", "+0A1B2C3", "arm_day_zones",
@@ -307,6 +461,90 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(credential)
         self.assertEqual(credential["hash_version"], 2)
         self.assertNotIn("capture_keypad", admin.capture_sessions)
+        self.assertEqual(display_events, [(
+            "front_door", "credential_captured",
+            "capture:capture_keypad:1", "Example Person",
+        )])
+
+    async def test_display_events_only_target_readers_on_the_same_door(self):
+        front_config = {
+            "assigned_door_entity": "text.front_reader_access_manager_door_id",
+            "display_event_entity": "text.front_reader_access_manager_display_event",
+        }
+        self.registry.update_reader(
+            "front_reader", "Front reader", "front_door", True, front_config
+        )
+        self.registry.create_door(
+            "back_door", "Back door", "lock.back_door", "unlock"
+        )
+        self.registry.create_reader(
+            "back_reader", "Back reader", "fingerprint", "back_door", {
+                "assigned_door_entity": "text.back_reader_access_manager_door_id",
+                "display_event_entity": "text.back_reader_access_manager_display_event",
+            }
+        )
+        self.ha.states.update({
+            "text.front_reader_access_manager_door_id": {"state": ""},
+            "text.front_reader_access_manager_display_event": {"state": ""},
+            "text.back_reader_access_manager_door_id": {"state": "back_door"},
+            "text.back_reader_access_manager_display_event": {"state": ""},
+        })
+
+        delivered = await self.ha.emit_display_event(
+            "front_door", "door_opened", "front:123", "Example Person"
+        )
+
+        self.assertEqual(delivered, 1)
+        text_calls = [
+            payload for domain, service, payload in self.service_calls
+            if domain == "text" and service == "set_value"
+        ]
+        self.assertEqual(
+            [payload["entity_id"] for payload in text_calls],
+            [
+                "text.front_reader_access_manager_door_id",
+                "text.front_reader_access_manager_display_event",
+            ],
+        )
+        self.assertEqual(text_calls[0]["value"], "front_door")
+        self.assertEqual(
+            text_calls[1]["value"],
+            "v1|front:123|front_door|door_opened|Example Person",
+        )
+
+    async def test_open_and_denied_keypad_results_emit_display_feedback(self):
+        self.registry.update_reader(
+            "front_reader", "Front reader", "front_door", True, {
+                "assigned_door_entity": "text.front_reader_access_manager_door_id",
+                "display_event_entity": "text.front_reader_access_manager_display_event",
+            }
+        )
+        self.registry.create_reader(
+            "front_keypad", "Front keypad", "keypad", "front_door", {}
+        )
+        self.ha.states.update({
+            "text.front_reader_access_manager_door_id": {"state": "front_door"},
+            "text.front_reader_access_manager_display_event": {"state": ""},
+        })
+        person = self.registry.person(self.person_id)
+
+        await self.ha.emit_credential_event(
+            "front_keypad", person, "keypad", 1, "open", "51"
+        )
+        await self.ha.emit_credential_event(
+            "front_keypad", None, "keypad", "unknown", "open", "52",
+            authorized=False,
+        )
+
+        display_values = [
+            payload["value"] for domain, service, payload in self.service_calls
+            if domain == "text" and service == "set_value"
+            and payload["entity_id"].endswith("access_manager_display_event")
+        ]
+        self.assertEqual(display_values, [
+            "v1|front_keypad:51|front_door|door_opened|Example Person",
+            "v1|front_keypad:52|front_door|keypad_denied|Front keypad",
+        ])
 
     async def test_manual_keypad_credential_endpoint_accepts_tag(self):
         self.registry.create_reader(
@@ -599,6 +837,91 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
             "state": "off",
         }])
 
+    async def test_external_lock_and_contact_openings_are_logged(self):
+        self.registry.update_door(
+            "front_door", "Front door", "lock.front_door", "open",
+            "binary_sensor.front_door_contact",
+        )
+        self.registry.update_door(
+            "front_door", "Front door", "lock.front_door", "open"
+        )
+        self.assertEqual(
+            self.registry.doors()[0]["door_sensor_entity"],
+            "binary_sensor.front_door_contact",
+        )
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+
+        await admin.handle_state_change(
+            "lock.front_door", {"state": "unlocked"}, {"state": "locked"}
+        )
+        await admin.handle_state_change(
+            "binary_sensor.front_door_contact", {"state": "on"}, {"state": "off"}
+        )
+
+        events = self.registry.events()
+        self.assertEqual(
+            [event["event_type"] for event in events[:2]],
+            ["door_physically_opened", "door_lock_opened"],
+        )
+        self.assertEqual(events[0]["door_id"], "front_door")
+        self.assertEqual(
+            events[0]["entity_id"], "binary_sensor.front_door_contact"
+        )
+        self.assertEqual(events[0]["source"], "external")
+        self.assertEqual(events[0]["previous_state"], "off")
+        self.assertEqual(events[0]["new_state"], "on")
+        self.assertEqual(events[1]["source"], "external")
+
+    async def test_lock_opening_ignores_initial_and_settling_states(self):
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+
+        await admin.handle_state_change(
+            "lock.front_door", {"state": "unlocked"}, None
+        )
+        await admin.handle_state_change(
+            "lock.front_door", {"state": "unlocked"}, {"state": "unknown"}
+        )
+        await admin.handle_state_change(
+            "lock.front_door", {"state": "open"}, {"state": "locked"}
+        )
+        await admin.handle_state_change(
+            "lock.front_door", {"state": "unlocked"}, {"state": "open"}
+        )
+
+        events = self.registry.events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "door_lock_opened")
+        self.assertEqual(events[0]["previous_state"], "locked")
+        self.assertEqual(events[0]["new_state"], "open")
+
+    async def test_access_manager_door_command_is_correlated_with_state_change(self):
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = self.registry
+        admin.ha = self.ha
+        door = self.registry.doors()[0]
+
+        await self.ha.execute_door_action(door, "unlock")
+        await admin.handle_state_change(
+            "lock.front_door", {"state": "unlocked"}, {"state": "locked"}
+        )
+
+        event = self.registry.events()[0]
+        self.assertEqual(event["source"], "access_manager")
+        self.assertNotIn("lock.front_door", self.ha.recent_door_commands)
+
+    async def test_failed_door_command_clears_pending_correlation(self):
+        async def fail_service(*_args, **_kwargs):
+            raise RuntimeError("service failed")
+
+        self.ha.call_service = fail_service
+        with self.assertRaisesRegex(RuntimeError, "service failed"):
+            await self.ha.execute_door_action(self.registry.doors()[0], "unlock")
+        self.assertNotIn("lock.front_door", self.ha.recent_door_commands)
+
     async def test_notification_entities_only_include_notify_domain(self):
         self.ha.states.update({
             "notify.example_phone": {
@@ -671,6 +994,71 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RegistryMigrationTests(unittest.TestCase):
+    def test_door_activity_schema_and_sensor_are_migrated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            path = Path(directory) / "door-activity-schema.db"
+            connection = sqlite3.connect(path)
+            connection.executescript(
+                """
+                CREATE TABLE doors (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    entity_id TEXT,
+                    open_action TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE TABLE managed_automations (
+                    id TEXT PRIMARY KEY,
+                    automation_type TEXT NOT NULL,
+                    door_id TEXT NOT NULL,
+                    ha_config_id TEXT NOT NULL UNIQUE,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    config_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(automation_type, door_id)
+                );
+                CREATE TABLE events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    occurred_at TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    slot INTEGER,
+                    confidence INTEGER,
+                    detail TEXT
+                );
+                INSERT INTO doors VALUES (
+                    'front_door', 'Front door', 'lock.front_door', 'open',
+                    '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
+                );
+                INSERT INTO managed_automations VALUES (
+                    'access_manager_door_open_front_door', 'door_open',
+                    'front_door', 'access_manager_door_open_front_door', 1,
+                    '{"door_sensor_entity":"binary_sensor.front_door_contact"}',
+                    '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00'
+                );
+                """
+            )
+            connection.commit()
+            connection.close()
+
+            registry = APP.Registry(path)
+            self.assertEqual(
+                registry.doors()[0]["door_sensor_entity"],
+                "binary_sensor.front_door_contact",
+            )
+            event_columns = {
+                row[1]
+                for row in registry.connection.execute(
+                    "PRAGMA table_info(events)"
+                ).fetchall()
+            }
+            self.assertTrue({
+                "door_id", "entity_id", "source", "previous_state", "new_state"
+            }.issubset(event_columns))
+            registry.connection.close()
+
     def test_pre_release_plaintext_credentials_are_encrypted_and_scrubbed(self):
         with tempfile.TemporaryDirectory() as directory:
             APP.DATA_DIR = Path(directory)

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0
+
+- Adds Home Assistant mobile-app NFC door access using its registered Tag list, with tag-to-door mapping, explicit person-to-door permissions, authenticated user and scanner resolution, activity logging, duplicate-scan protection, and a responsive administration view.
+- Adds optional door-assignment and display-event entities for compatible fingerprint readers, with door-scoped feedback for successful opens, keypad capture, and denied keypad credentials.
+- Assigns an optional Home Assistant door contact sensor directly to each door and reuses it as the default in managed automations.
+- Records lock openings and physical door openings even when they happen outside Access Manager, with structured door, entity, state transition, and source fields.
+- Correlates recent Access Manager lock commands with Home Assistant state changes so they are not mislabeled as external activity.
+
 ## 0.8.3
 
 - Captures short-lived keypad transaction, code/tag and action entity updates before Zigbee2MQTT clears them to empty or unknown states.
