@@ -4,14 +4,18 @@ This app integrates with [ESPHome Fingerprint Access Reader](https://github.com/
 
 ## Version compatibility
 
-Access Manager 0.9.0 and ESPHome Fingerprint Access Reader 0.4.0 are the first coordinated releases to implement the `v1` display-feedback contract described below. Older reader firmware remains usable for fingerprint access, but panel feedback requires the two optional display entities introduced in reader 0.4.0.
+Access Manager 0.10.0 recommends ESPHome Fingerprint Access Reader 0.5.0. The panel can generate release-pinned ESPHome YAML for the reference display terminal or a reader-only installation on any ESPHome-supported ESP32 board. Firmware 0.5.0 also publishes its project version so Access Manager can show whether each configured reader is current.
+
+Access Manager 0.9.0 and reader firmware 0.4.0 remain the first coordinated releases to implement the `v1` display-feedback contract described below. Older reader firmware remains usable for fingerprint access, but version status requires the optional firmware-version sensor and panel feedback requires the two optional display entities.
 
 ## Configuration
 
-1. Install and adopt the firmware in Home Assistant.
-2. Create a **Fingerprint** reader in Access Manager.
-3. Assign the reader entities: access event, management event, name registry, enrollment/deletion controls, and optionally the two Access Manager display text entities.
-4. Associate the reader with a door and manage users and fingerprints from Access Manager.
+1. In Access Manager, open **Settings → ESPHome reader configurator**, choose the hardware profile, and download the generated YAML.
+2. Ensure `wifi_ssid`, `wifi_password`, `api_encryption_key`, and `ota_password` exist in ESPHome's `secrets.yaml`. Their values are never entered into Access Manager.
+3. Install and adopt the firmware in Home Assistant.
+4. Create a **Fingerprint** reader in Access Manager.
+5. Assign the reader entities: access event, management event, name registry, enrollment/deletion controls, the firmware-version sensor, and optionally the two Access Manager display text entities.
+6. Associate the reader with a door and manage users and fingerprints from Access Manager.
 
 ## Event contract
 

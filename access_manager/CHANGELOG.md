@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.10.0
+
+- Adds a bilingual ESPHome configurator for the reference display terminal and generic ESP32 fingerprint-reader-only installations, using release-pinned packages without collecting Wi-Fi, API or OTA secrets.
+- Adds reader firmware version reporting and installed-versus-recommended status in the fingerprint-reader list.
+- Prevents stale administration panels with explicit no-cache document responses, no-store API requests and a build-version reload guard.
+- Records both opening and closing transitions for configured locks and physical door sensors, including changes made manually or by Home Assistant automations.
+- Replaces ambiguous activity details with structured door, entity, transition and source labels.
+- Moves mobile NFC authorization to Users & credentials, where fixed door tags are assigned to allowed users while preserving authenticated Home Assistant identity checks.
+
 ## 0.9.0
 
 - Adds Home Assistant mobile-app NFC door access using its registered Tag list, with tag-to-door mapping, explicit person-to-door permissions, authenticated user and scanner resolution, activity logging, duplicate-scan protection, and a responsive administration view.

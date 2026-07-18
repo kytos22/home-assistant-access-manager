@@ -40,8 +40,10 @@ The image identifies the exact display/controller used by the reference firmware
 - Two-tap local display lock requests from compatible readers; unauthenticated local open/unlock requests are rejected.
 - Door-scoped display feedback for successful opening actions, keypad credential capture, and denied keypad codes on compatible ESPHome readers.
 - Configurable log retention with a 10,000-row hard safety limit.
-- Structured activity records for lock openings and physical door openings, including the door, entity, state transition, and whether the lock command came from Access Manager or elsewhere.
-- Door-mounted NFC tags scanned by the Home Assistant mobile app, with explicit per-person and per-door authorization.
+- Structured activity records for lock and physical-door opening/closing transitions, including the door, entity and whether the change came from Access Manager or elsewhere.
+- Door-mounted NFC tags scanned by the Home Assistant mobile app, assigned to allowed users from **Users & credentials**.
+- Ready-to-paste ESPHome configuration generation for the reference display terminal and reader-only installations on ESPHome-supported ESP32 boards.
+- Installed-versus-recommended firmware status for compatible fingerprint readers.
 - Native Home Assistant app log-level configuration while routine HTTP request logging remains disabled.
 - Guided native Home Assistant automations for auto-lock, door-left-open alerts, and denied-access alerts.
 - One automation of each type per door, with optional `notify.*` delivery or persistent Home Assistant notifications for alerts.
@@ -98,6 +100,8 @@ The administrator-only **Settings** tab provides **Privacy mode**, enabled by de
 - With privacy disabled, recoverable credentials remain encrypted in storage but are continuously visible to panel administrators.
 
 The panel never writes decrypted values to application or activity logs. A value must exist briefly in the administrator's browser memory and page when it is displayed.
+
+The same tab includes the **ESPHome reader configurator**. Choose the reference display terminal or a reader-only profile, enter the ESPHome device name and hardware pins, then copy or download the generated YAML. It pins a known compatible reader release and refers only to keys in ESPHome's `secrets.yaml`; Access Manager never asks for or stores Wi-Fi, API-encryption, or OTA credentials.
 
 ### Updating
 
@@ -188,7 +192,7 @@ Home Assistant tags can be assigned to a door from the **Doors** tab. The physic
 
 The selector reads the registered Home Assistant Tag list and refreshes it through a bounded background cache. Tag IDs do not need to be copied into Access Manager manually.
 
-Mobile NFC access is denied by default. Enable it explicitly for each person and door combination. A successful scan must include the Home Assistant scanner `device_id`, uses the door's normal default action, and emits the same `access_manager_credential` event flow as other credentials with `credential_type: mobile_nfc`. Unidentified users, missing or invalid scanner origins, missing permissions, action failures, and duplicate scans are rejected and recorded. Keypad-scanned personal NFC credentials remain a separate feature.
+Mobile NFC access is denied by default. In **Users & credentials**, assign each fixed door tag to the users allowed to scan it. Internally the authorization remains person-to-door, so multiple physical tags for the same door share the same permission. A successful scan must include the Home Assistant scanner `device_id`, uses the door's normal default action, and emits the same `access_manager_credential` event flow as other credentials with `credential_type: mobile_nfc`. Unidentified users, missing or invalid scanner origins, missing permissions, action failures, and duplicate scans are rejected and recorded. Keypad-scanned personal NFC credentials remain a separate feature.
 
 ## Managed Home Assistant automations
 
@@ -206,10 +210,12 @@ Access Manager records every automation it creates and gives it a dedicated `acc
 
 ## Door activity records
 
-Access Manager listens to Home Assistant state changes for every configured door. The activity log records two distinct events:
+Access Manager listens to Home Assistant state changes for every configured door. The activity log records four distinct events:
 
 - **Door lock opened** when a configured `lock.*` changes from a closed state to `unlocked` or `open`.
+- **Door lock closed** when it changes to `locked`.
 - **Door physically opened** when the door's contact sensor changes from `off` (closed) to `on` (open).
+- **Door physically closed** when that contact changes from `on` to `off`.
 
 Each record stores `door_id`, `entity_id`, `previous_state`, `new_state`, and `source`. Lock changes that follow a successful Access Manager service call within the correlation window use `source: access_manager`; other changes use `source: external`. Initial, unavailable, and unknown states are ignored so an app restart does not create false activity.
 
@@ -235,13 +241,13 @@ For `source: display`, Access Manager accepts only `lock`. Door tests are restri
 
 ## Fingerprint reader firmware
 
-Fingerprint templates remain in the sensor. A compatible ESPHome example that stores the local ID/name/finger mapping in ESP memory is maintained separately:
+Fingerprint templates remain in the sensor. The **Settings** configurator generates a small release-pinned YAML for either the reference display terminal or a generic reader-only ESP32. The compatible firmware project is maintained separately:
 
 <https://github.com/kytos22/esphome-fingerprint-access-reader>
 
 The shared entity contract and setup sequence are documented in [INTEGRATION.md](INTEGRATION.md).
 
-Compatible firmware exposes optional `Access Manager door ID` and `Access Manager display event` text entities. Add both entities to the fingerprint-reader configuration to enable panel feedback. Access Manager synchronizes the assigned door ID and sends only door-matching, credential-free display messages; readers without these entities continue to work without display feedback.
+Firmware 0.5.0 exposes ESPHome project metadata and a `Fingerprint reader firmware version` diagnostic sensor. Map that sensor in the reader editor to see the installed and recommended versions. Compatible display firmware also exposes optional `Access Manager door ID` and `Access Manager display event` text entities. Add both to enable panel feedback. Access Manager synchronizes the assigned door ID and sends only door-matching, credential-free display messages; readers without these entities continue to work without display feedback.
 
 ## Data and backups
 
