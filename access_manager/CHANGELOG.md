@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.13.0
+
+- Shows whether each fingerprint reader has a display and sensor or only a sensor.
+- Changes compatible display readers between English and Spanish from the panel.
+- Creates and compiles managed reader configurations directly in ESPHome Device Builder.
+- Adds confirmed one-button OTA firmware updates with live progress and errors.
+- Keeps Wi-Fi, API-encryption, and OTA secret values inside ESPHome.
+
 ## 0.12.2
 
 - Updates generated reader configurations to Fingerprint Access Reader 0.5.2, which publishes its installed version during boot.

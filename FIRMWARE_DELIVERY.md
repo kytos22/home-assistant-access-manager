@@ -2,6 +2,12 @@
 
 Access Manager generates a small ESPHome YAML wrapper instead of a universal binary. The wrapper pins a tested release of the separate fingerprint-reader repository. ESPHome Device Builder downloads that package, combines it with the selected substitutions and installation-local secrets, validates it, and compiles firmware for the target board.
 
+Access Manager 0.13.0 can send that wrapper directly to a configured ESPHome Device Builder URL, compile it there, and install existing devices over OTA. ESPHome remains responsible for compilation and keeps all secret values in its own `secrets.yaml`; Access Manager only sends the generated wrapper containing `!secret` references.
+
+Set `esphome_dashboard_url` in the Access Manager add-on options to the reachable ESPHome Device Builder address. If the standard ESPHome add-on is used, expose its dashboard port only on a trusted network. New devices are compiled from the panel but still need their first USB installation from ESPHome.
+
+The generated file uses a dedicated `-access-manager.yaml` suffix, so Access Manager does not overwrite an existing hand-maintained device file.
+
 ## Recommended workflow
 
 ### New device
@@ -30,7 +36,7 @@ Access Manager generates a small ESPHome YAML wrapper instead of a universal bin
 | `device_name` changes | ESPHome and Home Assistant may treat the reader as a different device | Restore the original name, or deliberately adopt and remap the replacement |
 | Board or UART pins are wrong | Validation may fail, the device may not boot correctly, or the sensor will remain offline | Restore the working board/pins and use USB recovery if OTA is unavailable |
 
-Access Manager never asks for, receives, embeds, logs, or stores Wi-Fi, API-encryption, or OTA secret values. It also does not request broad access to ESPHome's configuration directory. This keeps the add-on isolated from device credentials and prevents an administration-panel compromise from automatically becoming a firmware-credential compromise.
+Access Manager never asks for, receives, embeds, logs, or stores Wi-Fi, API-encryption, or OTA secret values. It does not request access to ESPHome's configuration directory or Supervisor manager privileges.
 
 ## Delivery options evaluated
 
@@ -38,4 +44,4 @@ The release-pinned wrapper plus ESPHome **Import from file** is the current reco
 
 A single precompiled image is not currently appropriate for every reader-only ESP32 because board selection and UART pins vary. Precompiled installation also needs a secure provisioning and recovery design for Wi-Fi, API encryption, and OTA authentication. ESPHome project import metadata can improve discovery for a fixed hardware product, but templates must not contain installation secrets and it does not remove the need to preserve credentials on upgrades.
 
-Directly writing files into `/config/esphome` from Access Manager was rejected because it would require broader filesystem permissions, couple two add-ons, and increase the impact of a panel vulnerability. A future guided installer may be considered for the fixed reference display after secure provisioning, backup, recovery, and credential rotation are designed and tested.
+Directly writing files into `/config/esphome` remains rejected. The guided installer instead uses ESPHome's own authenticated dashboard API at the explicitly configured URL, serializes firmware jobs, shows bounded logs, and requires confirmation before OTA installation.

@@ -351,7 +351,7 @@
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>ID</th><th data-i18n="name">Name</th><th data-i18n="door">Door</th><th data-i18n="firmware">Firmware</th><th data-i18n="availability">Availability</th><th></th></tr></thead>
+          <thead><tr><th>ID</th><th data-i18n="name">Name</th><th data-i18n="reader_type">Type</th><th data-i18n="door">Door</th><th data-i18n="firmware">Firmware</th><th data-i18n="availability">Availability</th><th></th></tr></thead>
           <tbody id="fingerprint-readers-body"></tbody>
         </table>
       </div>
@@ -427,19 +427,21 @@
     </section>
     <section class="card infrastructure">
       <div class="section-head"><h2 data-i18n="esphome_configurator">ESPHome reader configurator</h2><span id="esphome-firmware-version" class="status">v…</span></div>
-      <p class="hint" data-i18n="esphome_config_hint">Generate a ready-to-paste configuration. Network and API credentials stay in your ESPHome secrets file and are never sent to Access Manager.</p>
+      <p class="hint" data-i18n="esphome_direct_hint">Create and compile a managed configuration directly in ESPHome. Secret values remain only in ESPHome.</p>
       <div class="config-grid">
         <div><label for="esphome-install-mode" data-i18n="installation_mode">Installation</label><select id="esphome-install-mode"><option value="new" data-i18n="new_device">New device</option><option value="existing" data-i18n="existing_device">Update existing device</option></select></div>
         <div><label for="esphome-profile" data-i18n="hardware_profile">Hardware profile</label><select id="esphome-profile"><option value="reader_only" data-i18n="reader_only">Fingerprint reader only</option><option value="display" data-i18n="reader_display">Waveshare reader and display</option></select></div>
         <div><label for="esphome-device-name" data-i18n="device_name">Device name</label><input id="esphome-device-name" value="fingerprint-access-reader" maxlength="32"></div>
         <div><label for="esphome-friendly-name" data-i18n="friendly_name">Friendly name</label><input id="esphome-friendly-name" value="Fingerprint Access Reader" maxlength="50"></div>
+        <div class="display-option"><label for="esphome-display-language" data-i18n="display_language">Display language</label><select id="esphome-display-language"><option value="English">English</option><option value="Español">Español</option></select></div>
         <div class="reader-only-option"><label for="esphome-board" data-i18n="esp32_board">ESP32 board ID</label><input id="esphome-board" value="esp32dev" list="esp32-boards"><datalist id="esp32-boards"><option value="esp32dev"><option value="esp32-c3-devkitm-1"><option value="esp32-s3-devkitc-1"><option value="esp32-c6-devkitc-1"></datalist></div>
         <div class="reader-only-option"><label for="esphome-tx-pin" data-i18n="uart_tx_pin">Reader UART TX pin</label><input id="esphome-tx-pin" value="GPIO17"></div>
         <div class="reader-only-option"><label for="esphome-rx-pin" data-i18n="uart_rx_pin">Reader UART RX pin</label><input id="esphome-rx-pin" value="GPIO16"></div>
       </div>
       <div id="esphome-setup-guide" class="warning-box"></div>
-      <div class="actions"><button id="generate-esphome" type="button" data-i18n="generate_config">Generate configuration</button><button id="copy-esphome" class="secondary" type="button" disabled data-i18n="copy">Copy</button><button id="download-esphome" class="secondary" type="button" disabled data-i18n="download_yaml">Download YAML</button></div>
+      <div class="actions"><button id="build-esphome" type="button" data-i18n="build_in_esphome">Create and compile in ESPHome</button><button id="generate-esphome" class="secondary" type="button" data-i18n="generate_config">Preview configuration</button><button id="copy-esphome" class="secondary" type="button" disabled data-i18n="copy">Copy</button><button id="download-esphome" class="secondary" type="button" disabled data-i18n="download_yaml">Download YAML</button></div>
       <textarea id="generated-esphome" class="generated-config" readonly hidden aria-label="Generated ESPHome YAML"></textarea>
+      <pre id="esphome-job-status" class="generated-config" hidden></pre>
     </section>
   </section>
 
@@ -628,7 +630,7 @@
 <script>
 (() => {
   const $ = selector => document.querySelector(selector);
-  const PANEL_BUILD_VERSION = "0.12.2";
+  const PANEL_BUILD_VERSION = "0.13.0";
   let data = null;
   let busy = false;
   let refreshPromise = null;
@@ -712,6 +714,11 @@
       confirm_action:"CONFIRM {action}", edit_keypad:"Edit keypad", edit_fingerprint_reader:"Edit fingerprint reader", add_person_title:"Add user", edit_person_title:"Edit user",
       link_person:"Home Assistant person", create_new_person:"Create a new Home Assistant Person", reader_settings:"Reader settings", entity_settings:"Home Assistant entities", firmware:"Firmware", firmware_current:"Up to date", firmware_update:"Update available", firmware_unknown:"Not reported", firmware_not_configured:"Not configured",
       esphome_configurator:"ESPHome reader configurator", esphome_config_hint:"This creates a small package wrapper. ESPHome downloads the complete pinned firmware, compiles it, and installs it; Access Manager never compiles firmware or receives credentials.", installation_mode:"Installation", new_device:"New device", existing_device:"Update existing device", hardware_profile:"Hardware profile", reader_only:"Fingerprint reader only", reader_display:"Waveshare reader and display", device_name:"Device name", friendly_name:"Friendly name", esp32_board:"ESP32 board ID", uart_tx_pin:"Reader UART TX pin", uart_rx_pin:"Reader UART RX pin", generate_config:"Generate configuration", copy:"Copy", download_yaml:"Download YAML", copied:"Configuration copied", setup_new_title:"New device setup", setup_new_1:"Download the generated YAML and choose Import from File in ESPHome Device Builder.", setup_new_2:"Add the four required keys to ESPHome secrets.yaml, then validate the configuration.", setup_new_3:"Use Install. The first flash normally needs USB; later updates can use OTA.", setup_existing_title:"Existing device update", setup_existing_1:"Back up the current YAML and use exactly the same device name.", setup_existing_2:"Keep the existing Wi-Fi, API-encryption, and OTA secret values. Changing them can break connectivity or OTA access.", setup_existing_3:"Replace the YAML with the generated wrapper, validate it, and install wirelessly only after validation succeeds.", setup_credentials:"Required secret keys: wifi_ssid, wifi_password, api_encryption_key, ota_password. Their values stay only in ESPHome.", source_access_manager:"Access Manager", source_external:"External / Home Assistant", transition:"Transition",
+      reader_type:"Reader type", reader_display_type:"Display + sensor", reader_sensor_type:"Sensor only", display_language:"Display language",
+      prompt_display_language_entity:"Display language select entity (display readers):", reader_display_language_changed:"Display language changed",
+      build_in_esphome:"Create and compile in ESPHome", update_firmware:"Update firmware", update_firmware_title:"Update reader firmware?", update_firmware_warning:"ESPHome will compile the managed configuration and install it over Wi-Fi. Do not disconnect power during installation.",
+      firmware_step:"Firmware", firmware_queued:"Queued", firmware_saving:"Saving configuration", firmware_compiling:"Compiling", firmware_installing:"Installing OTA", firmware_completed:"Completed", firmware_failed:"Failed", firmware_cancelled:"Cancelled",
+      esphome_direct_hint:"Create and compile a managed configuration directly in ESPHome Device Builder. Secret values remain only in ESPHome.",
       left_thumb:"Left thumb", left_index:"Left index", left_middle:"Left middle", left_ring:"Left ring", left_pinky:"Left little finger",
       right_thumb:"Right thumb", right_index:"Right index", right_middle:"Right middle", right_ring:"Right ring", right_pinky:"Right little finger",
       left_hand:"LEFT HAND", right_hand:"RIGHT HAND"
@@ -781,6 +788,11 @@
       confirm_action:"CONFIRMAR {action}", edit_keypad:"Editar keypad", edit_fingerprint_reader:"Editar lector de huellas", add_person_title:"Añadir usuario", edit_person_title:"Editar usuario",
       link_person:"Persona de Home Assistant", create_new_person:"Crear una nueva persona en Home Assistant", reader_settings:"Configuración del lector", entity_settings:"Entidades de Home Assistant", firmware:"Firmware", firmware_current:"Actualizado", firmware_update:"Actualización disponible", firmware_unknown:"Sin informar", firmware_not_configured:"Sin configurar",
       esphome_configurator:"Configurador de lector ESPHome", esphome_config_hint:"Esto crea un pequeño envoltorio de paquete. ESPHome descarga el firmware completo fijado, lo compila y lo instala; Access Manager nunca compila firmware ni recibe credenciales.", installation_mode:"Instalación", new_device:"Dispositivo nuevo", existing_device:"Actualizar dispositivo existente", hardware_profile:"Perfil de hardware", reader_only:"Solo lector de huellas", reader_display:"Lector y pantalla Waveshare", device_name:"Nombre del dispositivo", friendly_name:"Nombre visible", esp32_board:"ID de placa ESP32", uart_tx_pin:"Pin TX UART del lector", uart_rx_pin:"Pin RX UART del lector", generate_config:"Generar configuración", copy:"Copiar", download_yaml:"Descargar YAML", copied:"Configuración copiada", setup_new_title:"Configuración de un dispositivo nuevo", setup_new_1:"Descarga el YAML generado y elige Importar desde archivo en ESPHome Device Builder.", setup_new_2:"Añade las cuatro claves requeridas a secrets.yaml de ESPHome y valida la configuración.", setup_new_3:"Pulsa Instalar. La primera carga normalmente requiere USB; las posteriores pueden hacerse por OTA.", setup_existing_title:"Actualización de un dispositivo existente", setup_existing_1:"Haz una copia del YAML actual y utiliza exactamente el mismo nombre de dispositivo.", setup_existing_2:"Conserva los valores actuales de Wi-Fi, cifrado API y OTA. Cambiarlos puede romper la conexión o las actualizaciones OTA.", setup_existing_3:"Sustituye el YAML por el envoltorio generado, valídalo e instálalo por Wi-Fi únicamente cuando la validación termine correctamente.", setup_credentials:"Claves requeridas: wifi_ssid, wifi_password, api_encryption_key y ota_password. Sus valores permanecen únicamente en ESPHome.", source_access_manager:"Access Manager", source_external:"Externo / Home Assistant", transition:"Transición",
+      reader_type:"Tipo de lector", reader_display_type:"Pantalla + sensor", reader_sensor_type:"Solo sensor", display_language:"Idioma del display",
+      prompt_display_language_entity:"Entidad select del idioma del display (lectores con pantalla):", reader_display_language_changed:"Idioma del display cambiado",
+      build_in_esphome:"Crear y compilar en ESPHome", update_firmware:"Actualizar firmware", update_firmware_title:"¿Actualizar el firmware del lector?", update_firmware_warning:"ESPHome compilará la configuración gestionada y la instalará por Wi-Fi. No desconectes la alimentación durante la instalación.",
+      firmware_step:"Firmware", firmware_queued:"En cola", firmware_saving:"Guardando configuración", firmware_compiling:"Compilando", firmware_installing:"Instalando por OTA", firmware_completed:"Completado", firmware_failed:"Fallido", firmware_cancelled:"Cancelado",
+      esphome_direct_hint:"Crea y compila directamente en ESPHome Device Builder una configuración gestionada. Los secretos permanecen únicamente en ESPHome.",
       left_thumb:"Pulgar izquierdo", left_index:"Índice izquierdo", left_middle:"Corazón izquierdo", left_ring:"Anular izquierdo", left_pinky:"Meñique izquierdo",
       right_thumb:"Pulgar derecho", right_index:"Índice derecho", right_middle:"Corazón derecho", right_ring:"Anular derecho", right_pinky:"Meñique derecho",
       left_hand:"MANO IZQUIERDA", right_hand:"MANO DERECHA"
@@ -988,10 +1000,31 @@
       const firmwareConfigured=Boolean(reader.config?.firmware_version_entity);
       const firmwareState=!firmwareConfigured?t("firmware_not_configured"):!current?t("firmware_unknown"):needsUpdate?t("firmware_update"):t("firmware_current");
       const firmwareClass=!current||needsUpdate?"pending":"";
-      return `<tr><td><strong>${esc(reader.id)}</strong></td><td>${esc(reader.name)}</td><td><select onchange="associateReader('${reader.id}',this.value)">${doorOptions(reader.door_id)}</select></td><td><strong>${esc(current||"—")}</strong><div><span class="status ${firmwareClass}">${esc(firmwareState)}</span></div>${latest&&needsUpdate?`<span class="entity">${esc(latest)}</span>`:""}</td><td><span class="status ${reader.availability === "available" ? "" : "deleting"}">${statusLabel(reader.availability)}</span></td><td class="actions-cell"><button class="secondary" onclick="editReader('${reader.id}')">${t("edit")}</button></td></tr>`;
-    }).join("") : `<tr><td colspan="6" class="empty">${t("no_records")}</td></tr>`;
+      const displayReader=reader.hardware_profile==="display";
+      const typeLabel=t(displayReader?"reader_display_type":"reader_sensor_type");
+      const languageControl=displayReader&&(reader.config?.display_language_entity||reader.display_language)
+        ? `<select aria-label="${esc(t("display_language"))}" onchange="setReaderDisplayLanguage('${reader.id}',this.value)"><option value="en" ${reader.display_language!=="Español"?"selected":""}>English</option><option value="es" ${reader.display_language==="Español"?"selected":""}>Español</option></select>`
+        : "";
+      const canUpdate=data.esphome_configured&&(displayReader||Boolean(reader.config?.firmware_config));
+      return `<tr><td><strong>${esc(reader.id)}</strong></td><td>${esc(reader.name)}</td><td><strong>${esc(typeLabel)}</strong>${languageControl}</td><td><select onchange="associateReader('${reader.id}',this.value)">${doorOptions(reader.door_id)}</select></td><td><strong>${esc(current||"—")}</strong><div><span class="status ${firmwareClass}">${esc(firmwareState)}</span></div>${latest&&needsUpdate?`<span class="entity">${esc(latest)}</span>`:""}</td><td><span class="status ${reader.availability === "available" ? "" : "deleting"}">${statusLabel(reader.availability)}</span></td><td class="actions-cell">${canUpdate?`<button onclick="updateReaderFirmware('${reader.id}')">${t("update_firmware")}</button>`:""}<button class="secondary" onclick="editReader('${reader.id}')">${t("edit")}</button></td></tr>`;
+    }).join("") : `<tr><td colspan="7" class="empty">${t("no_records")}</td></tr>`;
     renderFingerprints();
   }
+  window.setReaderDisplayLanguage=async(readerId,language)=>{
+    await mutate(`readers/${readerId}/display-language`,"PUT",{language});
+  };
+  window.updateReaderFirmware=readerId=>{
+    const reader=(data.access_readers||[]).find(item=>item.id===readerId);
+    if(!reader)return;
+    openConfirm({title:t("update_firmware_title"),subtitle:reader.name,message:t("update_firmware_warning"),confirmLabel:t("update_firmware"),onConfirm:async()=>{
+      try{
+        const job=await request(`readers/${readerId}/firmware/update`,{method:"POST",body:"{}"});
+        closeConfirm();switchTab("settings");await followFirmwareJob(job);await refresh();
+      }catch(error){showError(error.message);}
+    }});
+  };
+
+
 
   function renderFingerprints() {
     const users = (data.users || []).filter(user => user.reader_id === selectedReader);
@@ -1133,19 +1166,50 @@
     $("#privacy-toggle").className = privacyMode ? "danger" : "secondary";
     $("#esphome-firmware-version").textContent=`v${data.reader_firmware_version||"—"}`;
     renderEsphomeProfile();
+    $("#build-esphome").disabled=!data.esphome_configured;
   }
 
   function renderEsphomeProfile(){
     document.querySelectorAll(".reader-only-option").forEach(element=>element.hidden=$("#esphome-profile").value!=="reader_only");
+    document.querySelectorAll(".display-option").forEach(element=>element.hidden=$("#esphome-profile").value!=="display");
     const existing=$("#esphome-install-mode").value==="existing";
     const prefix=existing?"setup_existing":"setup_new";
     $("#esphome-setup-guide").innerHTML=`<strong>${t(`${prefix}_title`)}</strong><ol><li>${t(`${prefix}_1`)}</li><li>${t(`${prefix}_2`)}</li><li>${t(`${prefix}_3`)}</li></ol><p>${t("setup_credentials")}</p>`;
   }
 
-  async function generateEsphomeConfig(){
+  function esphomePayload(){
     const profile=$("#esphome-profile").value;
     const payload={profile,install_mode:$("#esphome-install-mode").value,device_name:$("#esphome-device-name").value.trim(),friendly_name:$("#esphome-friendly-name").value.trim()};
-    if(profile==="reader_only")Object.assign(payload,{board:$("#esphome-board").value.trim(),fingerprint_tx_pin:$("#esphome-tx-pin").value.trim(),fingerprint_rx_pin:$("#esphome-rx-pin").value.trim()});
+    if(profile==="display")payload.display_language=$("#esphome-display-language").value;
+    else Object.assign(payload,{board:$("#esphome-board").value.trim(),fingerprint_tx_pin:$("#esphome-tx-pin").value.trim(),fingerprint_rx_pin:$("#esphome-rx-pin").value.trim()});
+    return payload;
+  }
+
+  async function followFirmwareJob(job){
+    const output=$("#esphome-job-status");output.hidden=false;
+    while(job&&!["completed","failed","cancelled"].includes(job.status)){
+      output.textContent=`${t("firmware_step")}: ${t(`firmware_${job.step}`)}\n${(job.logs||[]).slice(-12).join("\n")}`;
+      await new Promise(resolve=>setTimeout(resolve,1500));
+      job=await request(`esphome/jobs/${job.id}`);
+    }
+    output.textContent=`${t("firmware_step")}: ${t(`firmware_${job.step}`)}${job.error?`\n${job.error}`:""}\n${(job.logs||[]).slice(-12).join("\n")}`;
+    $("#build-esphome").disabled=!data.esphome_configured;
+    if(job.status==="failed")showError(job.error);
+    else showError();
+    return job;
+  }
+
+  async function buildEsphomeFirmware(){
+    const button=$("#build-esphome");button.disabled=true;
+    try{
+      const payload={...esphomePayload(),install:$("#esphome-install-mode").value==="existing"};
+      const job=await request("esphome/build",{method:"POST",body:JSON.stringify(payload)});
+      await followFirmwareJob(job);
+    }catch(error){showError(error.message);button.disabled=!data.esphome_configured;}
+  }
+
+  async function generateEsphomeConfig(){
+    const payload=esphomePayload();
     try{
       const result=await request("esphome/config",{method:"POST",body:JSON.stringify(payload)}),output=$("#generated-esphome");
       output.value=result.yaml;output.hidden=false;$("#copy-esphome").disabled=false;$("#download-esphome").disabled=false;showError();
@@ -1400,12 +1464,13 @@
     const config={...(reader?.config||{})}, prefix=normalize(reader?.name||type).replace(/[^a-z0-9]+/g,"_");
     const common=`${inputField(t("name"),"name",reader?.name||"")}${inputField(t("internal_id"),"id",reader?.id||"",true,reader?"readonly":"")}${selectField(t("door"),"door_id",doorSelectItems(),reader?.door_id||data.doors?.[0]?.id||"",true)}${selectField(t("enabled"),"enabled",[{value:"true",label:t("enabled")},{value:"false",label:t("disabled")}],String(reader?.enabled??true),true)}`;
     const keypadFields=`<div class="form-section"><h3>${t("entity_settings")}</h3></div>${inputField(t("prompt_transaction"),"transaction_entity",config.transaction_entity||`sensor.${prefix}_action_transaction`)}${inputField(t("prompt_code_entity"),"code_entity",config.code_entity||`sensor.${prefix}_action_code`)}${inputField(t("prompt_action_entity"),"action_entity",config.action_entity||`sensor.${prefix}_action`)}<div class="form-section"><h3>${t("action_map")}</h3><p class="muted">${t("capture_intro")}</p><div id="keymap-list" class="keymap-list">${Object.entries(config.action_map||{disarm:"open",arm_all_zones:"lock"}).map(([raw,action])=>keymapRow(raw,action)).join("")}</div><div class="actions"><button type="button" class="secondary" onclick="addKeymapRow()">${t("add_mapping")}</button><button type="button" class="secondary" ${reader?`onclick="startKeypadLearning('${reader.id}')"`:"disabled"}>${t("detect_button")}</button></div><div id="keypad-learning-status" class="learning-status"></div></div>`;
-    const fpDefinitions=[["slot_entity","prompt_slot_entity",true],["enroll_entity","prompt_enroll_entity",true],["cancel_entity","prompt_cancel_entity",true],["delete_entity","prompt_delete_entity",true],["name_registry_entity","prompt_registry_entity",true],["access_event_entity","prompt_access_entity",true],["management_event_entity","prompt_management_entity",true],["fingerprint_count_entity","prompt_count_entity",false],["reader_capacity_entity","prompt_capacity_entity",false],["device_status_entity","prompt_device_entity",false],["assigned_door_entity","prompt_assigned_door_entity",false],["display_event_entity","prompt_display_event_entity",false],["firmware_version_entity","prompt_firmware_version_entity",false]];
-    const fpFields=config.legacy_autodiscovery?`<div class="form-section"><p class="muted">Legacy entity discovery is active for this reader.</p></div>`:`<div class="form-section"><h3>${t("entity_settings")}</h3></div>${fpDefinitions.map(([key,label,required])=>inputField(t(label),key,config[key]||"",required)).join("")}`;
+    const fpDefinitions=[["slot_entity","prompt_slot_entity",true],["enroll_entity","prompt_enroll_entity",true],["cancel_entity","prompt_cancel_entity",true],["delete_entity","prompt_delete_entity",true],["name_registry_entity","prompt_registry_entity",true],["access_event_entity","prompt_access_entity",true],["management_event_entity","prompt_management_entity",true],["fingerprint_count_entity","prompt_count_entity",false],["reader_capacity_entity","prompt_capacity_entity",false],["device_status_entity","prompt_device_entity",false],["assigned_door_entity","prompt_assigned_door_entity",false],["display_event_entity","prompt_display_event_entity",false],["firmware_version_entity","prompt_firmware_version_entity",false],["display_language_entity","prompt_display_language_entity",false]];
+    const hardwareField=selectField(t("reader_type"),"hardware_profile",[{value:"display",label:t("reader_display_type")},{value:"reader_only",label:t("reader_sensor_type")}],config.hardware_profile||(config.display_event_entity?"display":"reader_only"),true);
+    const fpFields=`${hardwareField}${config.legacy_autodiscovery?`<div class="form-section"><p class="muted">Legacy entity discovery is active for this reader.</p></div>`:`<div class="form-section"><h3>${t("entity_settings")}</h3></div>${fpDefinitions.map(([key,label,required])=>inputField(t(label),key,config[key]||"",required)).join("")}`}`;
     openEditor({title:t(type==="keypad"?"edit_keypad":"edit_fingerprint_reader"),subtitle:reader?.id||"",html:`<div class="form-grid">${common}${type==="keypad"?keypadFields:fpFields}</div>`,onSubmit:async form=>{
       const payload={id:String(form.get("id")||"").trim(),name:String(form.get("name")||"").trim(),reader_type:type,door_id:String(form.get("door_id")||""),enabled:String(form.get("enabled"))==="true",config:{}};
       if(type==="keypad")payload.config={transaction_entity:String(form.get("transaction_entity")||"").trim(),code_entity:String(form.get("code_entity")||"").trim(),action_entity:String(form.get("action_entity")||"").trim(),action_map:collectKeymap()};
-      else if(config.legacy_autodiscovery)delete payload.config;else fpDefinitions.forEach(([key])=>{const value=String(form.get(key)||"").trim();if(value)payload.config[key]=value;});
+      else if(config.legacy_autodiscovery)delete payload.config;else{fpDefinitions.forEach(([key])=>{const value=String(form.get(key)||"").trim();if(value)payload.config[key]=value;});payload.config.hardware_profile=String(form.get("hardware_profile")||"reader_only");}
       const ok=await mutate(reader?`readers/${reader.id}`:"readers",reader?"PUT":"POST",payload,{inline:true});if(ok)await closeEditor();
     }});
   }
@@ -1523,6 +1588,7 @@
   $("#esphome-profile").addEventListener("change",renderEsphomeProfile);
   $("#esphome-install-mode").addEventListener("change",renderEsphomeProfile);
   $("#generate-esphome").addEventListener("click",generateEsphomeConfig);
+  $("#build-esphome").addEventListener("click",buildEsphomeFirmware);
   $("#copy-esphome").addEventListener("click",copyEsphomeConfig);
   $("#download-esphome").addEventListener("click",downloadEsphomeConfig);
   document.addEventListener("keydown",event=>{if(event.key!=="Escape")return;if(fingerModal)closeFingerModal();else if(keypadPerson)closeKeypadModal();else if($("#editor-modal").classList.contains("open"))closeEditor();else if($("#confirm-modal").classList.contains("open"))closeConfirm();});
