@@ -9,6 +9,7 @@ import secrets
 import sqlite3
 import unicodedata
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlencode, urlparse
 from pathlib import Path
 
 from aiohttp import ClientSession, ClientTimeout, WSMsgType, web
@@ -22,7 +23,7 @@ HA_API = "http://supervisor/core/api"
 HA_WS = "ws://supervisor/core/websocket"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 APP_VERSION = os.environ.get("ACCESS_MANAGER_VERSION") or "development"
-READER_FIRMWARE_VERSION = "0.5.2"
+READER_FIRMWARE_VERSION = "0.6.0"
 READER_FIRMWARE_REPOSITORY = (
     "https://github.com/kytos22/esphome-fingerprint-access-reader"
 )
@@ -43,6 +44,22 @@ def configured_options(path=OPTIONS_PATH):
         return {}
     return options if isinstance(options, dict) else {}
 
+def configured_esphome_url():
+    value = str(configured_options().get("esphome_dashboard_url", "")).strip()
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+
+        return ""
+    return value.rstrip("/")
 
 def configured_log_level(path=OPTIONS_PATH):
     options = configured_options(path)
@@ -69,6 +86,7 @@ LABELS = {
     "assigned_door": ("Access Manager door ID",),
     "display_event": ("Access Manager display event",),
     "firmware_version": ("Fingerprint reader firmware version",),
+    "display_language": ("Display language",),
 }
 
 DOMAINS = {
@@ -88,6 +106,7 @@ DOMAINS = {
     "assigned_door": "text",
     "display_event": "text",
     "firmware_version": "sensor",
+    "display_language": "select",
 }
 
 FINGER_LABELS = {
@@ -160,6 +179,12 @@ def esphome_reader_config(payload):
         "device_name": device_name,
         "friendly_name": friendly_name,
     }
+    if profile == "display":
+        display_language = str(payload.get("display_language", "English")).strip()
+        if display_language not in {"English", "Español"}:
+            raise ValueError("Unsupported display language")
+        substitutions["display_language"] = display_language
+
     package_file = "access-reader.yaml" if profile == "display" else "reader-only.yaml"
     if profile == "reader_only":
         board = str(payload.get("board", "esp32dev")).strip().lower()
@@ -3193,6 +3218,9 @@ class FingerprintAdmin:
         self.keypad_packet_buffers = {}
         self.recent_mobile_tag_scans = {}
 
+        self.firmware_jobs = {}
+        self.firmware_tasks = set()
+        self.firmware_lock = asyncio.Lock()
     async def handle_mobile_tag_scan(self, event):
         data = event.get("data", {}) if isinstance(event, dict) else {}
         context = event.get("context", {}) if isinstance(event, dict) else {}
@@ -3292,6 +3320,7 @@ class FingerprintAdmin:
     async def cleanup(self, _app):
         tasks = [task for task in (self.websocket_task, self.deletion_task) if task]
         tasks.extend(self.keypad_packet_tasks.values())
+        tasks.extend(self.firmware_tasks)
         for task in tasks:
             task.cancel()
         if tasks:
@@ -3821,8 +3850,26 @@ class FingerprintAdmin:
                 access_reader["availability"] = (
                     "available" if access_reader["available"] else "unavailable"
                 )
-                version_id = access_reader.get("config", {}).get(
-                    "firmware_version_entity"
+                config = access_reader.get("config", {})
+                legacy = bool(config.get("legacy_autodiscovery"))
+                display_entity = config.get("display_event_entity") or (
+                    self.ha.entities.get("display_event") if legacy else None
+                )
+                access_reader["hardware_profile"] = config.get(
+                    "hardware_profile",
+                    "display" if display_entity else "reader_only",
+                )
+                language_id = config.get("display_language_entity") or (
+                    self.ha.entities.get("display_language") if legacy else None
+                )
+                language_state = self.ha.states.get(language_id, {}) if language_id else {}
+                access_reader["display_language"] = (
+                    language_state.get("state")
+                    if language_state.get("state") not in {None, "unknown", "unavailable"}
+                    else None
+                )
+                version_id = config.get("firmware_version_entity") or (
+                    self.ha.entities.get("firmware_version") if legacy else None
                 )
                 access_reader["firmware_version"] = (
                     self.ha.states.get(version_id, {}).get("state")
@@ -3886,6 +3933,7 @@ class FingerprintAdmin:
             {
                 "version": APP_VERSION,
                 "reader_firmware_version": READER_FIRMWARE_VERSION,
+                "esphome_configured": bool(configured_esphome_url()),
                 "privacy_mode": self.registry.privacy_mode(),
                 "connected": self.ha.connected,
                 "reader_online": self.ha.device_online("display1"),
@@ -4653,6 +4701,72 @@ class FingerprintAdmin:
             {"ok": True, "person_id": person_id, "door_id": door_id, "tag_id": tag_id}
         )
 
+    async def esphome_process(self, session, base_url, command, payload, job):
+        ws_url = re.sub(r"^http", "ws", base_url, count=1) + f"/{command}"
+        async with session.ws_connect(ws_url, heartbeat=30) as socket:
+            await socket.send_json({"type": "spawn", **payload})
+            async for message in socket:
+                if message.type != WSMsgType.TEXT:
+                    continue
+                event = json.loads(message.data)
+                if event.get("event") == "line":
+                    line = str(event.get("data", "")).rstrip()
+                    if line:
+                        job["logs"] = (job["logs"] + [line])[-80:]
+                elif event.get("event") == "exit":
+                    code = int(event.get("code", 1))
+                    if code:
+                        raise RuntimeError(f"ESPHome {command} failed with exit code {code}")
+                    return
+        raise RuntimeError(f"ESPHome {command} connection closed unexpectedly")
+
+    async def run_firmware_job(self, job_id, yaml, filename, install):
+        job = self.firmware_jobs[job_id]
+        base_url = configured_esphome_url()
+        if not base_url:
+            job.update(status="failed", error="Configure esphome_dashboard_url in the add-on options")
+            return
+        timeout = ClientTimeout(total=None, sock_connect=15, sock_read=None)
+        try:
+            async with self.firmware_lock, ClientSession(timeout=timeout) as session:
+                job.update(status="saving", step="saving")
+                async with session.get(f"{base_url}/") as dashboard:
+                    if dashboard.status >= 400:
+                        raise RuntimeError(
+                            f"ESPHome Device Builder is unavailable ({dashboard.status})"
+                        )
+                    xsrf_cookie = dashboard.cookies.get("_xsrf")
+                xsrf = xsrf_cookie.value if xsrf_cookie else ""
+                request_headers = {"Content-Type": "text/yaml; charset=utf-8"}
+                if xsrf:
+                    request_headers["X-CSRFToken"] = xsrf
+                query = urlencode({"configuration": filename})
+                async with session.post(
+                    f"{base_url}/edit?{query}", data=yaml,
+                    headers=request_headers,
+                    cookies={"_xsrf": xsrf} if xsrf else None,
+                ) as response:
+                    if response.status >= 400:
+                        detail = (await response.text())[:500]
+                        raise RuntimeError(f"ESPHome could not save the configuration: {detail or response.status}")
+                job.update(status="compiling", step="compiling")
+                await self.esphome_process(
+                    session, base_url, "compile", {"configuration": filename}, job
+                )
+                if install:
+                    job.update(status="installing", step="installing")
+                    await self.esphome_process(
+                        session, base_url, "run",
+                        {"configuration": filename, "port": "OTA"}, job,
+                    )
+                job.update(status="completed", step="completed", finished_at=now_iso())
+        except asyncio.CancelledError:
+            job.update(status="cancelled", step="cancelled", finished_at=now_iso())
+            raise
+        except Exception as error:
+            LOGGER.exception("ESPHome firmware job %s failed", job_id)
+            job.update(status="failed", step="failed", error=str(error), finished_at=now_iso())
+
     async def generate_esphome_config(self, request):
         self.require_admin_request(request)
         payload = await request.json()
@@ -4667,6 +4781,90 @@ class FingerprintAdmin:
                 "profile": str(payload.get("profile", "reader_only")),
             }
         )
+
+    def queue_firmware_job(self, yaml, filename, install, reader_id=None):
+        job_id = secrets.token_urlsafe(9)
+        self.firmware_jobs[job_id] = {
+            "id": job_id,
+            "reader_id": reader_id,
+            "configuration": filename,
+            "install": install,
+            "status": "queued",
+            "step": "queued",
+            "logs": [],
+            "error": None,
+            "created_at": now_iso(),
+        }
+        task = asyncio.create_task(
+            self.run_firmware_job(job_id, yaml, filename, install)
+        )
+        self.firmware_tasks.add(task)
+        task.add_done_callback(self.firmware_tasks.discard)
+        return self.firmware_jobs[job_id]
+
+    async def build_esphome_firmware(self, request):
+        self.require_admin_request(request)
+        if not configured_esphome_url():
+            raise web.HTTPConflict(
+                text="Configure the ESPHome Device Builder URL in the add-on options"
+            )
+        payload = await request.json()
+        try:
+            yaml = esphome_reader_config(payload)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise web.HTTPBadRequest(text=str(error))
+        device_name = str(payload.get("device_name", "")).strip()
+        filename = f"{device_name}-access-manager.yaml"
+        install = bool(payload.get("install")) and payload.get("install_mode") == "existing"
+        return web.json_response(
+            self.queue_firmware_job(yaml, filename, install)
+        )
+
+    async def update_reader_firmware(self, request):
+        self.require_admin_request(request)
+        reader_id = str(request.match_info["reader_id"])
+        reader = self.registry.reader(reader_id)
+        if not reader or reader["reader_type"] != "fingerprint":
+            raise web.HTTPNotFound(text="Fingerprint reader not found")
+        config = reader.get("config", {})
+        profile = config.get(
+            "hardware_profile",
+            "display"
+            if (
+                config.get("display_event_entity")
+                or (config.get("legacy_autodiscovery") and self.ha.entities.get("display_event"))
+            ) else "reader_only",
+        )
+        payload = {
+            "profile": profile,
+            "install_mode": "existing",
+            "device_name": config.get("device_name") or reader_id.replace("_", "-"),
+            "friendly_name": reader["name"],
+        }
+        if profile == "display":
+            payload["display_language"] = (
+                config.get("display_language")
+                or ("Español" if config.get("preferred_language") == "es" else "English")
+            )
+        else:
+            firmware = config.get("firmware_config", {})
+            if not all(firmware.get(key) for key in ("board", "fingerprint_tx_pin", "fingerprint_rx_pin")):
+                raise web.HTTPConflict(
+                    text="Configure the board and UART pins before updating this sensor-only reader"
+                )
+            payload.update(firmware)
+        yaml = esphome_reader_config(payload)
+        filename = f"{payload['device_name']}-access-manager.yaml"
+        return web.json_response(
+            self.queue_firmware_job(yaml, filename, True, reader_id)
+        )
+
+    async def firmware_job(self, request):
+        self.require_admin_request(request)
+        job = self.firmware_jobs.get(str(request.match_info["job_id"]))
+        if not job:
+            raise web.HTTPNotFound(text="Firmware job not found")
+        return web.json_response(job)
 
     async def create_reader(self, request):
         self.require_admin_request(request)
@@ -4706,7 +4904,7 @@ class FingerprintAdmin:
                 text=f"Missing reader entities: {', '.join(missing)}"
             )
         optional = (
-            ("assigned_door_entity", "display_event_entity", "firmware_version_entity")
+            ("assigned_door_entity", "display_event_entity", "firmware_version_entity", "display_language_entity")
             if reader_type == "fingerprint"
             else ()
         )
@@ -4741,6 +4939,11 @@ class FingerprintAdmin:
             raise web.HTTPBadRequest(
                 text="Display event and assigned door entities must use the text domain"
             )
+        if config.get("display_language_entity") and not str(
+            config["display_language_entity"]
+        ).startswith("select."):
+            raise web.HTTPBadRequest(text="Display language entity must use the select domain")
+
 
     async def update_reader(self, request):
         self.require_admin_request(request)
@@ -4764,6 +4967,35 @@ class FingerprintAdmin:
             raise web.HTTPBadRequest(text=str(error))
         await self.ha.sync_reader_door(reader_id)
         return web.json_response({"ok": True})
+    async def set_reader_display_language(self, request):
+        self.require_admin_request(request)
+        reader_id = str(request.match_info["reader_id"])
+        reader = self.registry.reader(reader_id)
+        if not reader or reader["reader_type"] != "fingerprint":
+            raise web.HTTPNotFound(text="Fingerprint reader not found")
+        config = reader.get("config", {})
+        entity_id = str(config.get("display_language_entity") or (
+            self.ha.entities.get("display_language")
+            if config.get("legacy_autodiscovery") else "")).strip()
+        if not entity_id:
+            raise web.HTTPConflict(
+                text="This reader has no display language entity configured"
+            )
+        language = str((await request.json()).get("language", "")).strip().lower()
+        option = {"en": "English", "es": "Español"}.get(language)
+        if not option:
+            raise web.HTTPBadRequest(text="Unsupported display language")
+        await self.ha.call_service(
+            "select", "select_option",
+            {"entity_id": entity_id, "option": option},
+        )
+        self.registry.add_event(
+            "reader_display_language_changed",
+            detail=f"{reader_id} · {option}",
+            source="access_manager",
+        )
+        return web.json_response({"ok": True, "language": language})
+
 
     @staticmethod
     def auto_lock_automation_id(door_id):
@@ -5295,8 +5527,15 @@ class FingerprintAdmin:
         app.router.add_post(
             "/api/esphome/config", self.generate_esphome_config
         )
+        app.router.add_post("/api/esphome/build", self.build_esphome_firmware)
+        app.router.add_get("/api/esphome/jobs/{job_id}", self.firmware_job)
+        app.router.add_post(
+            "/api/readers/{reader_id}/firmware/update", self.update_reader_firmware)
         app.router.add_post("/api/readers", self.create_reader)
         app.router.add_put("/api/readers/{reader_id}", self.update_reader)
+        app.router.add_put(
+            "/api/readers/{reader_id}/display-language", self.set_reader_display_language
+        )
         app.router.add_put("/api/automations/auto-lock", self.save_auto_lock_automation)
         app.router.add_put(
             "/api/automations/door-open", self.save_door_open_automation
