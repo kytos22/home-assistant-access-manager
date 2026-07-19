@@ -1,25 +1,25 @@
 # ESPHome Fingerprint Access Reader integration
 
-This app integrates with [ESPHome Fingerprint Access Reader](https://github.com/kytos22/esphome-fingerprint-access-reader) through entities discovered by Home Assistant from ESPHome. The two projects do not use a direct IP connection or shared secrets.
+This app integrates with the [included ESPHome Fingerprint Access Reader](esphome/README.md) through entities discovered by Home Assistant from ESPHome. Both sources live in this repository, but the running app and reader still communicate only through Home Assistant entities and do not share credentials.
 
 ## Version compatibility
 
-Access Manager 0.12.0 recommends ESPHome Fingerprint Access Reader 0.5.0. The panel can generate release-pinned ESPHome YAML for the reference display terminal or a reader-only installation on any ESPHome-supported ESP32 board. Firmware 0.5.0 also publishes its project version so Access Manager can show whether each configured reader is current.
+The current Access Manager source recommends ESPHome Fingerprint Access Reader 0.6.1. The panel can generate release-pinned ESPHome YAML for the reference display terminal or a reader-only installation on any ESPHome-supported ESP32 board. The reader publishes its installed version during boot.
 
 Access Manager 0.9.0 and reader firmware 0.4.0 remain the first coordinated releases to implement the `v1` display-feedback contract described below. Older reader firmware remains usable for fingerprint access, but version status requires the optional firmware-version sensor and panel feedback requires the two optional display entities.
 
 ## Configuration
 
-1. In Access Manager, open **Settings → ESPHome reader configurator**, choose the hardware profile and select **New device** or **Existing device update**.
-2. Enter the ESPHome device name. For an update it must exactly match the current name. Configure the board and UART pins for a reader-only device, then download the generated YAML.
-3. In ESPHome Device Builder, use **New device → Import from file**. The file is a release-pinned package wrapper; ESPHome downloads the complete firmware when it validates or compiles the configuration.
-4. Ensure `wifi_ssid`, `wifi_password`, `api_encryption_key`, and `ota_password` exist in ESPHome's `secrets.yaml`. Their values are never entered into Access Manager. On an existing device, preserve the current values.
-5. Validate the configuration. Install a new device over USB first, then adopt it in Home Assistant. For an existing device, create a backup and validate before using OTA.
-6. Create a **Fingerprint** reader in Access Manager.
-7. Assign the reader entities: access event, management event, name registry, enrollment/deletion controls, the firmware-version sensor, and optionally the two Access Manager display text entities.
-8. Associate the reader with a door and manage users and fingerprints from Access Manager.
+1. Optionally connect Access Manager to an authenticated, separately reachable ESPHome Device Builder endpoint. The manual flow remains available without a connection.
+2. Open **Settings → ESPHome reader configurator**, choose the hardware profile and select **New device** or **Existing device update**.
+3. Enter the ESPHome device name. For an update it must exactly match the current name, and the selected configuration must be that reader's canonical Device Builder YAML filename. Configure the board and UART pins for a reader-only device.
+4. Review the release-pinned wrapper. Create/compile it through the connected Device Builder, or download and import it manually.
+5. Enter the existing Wi-Fi, API-encryption, and OTA secret key names. Access Manager saves those names in the linked reader's firmware profile and generates the complete wrapper, but their values are never entered into Access Manager. On an existing device, preserve both the selected names and current values.
+6. Validate the configuration. Install a new device over USB first, then adopt it in Home Assistant. For an existing device, enable Device Builder version history and confirm the exact filename before OTA.
+7. Create a **Fingerprint** reader in Access Manager and link its exact Device Builder configuration filename.
+8. Assign its entities, associate it with a door, and manage users and fingerprints from Access Manager.
 
-Changing an existing device name can create a second ESPHome/Home Assistant identity. Changing `api_encryption_key` breaks the existing Home Assistant API relationship until the integration is updated or re-adopted. Changing `ota_password` prevents OTA updates that still use the old password and can require a USB recovery flash. Missing or differently named secret keys stop validation before anything is installed. Access Manager deliberately does not read or write the ESPHome configuration directory and never handles these credential values. See [FIRMWARE_DELIVERY.md](FIRMWARE_DELIVERY.md) for the delivery rationale and recovery checklist.
+Changing an existing device name can create a second ESPHome/Home Assistant identity. Changing the selected API-encryption secret value breaks the existing Home Assistant API relationship until the integration is updated or re-adopted. Changing the selected OTA secret value prevents updates that still use the old password and can require a USB recovery flash. A missing or incorrectly selected secret key name stops validation before anything is installed. Access Manager deliberately does not read or write the ESPHome configuration directory and never handles these credential values. See [FIRMWARE_DELIVERY.md](FIRMWARE_DELIVERY.md) for the delivery rationale and recovery checklist.
 
 ## Event contract
 

@@ -10,7 +10,7 @@ Access Manager does not connect directly to physical hardware. Every reader, key
 
 | Device type | Support level | Requirements |
 | --- | --- | --- |
-| Fingerprint terminal | Reference hardware | [ESPHome Fingerprint Access Reader](https://github.com/kytos22/esphome-fingerprint-access-reader) on a Waveshare ESP32-C6-Touch-LCD-1.47 with a Grow-compatible UART fingerprint sensor. |
+| Fingerprint terminal | Reference hardware | The [included ESPHome firmware](esphome/README.md) on a Waveshare ESP32-C6-Touch-LCD-1.47 with a Grow-compatible UART fingerprint sensor. |
 | Zigbee/MQTT keypad | Protocol compatible | Three Home Assistant entities that expose transaction, code/tag and semantic action. There is no model whitelist. |
 | Door contact | Optional for auto-lock; required for open-door alerts | A `binary_sensor.*` entity whose Home Assistant device class is `door`. |
 | Door actuator | Entity compatible | A supported `lock`, `switch`, `button`, `input_button` or `cover` entity. |
@@ -102,11 +102,11 @@ The administrator-only **Settings** tab provides **Privacy mode**, enabled by de
 
 The panel never writes decrypted values to application or activity logs. A value must exist briefly in the administrator's browser memory and page when it is displayed.
 
-The same tab includes the **ESPHome reader configurator**. Choose the reference display terminal or a reader-only profile, then select whether this is a new device or an update of an existing one. The downloaded file is intentionally small: it is a release-pinned ESPHome package wrapper, and ESPHome retrieves and compiles the complete firmware during validation or installation.
+The same tab includes an optional authenticated **ESPHome Device Builder connection** and the **ESPHome reader configurator**. Access Manager is only a client of the existing Device Builder: it does not include ESPHome or write into Home Assistant's shared ESPHome directory. Choose the reference display terminal or a reader-only profile, then select whether this is a new device or an update of an existing one. The generated file is intentionally small: it is a release-pinned package wrapper, and Device Builder retrieves and compiles the complete firmware.
 
-For a new device, import the downloaded file with **ESPHome Device Builder → New device → Import from file**, add the four named keys to ESPHome's `secrets.yaml`, validate, and install. The first installation normally uses USB; later updates can use OTA.
+For a new device, create the wrapper through a connected Device Builder or import the downloaded file manually, add the four named keys to ESPHome's `secrets.yaml`, validate, and install. The first installation normally uses USB; later updates can use OTA.
 
-For an existing device, create a backup first, enter its exact current ESPHome device name, and keep the existing `wifi_ssid`, `wifi_password`, `api_encryption_key`, and `ota_password` values unchanged. Validate before using OTA. Changing the device name or either authentication secret can make Home Assistant adoption or OTA updates require manual recovery. Access Manager only names these secret keys; it never requests, receives, embeds, or stores their values. See [Firmware delivery and credential safety](FIRMWARE_DELIVERY.md) for the evaluated delivery options and recovery notes.
+For an existing device, select its exact canonical Device Builder filename, enable Device Builder version history, preview the generated wrapper, and explicitly confirm that filename before overwriting it. Enter the secret key names already used by that device; they do not have to use the defaults and can differ per reader. Access Manager stores the names in the linked reader's firmware profile but never requests, receives, embeds, or stores their values. Manual generation/download remains available when no connection is configured. See [Firmware delivery and credential safety](FIRMWARE_DELIVERY.md) for the supported boundary and recovery notes.
 
 ### Updating
 
@@ -248,13 +248,11 @@ For `source: display`, Access Manager accepts only `lock`. Door tests are restri
 
 ## Fingerprint reader firmware
 
-Fingerprint templates remain in the sensor. The **Settings** configurator generates a small release-pinned package wrapper for either the reference display terminal or a generic reader-only ESP32. ESPHome downloads and compiles the compatible firmware project, which is maintained separately:
-
-<https://github.com/kytos22/esphome-fingerprint-access-reader>
+Fingerprint templates remain in the sensor. The **Settings** configurator generates a small release-pinned package wrapper for either the reference display terminal or a generic reader-only ESP32. The separate ESPHome Device Builder downloads and compiles the compatible source from this repository's [`esphome/`](esphome/) directory. Firmware tags use `firmware-vX.Y.Z`, independently from the app's `vX.Y.Z` release tags.
 
 The shared entity contract and setup sequence are documented in [INTEGRATION.md](INTEGRATION.md). Delivery choices, credential-preservation rules, and recovery guidance are documented in [FIRMWARE_DELIVERY.md](FIRMWARE_DELIVERY.md).
 
-Firmware 0.5.0 exposes ESPHome project metadata and a `Fingerprint reader firmware version` diagnostic sensor. Map that sensor in the reader editor to see the installed and recommended versions. Compatible display firmware also exposes optional `Access Manager door ID` and `Access Manager display event` text entities. Add both to enable panel feedback. Access Manager synchronizes the assigned door ID and sends only door-matching, credential-free display messages; readers without these entities continue to work without display feedback.
+Firmware 0.6.1 exposes ESPHome project metadata, publishes the `Fingerprint reader firmware version` diagnostic sensor during boot, and lets every reader profile map its own ESPHome secret key names. Map the version sensor in the reader editor to see the installed and recommended versions. Compatible display firmware also exposes optional `Access Manager door ID` and `Access Manager display event` text entities. Add both to enable panel feedback. Access Manager synchronizes the assigned door ID and sends only door-matching, credential-free display messages; readers without these entities continue to work without display feedback.
 
 ## Data and backups
 

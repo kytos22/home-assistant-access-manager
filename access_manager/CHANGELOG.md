@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.14.0
+
+- Removes the experimental bundled ESPHome compiler and writable shared-configuration mapping.
+- Adds an optional authenticated Device Builder `/ws` connection with encrypted-at-rest bearer tokens.
+- Maps each reader to its exact Device Builder configuration, blocks device-name/filename collisions, and requires version history plus explicit overwrite confirmation.
+- Persists remote compile/install operations and follows Device Builder job progress while retaining manual YAML generation and import.
+- Stores a per-reader firmware profile and lets each installation choose its existing ESPHome secret key names without exposing their values.
+- Maintains the ESPHome reader source under this repository's `esphome/` directory and pins generated wrappers to unambiguous `firmware-vX.Y.Z` tags.
+
+## 0.13.1
+
+- Makes firmware creation and OTA updates work immediately with the standard ESPHome add-on, without exposing a dashboard port or configuring a URL.
+- Uses a bundled ESPHome compiler with the shared Home Assistant ESPHome directory, preserving all secret values in ESPHome's existing `secrets.yaml`.
+- Keeps the dashboard URL as an optional advanced override for external ESPHome installations.
+
 ## 0.13.0
 
 - Shows whether each fingerprint reader has a display and sensor or only a sensor.
@@ -7,6 +22,15 @@
 - Creates and compiles managed reader configurations directly in ESPHome Device Builder.
 - Adds confirmed one-button OTA firmware updates with live progress and errors.
 - Keeps Wi-Fi, API-encryption, and OTA secret values inside ESPHome.
+
+## 0.12.2
+
+- Updates generated reader configurations to Fingerprint Access Reader 0.5.2, which publishes its installed version during boot.
+- Distinguishes a configured firmware sensor that has not reported yet from a reader without firmware-version configuration.
+
+## 0.12.1
+
+- Updates generated ESPHome reader configurations and firmware status to Fingerprint Access Reader 0.5.1, which fixes fresh compilation of the release-pinned display profile.
 
 ## 0.12.0
 

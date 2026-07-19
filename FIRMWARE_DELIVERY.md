@@ -1,47 +1,66 @@
 # Firmware delivery and credential safety
 
-Access Manager generates a small ESPHome YAML wrapper instead of a universal binary. The wrapper pins a tested release of the separate fingerprint-reader repository. ESPHome Device Builder downloads that package, combines it with the selected substitutions and installation-local secrets, validates it, and compiles firmware for the target board.
+Access Manager and ESPHome Fingerprint Access Reader are maintained in this single repository. They remain separate runtime components: Access Manager generates a small release-pinned YAML wrapper, while the existing ESPHome Device Builder owns each device configuration, validates it, compiles it, installs it, and remains the normal recovery path. Firmware packages live under `esphome/` and use `firmware-vX.Y.Z` tags so they cannot be confused with app releases.
 
-Access Manager 0.13.0 can send that wrapper directly to a configured ESPHome Device Builder URL, compile it there, and install existing devices over OTA. ESPHome remains responsible for compilation and keeps all secret values in its own `secrets.yaml`; Access Manager only sends the generated wrapper containing `!secret` references.
+Access Manager does not bundle ESPHome, write to Home Assistant's shared ESPHome directory, or read a device YAML or `secrets.yaml`. Wi-Fi, API-encryption, and OTA secret values stay exclusively in Device Builder.
 
-Set `esphome_dashboard_url` in the Access Manager add-on options to the reachable ESPHome Device Builder address. If the standard ESPHome add-on is used, expose its dashboard port only on a trusted network. New devices are compiled from the panel but still need their first USB installation from ESPHome.
+## Supported connection
 
-The generated file uses a dedicated `-access-manager.yaml` suffix, so Access Manager does not overwrite an existing hand-maintained device file.
+The optional connection in **Settings → ESPHome Device Builder connection** uses Device Builder's multiplexed `/ws` API and an optional bearer token. The token is encrypted at rest in the add-on's private `/data` volume and is never returned to the browser after saving.
+
+Access Manager can list Device Builder configurations, create a new wrapper, update the exact configuration selected for a reader, start a remote compile or OTA installation, and follow its persistent job. Existing files are updated only after all of these checks pass:
+
+- the exact `configuration` filename exists and belongs to the expected `esphome.name`;
+- no other configuration advertises the same device name;
+- Device Builder version history is enabled;
+- the administrator previews the generated YAML and confirms the exact filename.
+
+Access Manager never creates a second `*-access-manager.yaml` file for an existing device.
+
+## Home Assistant add-on boundary
+
+Device Builder's Home Assistant trusted-ingress endpoint rejects requests from other add-ons by design. Do not expose port 6052 with `leave_front_door_open`: that disables dashboard authentication. Until Device Builder provides a supported authenticated inter-add-on route, automatic control requires a separately reachable authenticated Device Builder endpoint.
+
+The connection is optional. YAML generation, copy, download, manual import, validation, logs, compilation, OTA, and recovery remain available through Device Builder without connecting it to Access Manager.
+
+## Installation portability
+
+No Device Builder URL, token, device name, board, pin, configuration filename, or Home Assistant entity is built into Access Manager. Each installation stores its own mappings in the existing SQLite database. Schema additions are created idempotently during startup, so upgrades keep existing readers and credentials.
+
+The initial reader setup stores a firmware profile under the Access Manager `reader_id`: ESPHome device name, friendly name, exact Device Builder configuration filename, hardware profile, language, and the four secret key names selected by the administrator. The generated wrapper maps those names into package substitutions. Secret values remain exclusively in Device Builder's `secrets.yaml` and may use installation-specific names such as `wifi_ssid2`.
+
+The Device Builder bearer token is encrypted with an installation-local key. The database and that key both live in the add-on's private `/data` volume and are therefore restored together by a Home Assistant add-on backup. A restored installation can replace or remove the connection without affecting YAML generation.
+
+**Test connection** verifies the read-only device, preferences, and persistent-job APIs before saving. An incompatible, unreachable, or unauthenticated Device Builder is reported as a connection error; Access Manager does not fall back to a hidden compiler or shared-directory write.
+
+Access Manager assumes that the selected Device Builder can already compile the target firmware independently. A standalone Device Builder host must provide the operating-system libraries required by its ESPHome/ESP-IDF toolchain; for example, the isolated Ubuntu 24.04 compile test required `libusb-1.0-0` so ESP-IDF could run OpenOCD. Those compiler dependencies belong to Device Builder and are deliberately not added to the Access Manager image.
 
 ## Recommended workflow
 
 ### New device
 
-1. Generate the YAML in **Settings → ESPHome reader configurator** using **New device**.
-2. Import the downloaded file into ESPHome Device Builder with **New device → Import from file**.
-3. Add `wifi_ssid`, `wifi_password`, `api_encryption_key`, and `ota_password` to ESPHome's `secrets.yaml` if they do not already exist.
-4. Validate the configuration.
-5. Perform the first installation over USB, adopt the device in Home Assistant, and map its entities in Access Manager.
+1. Generate and review the wrapper in Access Manager.
+2. Either create it through a connected Device Builder or download and import it manually.
+3. Select the secret key names used by this installation and ensure those keys exist in Device Builder's `secrets.yaml`.
+4. Validate the configuration and perform the first installation over USB.
+5. Adopt the device in Home Assistant, create its Access Manager reader, map the entities, and link the exact Device Builder configuration filename.
 
 ### Existing device update
 
-1. Create a Home Assistant/ESPHome backup and keep a copy of the working YAML.
-2. Generate the wrapper using **Existing device update** and the exact current ESPHome device name.
-3. Keep all four existing secret values unchanged.
-4. Import or merge the wrapper, validate it, and only then install it over OTA.
-5. Confirm that the device reconnects to ESPHome and Home Assistant before removing the previous YAML backup.
+1. Confirm the canonical Device Builder filename and enable its version history.
+2. Link that exact filename to the Access Manager reader.
+3. Keep the existing device name and secret values unchanged.
+4. Review the generated wrapper and confirm the exact overwrite.
+5. Compile/install through Device Builder and confirm that the reader reconnects. Device Builder remains available for logs and recovery.
 
 ## Credential failure modes
 
 | Change or problem | Result | Recovery |
 | --- | --- | --- |
-| A required secret key is missing or named differently | ESPHome validation fails before compilation | Add the exact key name to `secrets.yaml`; do not paste the value into Access Manager |
-| `api_encryption_key` changes | Home Assistant can no longer authenticate the device API with the previous key | Restore the old value or update/re-adopt the ESPHome integration with the new key |
-| `ota_password` changes unexpectedly | The next OTA upload cannot authenticate with the previous password | Restore the old value; if unavailable, perform a local USB flash |
-| `device_name` changes | ESPHome and Home Assistant may treat the reader as a different device | Restore the original name, or deliberately adopt and remap the replacement |
-| Board or UART pins are wrong | Validation may fail, the device may not boot correctly, or the sensor will remain offline | Restore the working board/pins and use USB recovery if OTA is unavailable |
+| Required secret key is missing | Validation fails before compilation | Add the key to Device Builder's `secrets.yaml` |
+| `api_encryption_key` changes | Home Assistant cannot authenticate the existing device API | Restore the old value or deliberately re-adopt the device |
+| `ota_password` changes | The next OTA upload cannot authenticate | Restore it or recover over USB |
+| `device_name` changes | ESPHome/Home Assistant may create a different identity | Restore the original name or deliberately remap the replacement |
+| Board or UART pins are wrong | Validation, boot, or sensor communication fails | Restore the working settings and use USB recovery if needed |
 
-Access Manager never asks for, receives, embeds, logs, or stores Wi-Fi, API-encryption, or OTA secret values. It does not request access to ESPHome's configuration directory or Supervisor manager privileges.
-
-## Delivery options evaluated
-
-The release-pinned wrapper plus ESPHome **Import from file** is the current recommended balance: it is short, reviewable, works with device-specific secrets, supports the reference display and configurable reader-only boards, and uses ESPHome's normal validation, compilation, adoption, and OTA paths.
-
-A single precompiled image is not currently appropriate for every reader-only ESP32 because board selection and UART pins vary. Precompiled installation also needs a secure provisioning and recovery design for Wi-Fi, API encryption, and OTA authentication. ESPHome project import metadata can improve discovery for a fixed hardware product, but templates must not contain installation secrets and it does not remove the need to preserve credentials on upgrades.
-
-Directly writing files into `/config/esphome` remains rejected. The guided installer instead uses ESPHome's own authenticated dashboard API at the explicitly configured URL, serializes firmware jobs, shows bounded logs, and requires confirmation before OTA installation.
+The reader-only profile remains configurable because ESP32 board and UART choices vary. A universal precompiled image would need a separate secure provisioning and recovery design, so it is not used here.

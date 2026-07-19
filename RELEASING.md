@@ -21,3 +21,5 @@ Every Access Manager release must use the same version in the add-on manifest, c
 10. Verify `/health`, the existing data, and the sidebar panel through Home Assistant ingress on both desktop and the mobile app. Confirm that the new panel build appears without clearing either cache.
 
 Home Assistant add-on auto-update only sees a release after the version in `access_manager/config.yaml` is available on the repository's default branch. Do not create the tag before that commit is on `main`.
+
+Reader firmware is released from the same repository with `firmware-vX.Y.Z` tags and the separate checklist in [`esphome/RELEASING.md`](esphome/RELEASING.md). Never use a plain `vX.Y.Z` firmware tag because that namespace belongs to Access Manager releases.

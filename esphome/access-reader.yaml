@@ -1,0 +1,1190 @@
+substitutions:
+  firmware_version: "0.6.1"
+  name_store_component_source: github://kytos22/home-assistant-access-manager@firmware-v0.6.1
+  device_name: fingerprint-access-reader
+  friendly_name: Fingerprint Access Reader
+  display_language: English
+  spi_clk_pin: GPIO1
+  spi_mosi_pin: GPIO2
+  fingerprint_tx_pin: GPIO6
+  fingerprint_rx_pin: GPIO7
+  display_dc_pin: GPIO15
+  display_cs_pin: GPIO14
+  display_reset_pin: GPIO22
+  backlight_pin: GPIO23
+  touch_sda_pin: GPIO18
+  touch_scl_pin: GPIO19
+  touch_reset_pin: GPIO20
+  touch_interrupt_pin: GPIO21
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  project:
+    name: kytos22.fingerprint_access_reader
+    version: ${firmware_version}
+  on_boot:
+    priority: -10
+    then:
+      - script.execute: wake_screen
+      - script.execute: set_idle_screen
+
+external_components:
+  - source: github://widget/esphome-components@008c3f80521cba72a42f9d112c2d5228b8b18a8e
+    components: [axs5106]
+    refresh: 0s
+  - source: ${name_store_component_source}
+    components: [fingerprint_name_store]
+    refresh: 1d
+
+fingerprint_name_store:
+
+esp32:
+  board: esp32-c6-devkitc-1
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  id: api_server
+  reboot_timeout: 0s
+  encryption:
+    key: ${api_encryption_key_value}
+
+ota:
+  - platform: esphome
+    password: ${ota_password_value}
+
+wifi:
+  ssid: ${wifi_ssid_value}
+  password: ${wifi_password_value}
+
+
+spi:
+  clk_pin: ${spi_clk_pin}
+  mosi_pin: ${spi_mosi_pin}
+
+i2c:
+  id: touch_bus
+  sda: ${touch_sda_pin}
+  scl: ${touch_scl_pin}
+  frequency: 400kHz
+  scan: false
+
+# Fingerprint reader UART
+uart:
+  id: uart_fp
+  tx_pin: ${fingerprint_tx_pin}
+  rx_pin: ${fingerprint_rx_pin}
+  baud_rate: 57600
+
+# Display backlight
+output:
+  - platform: ledc
+    pin: ${backlight_pin}
+    id: backlight_pwm
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: "Backlight Fingerprint Panel"
+    output: backlight_pwm
+    restore_mode: ALWAYS_ON
+
+font:
+  - file: "gfonts://Roboto"
+    id: font_small
+    size: 16
+    glyphsets:
+      - GF_Latin_Core
+    ignore_missing_glyphs: true
+
+  - file: "gfonts://Roboto"
+    id: font_mid
+    size: 24
+    glyphsets:
+      - GF_Latin_Core
+    ignore_missing_glyphs: true
+
+  - file: "gfonts://Roboto@700"
+    id: font_big
+    size: 28
+    glyphsets:
+      - GF_Latin_Core
+    ignore_missing_glyphs: true
+
+  - file: "gfonts://Roboto@700"
+    id: font_name_small
+    size: 20
+    glyphsets:
+      - GF_Latin_Core
+    ignore_missing_glyphs: true
+
+  - file: "gfonts://Material Symbols Outlined"
+    id: font_icon
+    size: 64
+    glyphs:
+      - "\U0000e90d"  # fingerprint
+
+globals:
+  - id: screen_awake
+    type: bool
+    restore_value: no
+    initial_value: "true"
+
+  - id: last_activity_ms
+    type: unsigned long
+    restore_value: no
+    initial_value: "0"
+
+  - id: event_sequence
+    type: uint32_t
+    restore_value: yes
+    initial_value: "0"
+
+  - id: enrollment_cancel_requested
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: current_access_sequence
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+  - id: enrollment_scan_number
+    type: int
+    restore_value: no
+    initial_value: "0"
+
+  - id: delete_count_before
+    type: int
+    restore_value: no
+    initial_value: "-1"
+
+  - id: delete_count_after
+    type: int
+    restore_value: no
+    initial_value: "-1"
+
+  - id: touch_lock_armed
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: touch_lock_armed_ms
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+  - id: panel_event_active
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: last_panel_event_id
+    type: std::string
+    restore_value: no
+    initial_value: '""'
+
+text_sensor:
+  - platform: template
+    name: "Fingerprint reader firmware version"
+    id: firmware_version_sensor
+    entity_category: diagnostic
+    icon: mdi:chip
+    lambda: 'return {"${firmware_version}"};'
+    update_interval: never
+
+  - platform: template
+    name: "Fingerprint status"
+    id: estado_huella
+
+  - platform: template
+    name: "Fingerprint user"
+    id: usuario_huella
+
+  - platform: template
+    name: "Fingerprint finger"
+    id: dedo_huella
+
+  - platform: template
+    name: "Fingerprint access event"
+    id: evento_huella
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Fingerprint management event"
+    id: evento_gestion_huella
+    entity_category: diagnostic
+
+text:
+  - platform: template
+    name: "Fingerprint name registry"
+    id: gestion_nombres_huella
+    mode: text
+    optimistic: true
+    restore_value: false
+    entity_category: config
+    on_value:
+      - lambda: |-
+          const size_t first_separator = x.find('|');
+          if (first_separator == std::string::npos) return;
+
+          const std::string operation = x.substr(0, first_separator);
+          const size_t second_separator = x.find('|', first_separator + 1);
+          const std::string slot_text = x.substr(
+              first_separator + 1,
+              second_separator == std::string::npos
+                  ? std::string::npos
+                  : second_separator - first_separator - 1);
+          const int slot = atoi(slot_text.c_str());
+          if (slot < 1 || slot > 50) return;
+
+          const size_t third_separator = second_separator == std::string::npos
+                                             ? std::string::npos
+                                             : x.find('|', second_separator + 1);
+          std::string name = second_separator == std::string::npos
+                                 ? ""
+                                 : x.substr(second_separator + 1,
+                                            third_separator == std::string::npos
+                                                ? std::string::npos
+                                                : third_separator - second_separator - 1);
+          std::string finger = third_separator == std::string::npos
+                                   ? ""
+                                   : x.substr(third_separator + 1);
+          name.erase(std::remove(name.begin(), name.end(), '\n'), name.end());
+          name.erase(std::remove(name.begin(), name.end(), '\r'), name.end());
+          name.erase(std::remove(name.begin(), name.end(), '\t'), name.end());
+          finger.erase(std::remove(finger.begin(), finger.end(), '\n'), finger.end());
+          finger.erase(std::remove(finger.begin(), finger.end(), '\r'), finger.end());
+          finger.erase(std::remove(finger.begin(), finger.end(), '\t'), finger.end());
+          if (name.size() > 48) name.resize(48);
+          if (finger.size() > 24) finger.resize(24);
+          if (operation == "set" && name.empty()) return;
+          if (operation != "set" && operation != "delete") return;
+
+          const bool saved = operation == "set"
+                                 ? FingerprintNameStore::instance().set(slot, name, finger)
+                                 : FingerprintNameStore::instance().erase(slot);
+          ESP_LOGI("fingerprint_names", "%s local identity for ID %d: %s",
+                   operation == "set" ? "Saved" : "Deleted", slot,
+                   saved ? "OK" : "ERROR");
+
+  - platform: template
+    name: "Access Manager door ID"
+    id: access_manager_door_id
+    mode: text
+    optimistic: true
+    restore_value: true
+    min_length: 0
+    max_length: 64
+    entity_category: config
+
+  - platform: template
+    name: "Access Manager display event"
+    id: access_manager_display_event
+    mode: text
+    optimistic: true
+    restore_value: false
+    min_length: 0
+    max_length: 255
+    entity_category: config
+    on_value:
+      - lambda: |-
+          const size_t first = x.find('|');
+          const size_t second = first == std::string::npos
+                                    ? std::string::npos
+                                    : x.find('|', first + 1);
+          const size_t third = second == std::string::npos
+                                   ? std::string::npos
+                                   : x.find('|', second + 1);
+          const size_t fourth = third == std::string::npos
+                                    ? std::string::npos
+                                    : x.find('|', third + 1);
+          if (fourth == std::string::npos || x.substr(0, first) != "v1") {
+            return;
+          }
+          const std::string event_id = x.substr(first + 1, second - first - 1);
+          const std::string door_id = x.substr(second + 1, third - second - 1);
+          const std::string kind = x.substr(third + 1, fourth - third - 1);
+          const std::string detail = x.substr(fourth + 1);
+          if (event_id.empty() || door_id.empty()) return;
+          if (!id(access_manager_door_id).has_state() ||
+              door_id != id(access_manager_door_id).state) {
+            ESP_LOGW("access_manager_display",
+                     "Ignoring event for door '%s'; this reader belongs to '%s'",
+                     door_id.c_str(),
+                     id(access_manager_door_id).has_state()
+                         ? id(access_manager_door_id).state.c_str()
+                         : "");
+            return;
+          }
+          if (event_id == id(last_panel_event_id)) return;
+          if (kind == "door_opened") {
+            id(estado_huella).publish_state("Door opened");
+          } else if (kind == "credential_captured") {
+            id(estado_huella).publish_state("Code captured");
+          } else if (kind == "keypad_denied") {
+            id(estado_huella).publish_state("Invalid code");
+          } else {
+            return;
+          }
+          id(last_panel_event_id) = event_id;
+          id(panel_event_active) = true;
+          id(usuario_huella).publish_state(detail);
+          id(dedo_huella).publish_state("Access Manager");
+          id(show_panel_event).execute();
+
+binary_sensor:
+  - platform: status
+    name: "Reader connection"
+    id: estado_conexion
+    entity_category: diagnostic
+
+sensor:
+  - platform: fingerprint_grow
+    fingerprint_count:
+      name: "Stored fingerprints"
+      id: huellas_guardadas
+
+    status:
+      name: "Reader status"
+
+    capacity:
+      name: "Reader capacity"
+
+    security_level:
+      name: "Security level"
+
+    last_finger_id:
+      name: "Last fingerprint ID"
+      id: ultimo_id_huella
+
+    last_confidence:
+      name: "Last confidence"
+      id: ultima_confianza
+
+select:
+  - platform: template
+    name: "Display language"
+    id: display_language_select
+    options:
+      - "English"
+      - "Español"
+    optimistic: true
+    restore_value: true
+    initial_option: "${display_language}"
+    entity_category: config
+    on_value:
+      - component.update: lcd
+
+  - platform: template
+    name: "Door action for next scan"
+    id: door_action_select
+    options:
+      - "Default"
+      - "Open"
+      - "Unlock"
+      - "Lock"
+    optimistic: true
+    restore_value: false
+    initial_option: "Default"
+    entity_category: config
+
+number:
+  - platform: template
+    name: "Fingerprint ID"
+    id: finger_id_number
+    min_value: 1
+    max_value: 50
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 1
+    mode: box
+
+button:
+  - platform: template
+    name: "Enroll fingerprint"
+    on_press:
+      - lambda: |-
+          id(enrollment_cancel_requested) = false;
+          id(enrollment_scan_number) = 0;
+      - script.execute: wake_screen
+      - text_sensor.template.publish:
+          id: estado_huella
+          state: "Enrolling..."
+      - text_sensor.template.publish:
+          id: usuario_huella
+          state: ""
+      - text_sensor.template.publish:
+          id: dedo_huella
+          state: ""
+      - component.update: lcd
+      - fingerprint_grow.enroll:
+          finger_id: !lambda 'return (int) id(finger_id_number).state;'
+          num_scans: 2
+
+  - platform: template
+    name: "Cancel fingerprint enrollment"
+    on_press:
+      - lambda: 'id(enrollment_cancel_requested) = true;'
+      - fingerprint_grow.cancel_enroll:
+      - script.execute: wake_screen
+      - text_sensor.template.publish:
+          id: estado_huella
+          state: "Cancelled"
+      - text_sensor.template.publish:
+          id: usuario_huella
+          state: ""
+      - text_sensor.template.publish:
+          id: dedo_huella
+          state: ""
+      - component.update: lcd
+      - delay: 2s
+      - script.execute: set_idle_screen
+
+  - platform: template
+    name: "Delete selected fingerprint"
+    on_press:
+      - script.execute: wake_screen
+      - lambda: |-
+          id(delete_count_before) = id(huellas_guardadas).has_state()
+                                        ? (int) lroundf(id(huellas_guardadas).state)
+                                        : -1;
+          id(delete_count_after) = id(delete_count_before);
+      - fingerprint_grow.delete:
+          finger_id: !lambda 'return (int) id(finger_id_number).state;'
+      - lambda: |-
+          id(delete_count_after) = id(huellas_guardadas).has_state()
+                                       ? (int) lroundf(id(huellas_guardadas).state)
+                                       : -1;
+      - if:
+          condition:
+            lambda: |-
+              return id(delete_count_before) > 0 &&
+                     id(delete_count_after) == id(delete_count_before) - 1;
+          then:
+            - lambda: |-
+                FingerprintNameStore::instance().erase(
+                    (int) id(finger_id_number).state);
+            - text_sensor.template.publish:
+                id: evento_gestion_huella
+                state: !lambda |-
+                  id(event_sequence)++;
+                  return "delete_done|" + to_string(id(event_sequence)) + "|" +
+                         to_string((int) id(finger_id_number).state) + "|" +
+                         to_string(id(delete_count_after));
+            - text_sensor.template.publish:
+                id: estado_huella
+                state: "Deletion confirmed"
+          else:
+            - text_sensor.template.publish:
+                id: evento_gestion_huella
+                state: !lambda |-
+                  id(event_sequence)++;
+                  return "delete_failed|" + to_string(id(event_sequence)) + "|" +
+                         to_string((int) id(finger_id_number).state) + "|" +
+                         to_string(id(delete_count_after));
+            - text_sensor.template.publish:
+                id: estado_huella
+                state: "Deletion failed"
+      - text_sensor.template.publish:
+          id: usuario_huella
+          state: !lambda 'return "ID " + to_string((int) id(finger_id_number).state);'
+      - component.update: lcd
+      - delay: 2s
+      - script.execute: set_idle_screen
+
+  - platform: template
+    name: "Delete all fingerprints"
+    disabled_by_default: true
+    entity_category: config
+    on_press:
+      - fingerprint_grow.delete_all:
+      - lambda: 'FingerprintNameStore::instance().clear();'
+      - script.execute: wake_screen
+      - text_sensor.template.publish:
+          id: estado_huella
+          state: "Database cleared"
+      - text_sensor.template.publish:
+          id: usuario_huella
+          state: ""
+      - component.update: lcd
+      - delay: 3s
+      - script.execute: set_idle_screen
+
+script:
+  - id: wake_screen
+    mode: restart
+    then:
+      - lambda: |-
+          id(last_activity_ms) = millis();
+          id(screen_awake) = true;
+      - light.turn_on:
+          id: backlight
+          brightness: 100%
+          transition_length: 0s
+      - component.update: lcd
+
+  - id: set_idle_screen
+    mode: restart
+    then:
+      - if:
+          condition:
+            lambda: 'return !id(panel_event_active);'
+          then:
+            - lambda: |-
+                id(current_access_sequence) = 0;
+                id(enrollment_scan_number) = 0;
+                id(touch_lock_armed) = false;
+            - text_sensor.template.publish:
+                id: estado_huella
+                state: "Touch sensor"
+            - text_sensor.template.publish:
+                id: usuario_huella
+                state: ""
+            - text_sensor.template.publish:
+                id: dedo_huella
+                state: ""
+            - component.update: lcd
+
+  - id: show_panel_event
+    mode: restart
+    then:
+      - script.execute: wake_screen
+      - component.update: lcd
+      - delay: 4s
+      - lambda: |-
+          id(access_manager_display_event).publish_state("");
+          id(panel_event_active) = false;
+      - script.execute: set_idle_screen
+
+  - id: show_lock_requested
+    mode: restart
+    then:
+      - lambda: 'id(touch_lock_armed) = false;'
+      - script.execute: wake_screen
+      - text_sensor.template.publish:
+          id: estado_huella
+          state: "Lock requested"
+      - text_sensor.template.publish:
+          id: usuario_huella
+          state: ""
+      - text_sensor.template.publish:
+          id: dedo_huella
+          state: ""
+      - component.update: lcd
+      - delay: 3s
+      - script.execute: set_idle_screen
+
+  - id: show_touch_offline
+    mode: restart
+    then:
+      - lambda: 'id(touch_lock_armed) = false;'
+      - script.execute: wake_screen
+      - text_sensor.template.publish:
+          id: estado_huella
+          state: "Offline"
+      - text_sensor.template.publish:
+          id: usuario_huella
+          state: ""
+      - text_sensor.template.publish:
+          id: dedo_huella
+          state: ""
+      - component.update: lcd
+      - delay: 3s
+      - script.execute: set_idle_screen
+
+  - id: show_access_ok
+    mode: restart
+    then:
+      - script.execute: wake_screen
+      - text_sensor.template.publish:
+          id: estado_huella
+          state: "Access granted"
+      - component.update: lcd
+      - delay: 4s
+      - script.execute: set_idle_screen
+
+  - id: show_access_denied
+    mode: restart
+    then:
+      - lambda: 'id(current_access_sequence) = 0;'
+      - script.execute: wake_screen
+      - text_sensor.template.publish:
+          id: estado_huella
+          state: "Not recognized"
+      - text_sensor.template.publish:
+          id: usuario_huella
+          state: ""
+      - component.update: lcd
+      - delay: 4s
+      - script.execute: set_idle_screen
+
+  - id: show_invalid
+    mode: restart
+    then:
+      - lambda: 'id(current_access_sequence) = 0;'
+      - script.execute: wake_screen
+      - text_sensor.template.publish:
+          id: estado_huella
+          state: "Invalid"
+      - text_sensor.template.publish:
+          id: usuario_huella
+          state: ""
+      - component.update: lcd
+      - delay: 3s
+      - script.execute: set_idle_screen
+
+  - id: show_misplaced
+    mode: restart
+    then:
+      - lambda: 'id(current_access_sequence) = 0;'
+      - script.execute: wake_screen
+      - text_sensor.template.publish:
+          id: estado_huella
+          state: "Reposition"
+      - text_sensor.template.publish:
+          id: usuario_huella
+          state: "finger"
+      - component.update: lcd
+      - delay: 2s
+      - script.execute: set_idle_screen
+
+interval:
+  - interval: 2s
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return id(touch_lock_armed) &&
+                     (uint32_t) (millis() - id(touch_lock_armed_ms)) > 6000;
+          then:
+            - lambda: 'id(touch_lock_armed) = false;'
+            - component.update: lcd
+      - if:
+          condition:
+            lambda: 'return id(screen_awake) && (millis() - id(last_activity_ms) > 15000);'
+          then:
+            - lambda: |-
+                id(screen_awake) = false;
+            - light.turn_on:
+                id: backlight
+                brightness: 40%
+                transition_length: 0.5s
+            - component.update: lcd
+
+fingerprint_grow:
+  uart_id: uart_fp
+
+  on_finger_scan_start:
+    - lambda: 'id(touch_lock_armed) = false;'
+    - script.execute: wake_screen
+
+  on_finger_scan_matched:
+    - script.execute: wake_screen
+    - lambda: |-
+        const auto identity = FingerprintNameStore::instance().get(finger_id);
+        id(usuario_huella).publish_state(
+            identity.valid() ? identity.name : "ID " + to_string(finger_id));
+        id(dedo_huella).publish_state(
+            FingerprintNameStore::finger_label(identity.finger));
+    - script.execute: show_access_ok
+    - text_sensor.template.publish:
+        id: evento_huella
+        state: !lambda |-
+          id(event_sequence)++;
+          id(current_access_sequence) = id(event_sequence);
+          std::string action = "default";
+          const auto selected_action = id(door_action_select).current_option();
+          if (selected_action == "Open") action = "open";
+          else if (selected_action == "Unlock") action = "unlock";
+          else if (selected_action == "Lock") action = "lock";
+          return "matched|" + to_string(id(event_sequence)) + "|" +
+                 to_string(finger_id) + "|" + to_string(confidence) + "|" + action;
+    - select.set:
+        id: door_action_select
+        option: "Default"
+
+    - logger.log:
+        format: "Fingerprint matched. ID=%d confidence=%d"
+        args: [finger_id, confidence]
+
+  on_finger_scan_unmatched:
+    - logger.log: "Fingerprint not recognized"
+    - script.execute: show_access_denied
+    - text_sensor.template.publish:
+        id: evento_huella
+        state: !lambda |-
+          id(event_sequence)++;
+          return "unmatched|" + to_string(id(event_sequence)) + "|0|0";
+
+  on_finger_scan_invalid:
+    - logger.log: "Invalid fingerprint scan"
+    - script.execute: show_invalid
+    - text_sensor.template.publish:
+        id: evento_huella
+        state: !lambda |-
+          id(event_sequence)++;
+          return "invalid|" + to_string(id(event_sequence)) + "|0|0";
+
+  on_finger_scan_misplaced:
+    - logger.log: "Finger misplaced"
+    - script.execute: show_misplaced
+    - text_sensor.template.publish:
+        id: evento_huella
+        state: !lambda |-
+          id(event_sequence)++;
+          return "misplaced|" + to_string(id(event_sequence)) + "|0|0";
+
+  on_enrollment_scan:
+    - script.execute: wake_screen
+    - lambda: 'id(enrollment_scan_number) = scan_num;'
+    - text_sensor.template.publish:
+        id: estado_huella
+        state: !lambda 'return "Scan " + to_string(scan_num);'
+    - text_sensor.template.publish:
+        id: usuario_huella
+        state: !lambda 'return "ID " + to_string(finger_id);'
+    - text_sensor.template.publish:
+        id: evento_gestion_huella
+        state: !lambda |-
+          id(event_sequence)++;
+          return "enroll_scan|" + to_string(id(event_sequence)) + "|" +
+                 to_string(finger_id) + "|" + to_string(scan_num);
+    - component.update: lcd
+
+  on_enrollment_done:
+    - lambda: 'id(enrollment_scan_number) = 2;'
+    - text_sensor.template.publish:
+        id: estado_huella
+        state: "Enrolled"
+    - text_sensor.template.publish:
+        id: usuario_huella
+        state: !lambda 'return "ID " + to_string(finger_id);'
+    - text_sensor.template.publish:
+        id: evento_gestion_huella
+        state: !lambda |-
+          id(event_sequence)++;
+          return "enroll_done|" + to_string(id(event_sequence)) + "|" +
+                 to_string(finger_id) + "|0";
+    - lambda: 'id(enrollment_cancel_requested) = false;'
+    - component.update: lcd
+    - delay: 3s
+    - script.execute: set_idle_screen
+
+  on_enrollment_failed:
+    - lambda: 'id(enrollment_scan_number) = 0;'
+    - text_sensor.template.publish:
+        id: estado_huella
+        state: !lambda 'return id(enrollment_cancel_requested) ? "Cancelled" : "Enrollment failed";'
+    - text_sensor.template.publish:
+        id: usuario_huella
+        state: !lambda 'return "ID " + to_string(finger_id);'
+    - text_sensor.template.publish:
+        id: evento_gestion_huella
+        state: !lambda |-
+          id(event_sequence)++;
+          const std::string result = id(enrollment_cancel_requested) ? "enroll_cancelled" : "enroll_failed";
+          id(enrollment_cancel_requested) = false;
+          return result + "|" + to_string(id(event_sequence)) + "|" +
+                 to_string(finger_id) + "|0";
+    - component.update: lcd
+    - delay: 3s
+    - script.execute: set_idle_screen
+
+touchscreen:
+  - platform: axs5106
+    id: touch_panel
+    display: lcd
+    i2c_id: touch_bus
+    address: 0x63
+    reset_pin: ${touch_reset_pin}
+    interrupt_pin:
+      number: ${touch_interrupt_pin}
+      mode: INPUT_PULLUP
+    touch_timeout: 150ms
+    calibration:
+      x_min: 0
+      x_max: 171
+      y_min: 0
+      y_max: 319
+    transform:
+      mirror_x: true
+      mirror_y: false
+      swap_xy: false
+    on_touch:
+      - lambda: |-
+          id(wake_screen).execute();
+
+          std::string state = "Touch sensor";
+          if (id(estado_huella).has_state() &&
+              !id(estado_huella).state.empty()) {
+            state = id(estado_huella).state;
+          }
+
+          // Local controls are disabled during biometric and management flows.
+          if (state != "Touch sensor") {
+            id(touch_lock_armed) = false;
+            return;
+          }
+
+          const uint32_t now = millis();
+          const bool expired =
+              (uint32_t) (now - id(touch_lock_armed_ms)) > 6000;
+          if (!id(touch_lock_armed) || expired) {
+            id(touch_lock_armed) = true;
+            id(touch_lock_armed_ms) = now;
+            id(lcd).update();
+            return;
+          }
+
+          // A second touch outside the visible button cancels the request.
+          id(touch_lock_armed) = false;
+          if (touch.x < 12 || touch.x > 160 ||
+              touch.y < 205 || touch.y > 292) {
+            id(lcd).update();
+            return;
+          }
+
+          if (!id(api_server).is_connected()) {
+            id(show_touch_offline).execute();
+            return;
+          }
+
+          id(event_sequence)++;
+          id(evento_huella).publish_state(
+              "local_action|" + to_string(id(event_sequence)) + "|lock");
+          id(show_lock_requested).execute();
+
+display:
+  - platform: mipi_spi
+    id: lcd
+    model: CUSTOM
+    dc_pin: ${display_dc_pin}
+    cs_pin: ${display_cs_pin}
+    reset_pin: ${display_reset_pin}
+    dimensions:
+      width: 172
+      height: 320
+      offset_width: 34
+      offset_height: 0
+    transform:
+      swap_xy: false
+      mirror_x: false
+      mirror_y: false
+    color_order: rgb
+    invert_colors: true
+    color_depth: 16
+    pixel_mode: 16bit
+    data_rate: 40MHz
+    spi_mode: MODE0
+    update_interval: never
+    auto_clear_enabled: false
+
+    init_sequence:
+      - [0x11]
+      - delay 120ms
+      - [0xDF, 0x98, 0x53]
+      - [0xDF, 0x98, 0x53]
+      - [0xB2, 0x23]
+      - [0xB7, 0x00, 0x47, 0x00, 0x6F]
+      - [0xBB, 0x1C, 0x1A, 0x55, 0x73, 0x63, 0xF0]
+      - [0xC0, 0x44, 0xA4]
+      - [0xC1, 0x16]
+      - [0xC3, 0x7D, 0x07, 0x14, 0x06, 0xCF, 0x71, 0x72, 0x77]
+      - [0xC4, 0x00, 0x00, 0xA0, 0x79, 0x0B, 0x0A, 0x16, 0x79, 0x0B, 0x0A, 0x16, 0x82]
+      - [0xC8, 0x3F, 0x32, 0x29, 0x29, 0x27, 0x2B, 0x27, 0x28, 0x28, 0x26, 0x25, 0x17, 0x12, 0x0D, 0x04, 0x00, 0x3F, 0x32, 0x29, 0x29, 0x27, 0x2B, 0x27, 0x28, 0x28, 0x26, 0x25, 0x17, 0x12, 0x0D, 0x04, 0x00]
+      - [0xD0, 0x04, 0x06, 0x6B, 0x0F, 0x00]
+      - [0xD7, 0x00, 0x30]
+      - [0xE6, 0x14]
+      - [0xDE, 0x01]
+      - [0xB7, 0x03, 0x13, 0xEF, 0x35, 0x35]
+      - [0xC1, 0x14, 0x15, 0xC0]
+      - [0xC2, 0x06, 0x3A]
+      - [0xC4, 0x72, 0x12]
+      - [0xBE, 0x00]
+      - [0xDE, 0x02]
+      - [0xE5, 0x00, 0x02, 0x00]
+      - [0xE5, 0x01, 0x02, 0x00]
+      - [0xDE, 0x00]
+      - [0x35, 0x00]
+      - [0x2A, 0x00, 0x22, 0x00, 0xCD]
+      - [0x2B, 0x00, 0x00, 0x01, 0x3F]
+      - [0xDE, 0x02]
+      - [0xE5, 0x00, 0x02, 0x00]
+      - [0xDE, 0x00]
+      - [0x29]
+    lambda: |-
+      const Color bg = Color(7, 11, 16);
+      const Color panel = Color(14, 22, 31);
+      const Color white = Color(238, 244, 248);
+      const Color muted = Color(145, 162, 178);
+      const Color idle_color = Color(112, 145, 174);
+      const Color green = Color(35, 218, 139);
+      const Color red = Color(245, 83, 91);
+      const Color amber = Color(255, 184, 70);
+      const Color blue = Color(88, 166, 255);
+
+      const bool spanish =
+          id(display_language_select).current_option() == "Español";
+      auto tr = [&](const char *english, const char *spanish_text) -> const char * {
+        return spanish ? spanish_text : english;
+      };
+
+      // Fit variable text to the 156 px usable display width.
+      auto fit_text = [&](std::string value, auto *font, int max_width) {
+        int x1 = 0, y1 = 0, width = 0, height = 0;
+        it.get_text_bounds(0, 0, value.c_str(), font, TextAlign::TOP_LEFT,
+                           &x1, &y1, &width, &height);
+        if (width <= max_width) return value;
+
+        const std::string suffix = "...";
+        while (!value.empty()) {
+          size_t last = value.size() - 1;
+          while (last > 0 &&
+                 (static_cast<unsigned char>(value[last]) & 0xC0) == 0x80) {
+            last--;
+          }
+          value.erase(last);
+          const std::string candidate = value + suffix;
+          it.get_text_bounds(0, 0, candidate.c_str(), font, TextAlign::TOP_LEFT,
+                             &x1, &y1, &width, &height);
+          if (width <= max_width) return candidate;
+        }
+        return suffix;
+      };
+
+      it.fill(bg);
+
+      // Keep a minimal idle prompt while the backlight is dimmed.
+      if (!id(screen_awake)) {
+        it.filled_circle(86, 140, 43, Color(11, 20, 28));
+        it.filled_ring(86, 140, 43, 41, Color(45, 68, 86));
+        it.printf(86, 108, id(font_icon), idle_color, TextAlign::TOP_CENTER, "\U0000e90d");
+        it.printf(86, 205, id(font_small), white, TextAlign::TOP_CENTER,
+                  "%s", tr("TOUCH SENSOR", "TOCA EL SENSOR"));
+        return;
+      }
+
+      std::string estado = "Touch sensor";
+      if (id(estado_huella).has_state() && !id(estado_huella).state.empty()) {
+        estado = id(estado_huella).state;
+      }
+
+      std::string usuario = "";
+      if (id(usuario_huella).has_state()) {
+        usuario = id(usuario_huella).state;
+      }
+
+      std::string dedo = "";
+      if (id(dedo_huella).has_state()) {
+        dedo = id(dedo_huella).state;
+      }
+
+      const bool acceso = estado == "Access granted";
+      const bool denegado = estado == "Not recognized";
+      const bool error_borrado = estado == "Deletion failed";
+      const bool invalido = estado == "Invalid" || estado == "Enrollment failed" || error_borrado;
+      const bool mal_colocado = estado == "Reposition";
+      const bool registrando = estado == "Enrolling..." || estado == "Enrolling" ||
+                               estado.rfind("Scan ", 0) == 0;
+      const bool registrada = estado == "Enrolled";
+      const bool cancelado = estado == "Cancelled";
+      const bool borrado = estado == "Deletion confirmed" || estado == "Database cleared";
+      const bool lock_requested = estado == "Lock requested";
+      const bool offline = estado == "Offline";
+      const bool panel_door_opened = estado == "Door opened";
+      const bool panel_code_captured = estado == "Code captured";
+      const bool panel_code_denied = estado == "Invalid code";
+      const bool espera = !(acceso || denegado || invalido || mal_colocado || registrando ||
+                            registrada || cancelado || borrado || lock_requested || offline ||
+                            panel_door_opened || panel_code_captured || panel_code_denied);
+
+      Color accent = idle_color;
+      if (acceso || registrada || panel_door_opened) accent = green;
+      else if (denegado || invalido || cancelado || panel_code_denied) accent = red;
+      else if (mal_colocado) accent = amber;
+      else if (registrando || borrado || panel_code_captured) accent = blue;
+      else if (lock_requested) accent = blue;
+      else if (offline) accent = red;
+
+      it.filled_rectangle(0, 0, 172, 40, panel);
+      it.filled_rectangle(0, 38, 172, 2, accent);
+      it.printf(86, 10, id(font_small), white, TextAlign::TOP_CENTER,
+                "%s", tr("ENTRANCE", "ENTRADA"));
+
+      if (id(touch_lock_armed) && estado == "Touch sensor") {
+        it.printf(86, 68, id(font_big), white, TextAlign::TOP_CENTER,
+                  "%s", tr("LOCK", "BLOQUEAR"));
+        it.printf(86, 106, id(font_mid), white, TextAlign::TOP_CENTER,
+                  "%s", tr("DOOR", "PUERTA"));
+        it.printf(86, 143, id(font_small), muted, TextAlign::TOP_CENTER,
+                  "%s", tr("Touch again", "Toca de nuevo"));
+        it.filled_rectangle(12, 205, 148, 87, Color(38, 28, 8));
+        it.rectangle(12, 205, 148, 87, amber);
+        it.rectangle(13, 206, 146, 85, amber);
+        it.printf(86, 229, id(font_big), amber, TextAlign::TOP_CENTER,
+                  "%s", tr("LOCK", "BLOQUEAR"));
+        it.printf(86, 264, id(font_small), white, TextAlign::TOP_CENTER,
+                  "%s", tr("CONFIRM", "CONFIRMAR"));
+        return;
+      }
+
+      int symbol_y = 125;
+      if (acceso || denegado || panel_door_opened || panel_code_captured ||
+          panel_code_denied) symbol_y = 108;
+      else if (invalido) symbol_y = 115;
+      else if (registrando) symbol_y = 120;
+      else if (mal_colocado || registrada || cancelado || borrado) symbol_y = 130;
+
+      // Central symbol: fingerprint, confirmation, rejection, or warning.
+      if (acceso || registrada || borrado || lock_requested || panel_door_opened ||
+          panel_code_captured) {
+        const Color disc = acceso || registrada || panel_door_opened
+                               ? Color(8, 48, 36)
+                               : Color(10, 36, 62);
+        it.filled_circle(86, symbol_y, 41, disc);
+        it.filled_ring(86, symbol_y, 41, 38, accent);
+        for (int offset = -2; offset <= 2; offset++) {
+          it.line(65, symbol_y + 1 + offset, 79, symbol_y + 15 + offset, accent);
+          it.line(79, symbol_y + 15 + offset, 108, symbol_y - 16 + offset, accent);
+        }
+      } else if (denegado || invalido || cancelado || offline || panel_code_denied) {
+        it.filled_circle(86, symbol_y, 41, Color(55, 16, 22));
+        it.filled_ring(86, symbol_y, 41, 38, accent);
+        for (int offset = -2; offset <= 2; offset++) {
+          it.line(68, symbol_y - 18 + offset, 104, symbol_y + 18 + offset, accent);
+          it.line(104, symbol_y - 18 + offset, 68, symbol_y + 18 + offset, accent);
+        }
+      } else if (mal_colocado) {
+        it.filled_triangle(86, symbol_y - 43, 47, symbol_y + 32, 125, symbol_y + 32,
+                           Color(58, 38, 10));
+        it.triangle(86, symbol_y - 43, 47, symbol_y + 32, 125, symbol_y + 32, accent);
+        for (int offset = -2; offset <= 2; offset++) {
+          it.line(86 + offset, symbol_y - 21, 86 + offset, symbol_y + 8, accent);
+        }
+        it.filled_circle(86, symbol_y + 19, 3, accent);
+      } else {
+        it.filled_circle(86, symbol_y, 41, Color(11, 27, 39));
+        it.filled_ring(86, symbol_y, 41, 38, accent);
+        it.printf(86, symbol_y - 32, id(font_icon), accent, TextAlign::TOP_CENTER,
+                  "\U0000e90d");
+      }
+
+      if (panel_door_opened) {
+        it.printf(86, 171, id(font_big), green, TextAlign::TOP_CENTER, "%s", tr("DOOR", "PUERTA"));
+        it.printf(86, 207, id(font_big), green, TextAlign::TOP_CENTER, "%s", tr("OPEN", "ABIERTA"));
+        if (!usuario.empty()) {
+          it.printf(86, 266, id(font_small), muted, TextAlign::TOP_CENTER, "%s",
+                    fit_text(usuario, id(font_small), 156).c_str());
+        }
+      } else if (panel_code_captured) {
+        it.printf(86, 171, id(font_big), blue, TextAlign::TOP_CENTER, "%s", tr("CODE", "CÓDIGO"));
+        it.printf(86, 211, id(font_name_small), white, TextAlign::TOP_CENTER,
+                  "%s", tr("CAPTURED", "REGISTRADO"));
+        if (!usuario.empty()) {
+          it.printf(86, 266, id(font_small), muted, TextAlign::TOP_CENTER, "%s",
+                    fit_text(usuario, id(font_small), 156).c_str());
+        }
+      } else if (panel_code_denied) {
+        it.printf(86, 171, id(font_big), red, TextAlign::TOP_CENTER, "%s", tr("CODE", "CÓDIGO"));
+        it.printf(86, 211, id(font_name_small), white, TextAlign::TOP_CENTER,
+                  "%s", tr("INVALID", "NO VÁLIDO"));
+        it.printf(86, 269, id(font_small), muted, TextAlign::TOP_CENTER,
+                  "%s", tr("Access denied", "Acceso denegado"));
+      } else if (acceso) {
+        it.printf(86, 158, id(font_big), green, TextAlign::TOP_CENTER, "%s", tr("ACCESS", "ACCESO"));
+        it.printf(86, 189, id(font_big), green, TextAlign::TOP_CENTER, "%s", tr("GRANTED", "PERMITIDO"));
+
+        std::string nombre = usuario.empty() ? tr("User", "Usuario") : usuario;
+        int x1 = 0, y1 = 0, width = 0, height = 0;
+        it.get_text_bounds(0, 0, nombre.c_str(), id(font_big), TextAlign::TOP_LEFT,
+                           &x1, &y1, &width, &height);
+        if (width <= 156) {
+          it.printf(86, 225, id(font_big), white, TextAlign::TOP_CENTER,
+                    "%s", nombre.c_str());
+        } else {
+          nombre = fit_text(nombre, id(font_name_small), 156);
+          it.printf(86, 230, id(font_name_small), white, TextAlign::TOP_CENTER,
+                    "%s", nombre.c_str());
+        }
+        if (!dedo.empty()) {
+          dedo = fit_text(dedo, id(font_small), 156);
+          it.printf(86, 266, id(font_small), muted, TextAlign::TOP_CENTER,
+                    "%s", dedo.c_str());
+        }
+      } else if (denegado) {
+        it.printf(86, 171, id(font_big), red, TextAlign::TOP_CENTER, "%s", tr("NOT", "NO"));
+        it.printf(86, 211, id(font_name_small), white, TextAlign::TOP_CENTER, "%s", tr("RECOGNIZED", "RECONOCIDO"));
+        it.printf(86, 269, id(font_small), muted, TextAlign::TOP_CENTER, "%s", tr("Try again", "Inténtalo de nuevo"));
+      } else if (error_borrado) {
+        it.printf(86, 176, id(font_big), red, TextAlign::TOP_CENTER, "%s", tr("DELETE", "BORRADO"));
+        it.printf(86, 212, id(font_mid), white, TextAlign::TOP_CENTER, "%s", tr("FAILED", "FALLIDO"));
+        it.printf(86, 265, id(font_small), muted, TextAlign::TOP_CENTER, "%s", tr("Will retry", "Se reintentará"));
+      } else if (invalido) {
+        it.printf(86, 176, id(font_big), red, TextAlign::TOP_CENTER, "%s", tr("INVALID", "LECTURA"));
+        it.printf(86, 209, id(font_big), red, TextAlign::TOP_CENTER, "%s", tr("SCAN", "NO VÁLIDA"));
+        it.printf(86, 265, id(font_small), muted, TextAlign::TOP_CENTER, "%s", tr("Try again", "Inténtalo de nuevo"));
+      } else if (mal_colocado) {
+        it.printf(86, 190, id(font_mid), amber, TextAlign::TOP_CENTER, "%s", tr("REPOSITION", "RECOLOCA"));
+        it.printf(86, 223, id(font_big), amber, TextAlign::TOP_CENTER, "%s", tr("FINGER", "EL DEDO"));
+        it.printf(86, 270, id(font_small), muted, TextAlign::TOP_CENTER, "%s", tr("Try again", "Inténtalo de nuevo"));
+      } else if (registrando) {
+        it.printf(86, 181, id(font_mid), blue, TextAlign::TOP_CENTER, "%s", tr("ENROLLING", "REGISTRANDO"));
+        it.printf(86, 220, id(font_small), white, TextAlign::TOP_CENTER, tr("Scan %d of 2", "Lectura %d de 2"),
+                  id(enrollment_scan_number));
+        for (int scan = 1; scan <= 2; scan++) {
+          const int x = scan == 1 ? 76 : 96;
+          if (id(enrollment_scan_number) >= scan) it.filled_circle(x, 262, 5, blue);
+          else it.circle(x, 262, 5, Color(65, 85, 103));
+        }
+      } else if (registrada) {
+        it.printf(86, 190, id(font_name_small), green, TextAlign::TOP_CENTER, "%s", tr("FINGERPRINT", "HUELLA"));
+        it.printf(86, 226, id(font_mid), green, TextAlign::TOP_CENTER, "%s", tr("ENROLLED", "REGISTRADA"));
+        if (!usuario.empty()) {
+          it.printf(86, 270, id(font_small), muted, TextAlign::TOP_CENTER,
+                    "%s", fit_text(usuario, id(font_small), 156).c_str());
+        }
+      } else if (cancelado) {
+        it.printf(86, 190, id(font_name_small), red, TextAlign::TOP_CENTER, "%s", tr("ENROLLMENT", "REGISTRO"));
+        it.printf(86, 226, id(font_mid), white, TextAlign::TOP_CENTER, "%s", tr("CANCELLED", "CANCELADO"));
+      } else if (borrado) {
+        it.printf(86, 190, id(font_big), blue, TextAlign::TOP_CENTER, "%s", tr("DELETED", "BORRADA"));
+        it.printf(86, 253, id(font_small), white, TextAlign::TOP_CENTER, "%s", tr("Operation complete", "Operación completada"));
+      } else if (lock_requested) {
+        it.printf(86, 184, id(font_big), blue, TextAlign::TOP_CENTER,
+                  "%s", tr("LOCK", "BLOQUEO"));
+        it.printf(86, 220, id(font_mid), white, TextAlign::TOP_CENTER,
+                  "%s", tr("REQUESTED", "SOLICITADO"));
+        it.printf(86, 270, id(font_small), muted, TextAlign::TOP_CENTER, "Access Manager");
+      } else if (offline) {
+        it.printf(86, 184, id(font_big), red, TextAlign::TOP_CENTER,
+                  "%s", tr("OFFLINE", "SIN RED"));
+        it.printf(86, 226, id(font_small), white, TextAlign::TOP_CENTER,
+                  "Home Assistant");
+        it.printf(86, 250, id(font_small), white, TextAlign::TOP_CENTER,
+                  "%s", tr("unavailable", "no disponible"));
+      } else if (espera) {
+        it.printf(86, 184, id(font_big), white, TextAlign::TOP_CENTER,
+                  "%s", tr("TOUCH", "TOCA EL"));
+        it.printf(86, 215, id(font_big), white, TextAlign::TOP_CENTER, "SENSOR");
+        std::string action_prompt = tr("Place finger", "Coloca el dedo");
+        const auto selected_action = id(door_action_select).current_option();
+        if (selected_action != "Default") {
+          if (spanish) {
+            if (selected_action == "Open") action_prompt = "Abrir seleccionado";
+            else if (selected_action == "Unlock") action_prompt = "Desbloquear elegido";
+            else if (selected_action == "Lock") action_prompt = "Bloquear elegido";
+          } else {
+            action_prompt = selected_action.str() + " selected";
+          }
+        }
+        it.printf(86, 267, id(font_small), muted, TextAlign::TOP_CENTER, "%s",
+                  fit_text(action_prompt, id(font_small), 156).c_str());
+      }

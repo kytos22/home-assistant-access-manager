@@ -1,0 +1,12 @@
+# Installation-owned wrapper for the reference display reader.
+substitutions:
+  device_name: fingerprint-access-reader
+  friendly_name: Fingerprint Access Reader
+  display_language: English
+  wifi_ssid_value: !secret wifi_ssid
+  wifi_password_value: !secret wifi_password
+  api_encryption_key_value: !secret api_encryption_key
+  ota_password_value: !secret ota_password
+
+packages:
+  fingerprint_access_reader: !include access-reader.yaml
