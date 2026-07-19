@@ -74,7 +74,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.12.0"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.13.0"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
@@ -104,6 +104,24 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("access-reader.yaml", existing)
         self.assertIn("keep device_name and all existing secret", existing)
         self.assertNotIn("secret-value", existing)
+        self.assertIn('display_language: "English"', existing)
+        spanish = APP.esphome_reader_config({
+            "profile": "display",
+            "install_mode": "new",
+            "device_name": "lector-entrada",
+            "friendly_name": "Lector entrada",
+            "display_language": "Español",
+        })
+        self.assertIn('display_language: "Español"', spanish)
+        with self.assertRaisesRegex(ValueError, "display language"):
+            APP.esphome_reader_config({
+                "profile": "display",
+                "install_mode": "new",
+                "device_name": "front-reader",
+                "friendly_name": "Front reader",
+                "display_language": "French",
+            })
+
 
         with self.assertRaisesRegex(ValueError, "installation mode"):
             APP.esphome_reader_config({

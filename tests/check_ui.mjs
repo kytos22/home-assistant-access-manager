@@ -81,7 +81,7 @@ for (const marker of [
   'keypad/shared-credentials',
   'recoverPanelBuild',
   'firmware_version_entity',
-  'PANEL_BUILD_VERSION = "0.12.0"',
+  'PANEL_BUILD_VERSION = "0.13.0"',
   'door_sensor_hint',
   'visibilitychange',
   'REFRESH_INTERVAL_MS = 10000',
