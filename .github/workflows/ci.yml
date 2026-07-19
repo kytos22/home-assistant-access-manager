@@ -42,3 +42,10 @@ jobs:
               yaml.safe_load(path.read_text(encoding="utf-8"))
               print(f"validated {path}")
           PY
+      - name: Build add-on image
+        run: |
+          docker build \
+            --build-arg BUILD_VERSION=0.13.1 \
+            --build-arg BUILD_ARCH=amd64 \
+            --tag access-manager-ci:0.13.1 \
+            access_manager

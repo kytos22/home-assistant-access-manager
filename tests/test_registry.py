@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).parents[1] / "access_manager" / "app" / "main.py"
@@ -57,6 +58,9 @@ class RegistryTests(unittest.TestCase):
         dockerfile = (root / "access_manager" / "Dockerfile").read_text(
             encoding="utf-8"
         )
+        app_config = (root / "access_manager" / "config.yaml").read_text(
+            encoding="utf-8"
+        )
         html = (root / "access_manager" / "app" / "index.html").read_text(
             encoding="utf-8"
         )
@@ -71,12 +75,25 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("pip==26.1.2", dockerfile)
         self.assertIn("aiohttp==3.14.1", dockerfile)
         self.assertIn("cryptography==49.0.0", dockerfile)
+        self.assertIn("esphome==2026.7.0", dockerfile)
+        self.assertIn("homeassistant_config", app_config)
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.13.0"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.13.1"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
+
+    def test_local_esphome_is_available_without_dashboard_url(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            config_dir = Path(temporary) / "esphome"
+            with (
+                patch.object(APP, "ESPHOME_CONFIG_DIR", config_dir),
+                patch.object(APP.shutil, "which", return_value="/usr/bin/esphome"),
+                patch.object(APP, "configured_esphome_url", return_value=""),
+            ):
+                self.assertTrue(APP.local_esphome_available())
+                self.assertTrue(APP.esphome_available())
 
     def test_esphome_generator_pins_firmware_and_never_embeds_secrets(self):
         self.assertEqual(APP.READER_FIRMWARE_VERSION, "0.6.0")

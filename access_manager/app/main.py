@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import unicodedata
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,7 @@ READER_FIRMWARE_REPOSITORY = (
     "https://github.com/kytos22/esphome-fingerprint-access-reader"
 )
 OPTIONS_PATH = DATA_DIR / "options.json"
+ESPHOME_CONFIG_DIR = Path(os.environ.get("ESPHOME_CONFIG_DIR", "/homeassistant/esphome"))
 INDEX_PATH = Path(__file__).with_name("index.html")
 
 LOG_LEVELS = {
@@ -60,6 +62,18 @@ def configured_esphome_url():
 
         return ""
     return value.rstrip("/")
+
+def local_esphome_available():
+    return bool(
+        shutil.which("esphome")
+        and (
+            ESPHOME_CONFIG_DIR.is_dir()
+            or ESPHOME_CONFIG_DIR.parent.is_dir()
+        )
+    )
+
+def esphome_available():
+    return bool(configured_esphome_url()) or local_esphome_available()
 
 def configured_log_level(path=OPTIONS_PATH):
     options = configured_options(path)
@@ -3933,7 +3947,7 @@ class FingerprintAdmin:
             {
                 "version": APP_VERSION,
                 "reader_firmware_version": READER_FIRMWARE_VERSION,
-                "esphome_configured": bool(configured_esphome_url()),
+                "esphome_configured": esphome_available(),
                 "privacy_mode": self.registry.privacy_mode(),
                 "connected": self.ha.connected,
                 "reader_online": self.ha.device_online("display1"),
@@ -4720,11 +4734,72 @@ class FingerprintAdmin:
                     return
         raise RuntimeError(f"ESPHome {command} connection closed unexpectedly")
 
+    async def esphome_cli_process(self, arguments, job):
+        process = await asyncio.create_subprocess_exec(
+            "esphome",
+            *arguments,
+            cwd=str(ESPHOME_CONFIG_DIR),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                text = line.decode(errors="replace").rstrip()
+                if text:
+                    job["logs"] = (job["logs"] + [text])[-80:]
+            code = await process.wait()
+        except asyncio.CancelledError:
+            process.terminate()
+            await process.wait()
+            raise
+        if code:
+            raise RuntimeError(
+                f"ESPHome {' '.join(arguments[:1])} failed with exit code {code}"
+            )
+
+    async def run_local_firmware_job(self, yaml, filename, install, job):
+        if Path(filename).name != filename or not filename.endswith((".yaml", ".yml")):
+            raise RuntimeError("Invalid ESPHome configuration filename")
+        await asyncio.to_thread(
+            ESPHOME_CONFIG_DIR.mkdir, parents=True, exist_ok=True
+        )
+        config_path = ESPHOME_CONFIG_DIR / filename
+        job.update(status="saving", step="saving")
+        await asyncio.to_thread(config_path.write_text, yaml, encoding="utf-8")
+        job.update(status="compiling", step="compiling")
+        await self.esphome_cli_process(["compile", filename], job)
+        if install:
+            job.update(status="installing", step="installing")
+            await self.esphome_cli_process(["upload", filename, "--device", "OTA"], job)
+        job.update(status="completed", step="completed", finished_at=now_iso())
+
     async def run_firmware_job(self, job_id, yaml, filename, install):
         job = self.firmware_jobs[job_id]
         base_url = configured_esphome_url()
         if not base_url:
-            job.update(status="failed", error="Configure esphome_dashboard_url in the add-on options")
+            if not local_esphome_available():
+                job.update(
+                    status="failed",
+                    error="The bundled ESPHome compiler or Home Assistant configuration directory is unavailable",
+                )
+                return
+            try:
+                async with self.firmware_lock:
+                    await self.run_local_firmware_job(yaml, filename, install, job)
+            except asyncio.CancelledError:
+                job.update(status="cancelled", step="cancelled", finished_at=now_iso())
+                raise
+            except Exception as error:
+                LOGGER.exception("ESPHome firmware job %s failed", job_id)
+                job.update(
+                    status="failed",
+                    step="failed",
+                    error=str(error),
+                    finished_at=now_iso(),
+                )
             return
         timeout = ClientTimeout(total=None, sock_connect=15, sock_read=None)
         try:
@@ -4804,9 +4879,9 @@ class FingerprintAdmin:
 
     async def build_esphome_firmware(self, request):
         self.require_admin_request(request)
-        if not configured_esphome_url():
+        if not esphome_available():
             raise web.HTTPConflict(
-                text="Configure the ESPHome Device Builder URL in the add-on options"
+                text="ESPHome firmware compilation is unavailable"
             )
         payload = await request.json()
         try:
