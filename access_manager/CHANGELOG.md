@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.0
+
+- Removes the experimental bundled ESPHome compiler and writable shared-configuration mapping.
+- Adds an optional authenticated Device Builder `/ws` connection with encrypted-at-rest bearer tokens.
+- Maps each reader to its exact Device Builder configuration, blocks device-name/filename collisions, and requires version history plus explicit overwrite confirmation.
+- Persists remote compile/install operations and follows Device Builder job progress while retaining manual YAML generation and import.
+- Stores a per-reader firmware profile and lets each installation choose its existing ESPHome secret key names without exposing their values.
+- Maintains the ESPHome reader source under this repository's `esphome/` directory and pins generated wrappers to unambiguous `firmware-vX.Y.Z` tags.
+
 ## 0.13.1
 
 - Makes firmware creation and OTA updates work immediately with the standard ESPHome add-on, without exposing a dashboard port or configuring a URL.

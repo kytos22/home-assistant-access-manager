@@ -75,28 +75,168 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("pip==26.1.2", dockerfile)
         self.assertIn("aiohttp==3.14.1", dockerfile)
         self.assertIn("cryptography==49.0.0", dockerfile)
-        self.assertIn("esphome==2026.7.0", dockerfile)
-        self.assertIn("homeassistant_config", app_config)
+        self.assertNotIn("esphome==", dockerfile)
+        self.assertNotIn("homeassistant_config", app_config)
+        self.assertNotIn("esphome_dashboard_url", app_config)
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.13.1"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.14.0"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
-    def test_local_esphome_is_available_without_dashboard_url(self):
+    def test_device_builder_inputs_are_strict_and_secrets_are_not_public(self):
+        self.assertEqual(
+            APP.validate_esphome_base_url("https://builder.example.test/"),
+            "https://builder.example.test",
+        )
+        self.assertEqual(
+            APP.validate_esphome_configuration("front-reader.yaml"),
+            "front-reader.yaml",
+        )
+        for invalid in ("", "../front.yaml", "secrets.yaml", "front.txt"):
+            with self.assertRaises(ValueError):
+                APP.validate_esphome_configuration(invalid)
+        for invalid in ("builder.local", "ftp://builder.local", "https://u:p@host"):
+            with self.assertRaises(ValueError):
+                APP.validate_esphome_base_url(invalid)
+
+        main_source = MODULE_PATH.read_text(encoding="utf-8")
+        source = main_source[
+            main_source.index("class FingerprintAdmin:"):
+            main_source.index('if __name__ == "__main__":')
+        ]
+        for command in (
+            "devices/list", "devices/update_config", "firmware/install",
+            "firmware/follow_job",
+        ):
+            self.assertIn(command, source)
+        for forbidden in (
+            "devices/get_config", "config/get_secrets", "secrets.yaml",
+            "create_subprocess_exec", "/edit?", '"/compile"', '"/upload"',
+        ):
+            self.assertNotIn(forbidden, source)
+
+    def test_device_builder_token_is_encrypted_and_operations_survive_restart(self):
         with tempfile.TemporaryDirectory() as temporary:
-            config_dir = Path(temporary) / "esphome"
-            with (
-                patch.object(APP, "ESPHOME_CONFIG_DIR", config_dir),
-                patch.object(APP.shutil, "which", return_value="/usr/bin/esphome"),
-                patch.object(APP, "configured_esphome_url", return_value=""),
-            ):
-                self.assertTrue(APP.local_esphome_available())
-                self.assertTrue(APP.esphome_available())
+            data_dir = Path(temporary)
+            with patch.object(APP, "DATA_DIR", data_dir):
+                registry = APP.Registry(data_dir / "registry.db")
+                public = registry.save_esphome_connection(
+                    "https://builder.example.test", "very-secret-token",
+                    {"server_version": "1", "esphome_version": "2026.7.0"}, 2,
+                )
+                self.assertNotIn("token", public)
+                self.assertTrue(public["token_configured"])
+                self.assertNotIn("very-secret-token", registry.setting("esphome_token"))
+                self.assertEqual(
+                    registry.esphome_connection(include_token=True)["token"],
+                    "very-secret-token",
+                )
+                registry.create_firmware_operation(
+                    "local-job", "front-reader.yaml", True,
+                    remote_job_id="remote-compile",
+                )
+                registry.connection.close()
+
+                restarted = APP.Registry(data_dir / "registry.db")
+                operation = restarted.firmware_operations(pending_only=True)[0]
+                self.assertEqual(operation["id"], "local-job")
+                self.assertEqual(operation["remote_job_id"], "remote-compile")
+                self.assertTrue(operation["install"])
+                restarted.connection.close()
+
+    def test_device_builder_device_projection_drops_unknown_and_secret_fields(self):
+        devices = APP.FingerprintAdmin.public_esphome_devices({
+            "configured": [{
+                "configuration": "front-reader.yaml",
+                "name": "front-reader",
+                "friendly_name": "Front reader",
+                "content": "wifi_password: secret-value",
+                "secrets": {"wifi_password": "secret-value"},
+            }]
+        })
+        self.assertEqual(devices, [{
+            "configuration": "front-reader.yaml",
+            "name": "front-reader",
+            "friendly_name": "Front reader",
+            "address": "",
+            "state": "",
+        }])
+
+    def test_preview_blocks_unrelated_configuration_without_reading_yaml(self):
+        class FakeClient:
+            def __init__(self):
+                self.commands = []
+
+            async def command(self, command, args=None, **_kwargs):
+                self.commands.append((command, args))
+                if command == "devices/list":
+                    return {"configured": [{
+                        "configuration": "front-reader.yaml",
+                        "name": "another-device",
+                    }]}
+                if command == "config/get_preferences":
+                    return {"version_history_enabled": True}
+                raise AssertionError(command)
+
+        client = FakeClient()
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.esphome_devices_cache = []
+        admin.device_builder_client = lambda: client
+        preview = asyncio.run(admin.esphome_preview_data({
+            "profile": "reader_only",
+            "install_mode": "existing",
+            "device_name": "front-reader",
+            "friendly_name": "Front reader",
+            "configuration": "front-reader.yaml",
+            "board": "esp32dev",
+            "fingerprint_tx_pin": "GPIO17",
+            "fingerprint_rx_pin": "GPIO16",
+        }))
+        self.assertIn("belongs to", preview["collision"])
+        self.assertNotIn("devices/get_config", [item[0] for item in client.commands])
+
+    def test_install_follows_compile_and_dependent_upload(self):
+        class FakeClient:
+            def __init__(self):
+                self.followed = []
+
+            async def command(self, command, args=None, on_event=None, **_kwargs):
+                if command == "firmware/follow_job":
+                    self.followed.append(args["job_id"])
+                    if on_event:
+                        await on_event("output", f"finished {args['job_id']}\n")
+                    return {"success": True, "code": 0}
+                if command == "firmware/get_jobs":
+                    return [{
+                        "job_id": "remote-upload",
+                        "depends_on": "remote-compile",
+                    }]
+                raise AssertionError(command)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            with patch.object(APP, "DATA_DIR", data_dir):
+                registry = APP.Registry(data_dir / "registry.db")
+                registry.create_firmware_operation(
+                    "local-job", "front-reader.yaml", True,
+                    remote_job_id="remote-compile",
+                )
+                client = FakeClient()
+                admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+                admin.registry = registry
+                admin.device_builder_client = lambda: client
+                asyncio.run(admin.follow_device_builder_operation("local-job"))
+                operation = registry.firmware_operation("local-job")
+                self.assertEqual(client.followed, ["remote-compile", "remote-upload"])
+                self.assertEqual(operation["remote_tail_job_id"], "remote-upload")
+                self.assertEqual(operation["status"], "completed")
+                self.assertIn("finished remote-upload", operation["logs"])
+                registry.connection.close()
 
     def test_esphome_generator_pins_firmware_and_never_embeds_secrets(self):
-        self.assertEqual(APP.READER_FIRMWARE_VERSION, "0.6.0")
+        self.assertEqual(APP.READER_FIRMWARE_VERSION, "0.6.1")
         generated = APP.esphome_reader_config({
             "profile": "reader_only",
             "install_mode": "new",
@@ -107,9 +247,16 @@ class RegistryTests(unittest.TestCase):
             "fingerprint_rx_pin": "GPIO18",
         })
         self.assertIn("reader-only.yaml", generated)
-        self.assertIn(f"ref: v{APP.READER_FIRMWARE_VERSION}", generated)
+        self.assertEqual(APP.READER_FIRMWARE_REF, "firmware-v0.6.1")
+        self.assertIn("url: https://github.com/kytos22/home-assistant-access-manager", generated)
+        self.assertIn(f"ref: {APP.READER_FIRMWARE_REF}", generated)
+        self.assertIn("- esphome/reader-only.yaml", generated)
         self.assertIn('board: "esp32-s3-devkitc-1"', generated)
         self.assertIn("wifi_password", generated)
+        self.assertIn("wifi_ssid_value: !secret wifi_ssid", generated)
+        self.assertIn(
+            "api_encryption_key_value: !secret api_encryption_key", generated
+        )
         self.assertNotIn("CHANGE_ME", generated)
         self.assertIn("import this file into ESPHome Device Builder", generated)
 
@@ -118,11 +265,17 @@ class RegistryTests(unittest.TestCase):
             "install_mode": "existing",
             "device_name": "existing-reader",
             "friendly_name": "Existing reader",
+            "configuration": "display1.yaml",
+            "reader_id": "front_reader",
+            "wifi_ssid_secret": "wifi_ssid2",
         })
-        self.assertIn("access-reader.yaml", existing)
+        self.assertIn("- esphome/access-reader.yaml", existing)
         self.assertIn("keep device_name and all existing secret", existing)
         self.assertNotIn("secret-value", existing)
         self.assertIn('display_language: "English"', existing)
+        self.assertIn("wifi_ssid_value: !secret wifi_ssid2", existing)
+        self.assertIn("# Access Manager reader ID: front_reader", existing)
+        self.assertIn("# Canonical Device Builder configuration: display1.yaml", existing)
         spanish = APP.esphome_reader_config({
             "profile": "display",
             "install_mode": "new",
@@ -138,6 +291,14 @@ class RegistryTests(unittest.TestCase):
                 "device_name": "front-reader",
                 "friendly_name": "Front reader",
                 "display_language": "French",
+            })
+        with self.assertRaisesRegex(ValueError, "secret key name"):
+            APP.esphome_reader_config({
+                "profile": "display",
+                "install_mode": "existing",
+                "device_name": "front-reader",
+                "friendly_name": "Front reader",
+                "wifi_ssid_secret": "wifi ssid",
             })
 
 
@@ -193,6 +354,48 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(registry.events(), [])
             self.assertEqual(registry.log_retention_days(), 30)
             registry.connection.close()
+
+    def test_esphome_setup_persists_installation_defaults_and_reader_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            registry = APP.Registry(Path(directory) / "esphome-setup.db")
+            self.assertEqual(
+                registry.esphome_secret_keys()["wifi_ssid_secret"], "wifi_ssid"
+            )
+            saved = registry.set_esphome_secret_keys({
+                "wifi_ssid_secret": "wifi_ssid2",
+                "wifi_password_secret": "wifi_password",
+                "api_encryption_key_secret": "api_encryption_key",
+                "ota_password_secret": "ota_password",
+            })
+            self.assertEqual(saved["wifi_ssid_secret"], "wifi_ssid2")
+            registry.create_reader(
+                "front_reader", "Front reader", "fingerprint", None, {}
+            )
+            admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+            admin.registry = registry
+            profile = admin.save_esphome_firmware_profile({
+                "reader_id": "front_reader",
+                "profile": "display",
+                "device_name": "display1",
+                "friendly_name": "Display1",
+                "configuration": "display1.yaml",
+                "display_language": "Español",
+                **saved,
+            })
+            self.assertEqual(profile["reader_id"], "front_reader")
+            self.assertEqual(profile["configuration"], "display1.yaml")
+            self.assertEqual(profile["secret_keys"]["wifi_ssid_secret"], "wifi_ssid2")
+            registry.connection.close()
+
+            restarted = APP.Registry(Path(directory) / "esphome-setup.db")
+            self.assertEqual(
+                restarted.esphome_secret_keys()["wifi_ssid_secret"], "wifi_ssid2"
+            )
+            stored = restarted.reader("front_reader")["config"]["firmware_profile"]
+            self.assertEqual(stored["device_name"], "display1")
+            self.assertEqual(stored["display_language"], "Español")
+            restarted.connection.close()
 
     def test_shared_keypad_credentials_are_encrypted_private_and_unique(self):
         with tempfile.TemporaryDirectory() as directory:

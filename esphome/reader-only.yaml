@@ -1,0 +1,245 @@
+substitutions:
+  firmware_version: "0.6.1"
+  device_name: fingerprint-access-reader
+  friendly_name: Fingerprint Access Reader
+  board: esp32dev
+  framework_type: esp-idf
+  fingerprint_tx_pin: GPIO17
+  fingerprint_rx_pin: GPIO16
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  project:
+    name: kytos22.fingerprint_access_reader
+    version: ${firmware_version}
+
+esp32:
+  board: ${board}
+  framework:
+    type: ${framework_type}
+
+logger:
+
+api:
+  reboot_timeout: 0s
+  encryption:
+    key: ${api_encryption_key_value}
+
+ota:
+  - platform: esphome
+    password: ${ota_password_value}
+
+wifi:
+  ssid: ${wifi_ssid_value}
+  password: ${wifi_password_value}
+
+uart:
+  id: uart_fp
+  tx_pin: ${fingerprint_tx_pin}
+  rx_pin: ${fingerprint_rx_pin}
+  baud_rate: 57600
+
+globals:
+  - id: event_sequence
+    type: uint32_t
+    restore_value: yes
+    initial_value: "0"
+  - id: enrollment_cancel_requested
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: delete_count_before
+    type: int
+    restore_value: no
+    initial_value: "-1"
+
+text_sensor:
+  - platform: template
+    name: "Fingerprint reader firmware version"
+    id: firmware_version_sensor
+    entity_category: diagnostic
+    icon: mdi:chip
+    lambda: 'return {"${firmware_version}"};'
+    update_interval: never
+
+  - platform: template
+    name: "Fingerprint access event"
+    id: fingerprint_access_event
+    entity_category: diagnostic
+
+  - platform: template
+    name: "Fingerprint management event"
+    id: fingerprint_management_event
+    entity_category: diagnostic
+
+# Access Manager is the source of truth for names on a reader without a display.
+# This compatibility entity accepts the normal registry commands without storing
+# personal data on the ESP.
+text:
+  - platform: template
+    name: "Fingerprint name registry"
+    id: fingerprint_name_registry
+    mode: text
+    optimistic: true
+    restore_value: false
+    entity_category: config
+
+binary_sensor:
+  - platform: status
+    name: "Reader connection"
+    entity_category: diagnostic
+
+sensor:
+  - platform: fingerprint_grow
+    fingerprint_count:
+      name: "Stored fingerprints"
+      id: stored_fingerprints
+    status:
+      name: "Reader status"
+    capacity:
+      name: "Reader capacity"
+    security_level:
+      name: "Security level"
+    last_finger_id:
+      name: "Last fingerprint ID"
+    last_confidence:
+      name: "Last confidence"
+
+select:
+  - platform: template
+    name: "Door action for next scan"
+    id: door_action_select
+    options: ["Default", "Open", "Unlock", "Lock"]
+    optimistic: true
+    restore_value: false
+    initial_option: "Default"
+    entity_category: config
+
+number:
+  - platform: template
+    name: "Fingerprint ID"
+    id: fingerprint_id
+    min_value: 1
+    max_value: 50
+    step: 1
+    optimistic: true
+    restore_value: true
+    initial_value: 1
+    mode: box
+
+button:
+  - platform: template
+    name: "Enroll fingerprint"
+    on_press:
+      - lambda: 'id(enrollment_cancel_requested) = false;'
+      - fingerprint_grow.enroll:
+          finger_id: !lambda 'return (int) id(fingerprint_id).state;'
+          num_scans: 2
+
+  - platform: template
+    name: "Cancel fingerprint enrollment"
+    on_press:
+      - lambda: 'id(enrollment_cancel_requested) = true;'
+      - fingerprint_grow.cancel_enroll:
+
+  - platform: template
+    name: "Delete selected fingerprint"
+    on_press:
+      - lambda: |-
+          id(delete_count_before) = id(stored_fingerprints).has_state()
+                                        ? (int) lroundf(id(stored_fingerprints).state)
+                                        : -1;
+      - fingerprint_grow.delete:
+          finger_id: !lambda 'return (int) id(fingerprint_id).state;'
+      - delay: 250ms
+      - text_sensor.template.publish:
+          id: fingerprint_management_event
+          state: !lambda |-
+            id(event_sequence)++;
+            const int current = id(stored_fingerprints).has_state()
+                                    ? (int) lroundf(id(stored_fingerprints).state)
+                                    : -1;
+            const std::string result = id(delete_count_before) > 0 &&
+                                       current == id(delete_count_before) - 1
+                                           ? "delete_done"
+                                           : "delete_failed";
+            return result + "|" + to_string(id(event_sequence)) + "|" +
+                   to_string((int) id(fingerprint_id).state) + "|" +
+                   to_string(current);
+
+  - platform: template
+    name: "Delete all fingerprints"
+    disabled_by_default: true
+    entity_category: config
+    on_press:
+      - fingerprint_grow.delete_all:
+
+fingerprint_grow:
+  uart_id: uart_fp
+
+  on_finger_scan_matched:
+    - text_sensor.template.publish:
+        id: fingerprint_access_event
+        state: !lambda |-
+          id(event_sequence)++;
+          std::string action = "default";
+          const auto selected_action = id(door_action_select).current_option();
+          if (selected_action == "Open") action = "open";
+          else if (selected_action == "Unlock") action = "unlock";
+          else if (selected_action == "Lock") action = "lock";
+          return "matched|" + to_string(id(event_sequence)) + "|" +
+                 to_string(finger_id) + "|" + to_string(confidence) + "|" + action;
+    - select.set:
+        id: door_action_select
+        option: "Default"
+
+  on_finger_scan_unmatched:
+    - text_sensor.template.publish:
+        id: fingerprint_access_event
+        state: !lambda |-
+          id(event_sequence)++;
+          return "unmatched|" + to_string(id(event_sequence)) + "|0|0";
+
+  on_finger_scan_invalid:
+    - text_sensor.template.publish:
+        id: fingerprint_access_event
+        state: !lambda |-
+          id(event_sequence)++;
+          return "invalid|" + to_string(id(event_sequence)) + "|0|0";
+
+  on_finger_scan_misplaced:
+    - text_sensor.template.publish:
+        id: fingerprint_access_event
+        state: !lambda |-
+          id(event_sequence)++;
+          return "misplaced|" + to_string(id(event_sequence)) + "|0|0";
+
+  on_enrollment_scan:
+    - text_sensor.template.publish:
+        id: fingerprint_management_event
+        state: !lambda |-
+          id(event_sequence)++;
+          return "enroll_scan|" + to_string(id(event_sequence)) + "|" +
+                 to_string(finger_id) + "|" + to_string(scan_num);
+
+  on_enrollment_done:
+    - lambda: 'id(enrollment_cancel_requested) = false;'
+    - text_sensor.template.publish:
+        id: fingerprint_management_event
+        state: !lambda |-
+          id(event_sequence)++;
+          return "enroll_done|" + to_string(id(event_sequence)) + "|" +
+                 to_string(finger_id) + "|0";
+
+  on_enrollment_failed:
+    - text_sensor.template.publish:
+        id: fingerprint_management_event
+        state: !lambda |-
+          id(event_sequence)++;
+          const std::string result = id(enrollment_cancel_requested)
+                                         ? "enroll_cancelled"
+                                         : "enroll_failed";
+          id(enrollment_cancel_requested) = false;
+          return result + "|" + to_string(id(event_sequence)) + "|" +
+                 to_string(finger_id) + "|0";

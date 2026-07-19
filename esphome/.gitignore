@@ -1,0 +1,7 @@
+# Installation-owned secrets and ESPHome build products.
+/.esphome/
+/secrets.yaml
+/build/
+*.bin
+*.elf
+*.map

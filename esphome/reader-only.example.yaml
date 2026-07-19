@@ -1,0 +1,14 @@
+# Installation-owned wrapper for a display-free fingerprint reader.
+substitutions:
+  device_name: fingerprint-access-reader
+  friendly_name: Fingerprint Access Reader
+  board: esp32dev
+  fingerprint_tx_pin: GPIO17
+  fingerprint_rx_pin: GPIO16
+  wifi_ssid_value: !secret wifi_ssid
+  wifi_password_value: !secret wifi_password
+  api_encryption_key_value: !secret api_encryption_key
+  ota_password_value: !secret ota_password
+
+packages:
+  fingerprint_access_reader: !include reader-only.yaml
