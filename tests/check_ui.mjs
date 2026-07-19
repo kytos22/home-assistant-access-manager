@@ -82,7 +82,7 @@ for (const marker of [
   'recoverPanelBuild',
   'firmware_version_entity',
   'firmware_not_configured',
-  'PANEL_BUILD_VERSION = "0.13.0"',
+  'PANEL_BUILD_VERSION = "0.13.1"',
   'door_sensor_hint',
   'visibilitychange',
   'REFRESH_INTERVAL_MS = 10000',

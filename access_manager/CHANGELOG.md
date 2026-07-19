@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.1
+
+- Makes firmware creation and OTA updates work immediately with the standard ESPHome add-on, without exposing a dashboard port or configuring a URL.
+- Uses a bundled ESPHome compiler with the shared Home Assistant ESPHome directory, preserving all secret values in ESPHome's existing `secrets.yaml`.
+- Keeps the dashboard URL as an optional advanced override for external ESPHome installations.
+
 ## 0.13.0
 
 - Shows whether each fingerprint reader has a display and sensor or only a sensor.
