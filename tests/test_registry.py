@@ -81,7 +81,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.14.0"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.14.1"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
@@ -111,9 +111,13 @@ class RegistryTests(unittest.TestCase):
             "firmware/follow_job",
         ):
             self.assertIn(command, source)
+        # Managed updates must read the canonical YAML and only its secret-key
+        # metadata.  They must never read a secrets file or run a compiler here.
+        for required in ("devices/get_config", "config/get_secrets"):
+            self.assertIn(required, source)
         for forbidden in (
-            "devices/get_config", "config/get_secrets", "secrets.yaml",
-            "create_subprocess_exec", "/edit?", '"/compile"', '"/upload"',
+            "secrets.yaml", "create_subprocess_exec", "/edit?", '"/compile"',
+            '"/upload"',
         ):
             self.assertNotIn(forbidden, source)
 
@@ -125,10 +129,13 @@ class RegistryTests(unittest.TestCase):
                 public = registry.save_esphome_connection(
                     "https://builder.example.test", "very-secret-token",
                     {"server_version": "1", "esphome_version": "2026.7.0"}, 2,
+                    username="temporary-admin",
                 )
                 self.assertNotIn("token", public)
+                self.assertNotIn("username", public)
                 self.assertTrue(public["token_configured"])
                 self.assertNotIn("very-secret-token", registry.setting("esphome_token"))
+                self.assertNotIn("temporary-admin", registry.setting("esphome_connection"))
                 self.assertEqual(
                     registry.esphome_connection(include_token=True)["token"],
                     "very-secret-token",
@@ -317,6 +324,100 @@ class RegistryTests(unittest.TestCase):
                 "fingerprint_tx_pin": "GPIO17",
                 "fingerprint_rx_pin": "GPIO17",
             })
+
+    def test_managed_firmware_ref_patch_is_exact_and_version_safe(self):
+        original = (
+            "# User-owned comment and substitutions stay unchanged\n"
+            "substitutions:\n"
+            "  wifi_ssid_value: !secret wifi_ssid2\n"
+            "packages:\n"
+            "  fingerprint_access_reader:\n"
+            "    url: https://github.com/kytos22/home-assistant-access-manager\n"
+            "    ref: firmware-v0.6.0  # managed package\n"
+            "    files:\n"
+            "      - esphome/access-reader.yaml\n"
+            "wifi:\n"
+            "  ssid: ${wifi_ssid_value}\n"
+        )
+        patched = APP.patch_managed_firmware_ref(
+            original, "firmware-v0.6.1", "display"
+        )
+        self.assertEqual(
+            patched["changed_lines"],
+            ["-     ref: firmware-v0.6.0  # managed package", "+     ref: firmware-v0.6.1  # managed package"],
+        )
+        self.assertEqual(
+            patched["patched_content"].replace("firmware-v0.6.1", "firmware-v0.6.0"),
+            original,
+        )
+        self.assertEqual(APP.firmware_version_state("v0.6", "0.6.0"), "up_to_date")
+        self.assertEqual(APP.firmware_version_state("0.6.2", "0.6.1"), "newer_than_supported")
+        self.assertEqual(APP.firmware_version_state("unavailable", "0.6.1"), "unknown")
+        with self.assertRaisesRegex(ValueError, "No managed"):
+            APP.patch_managed_firmware_ref(original.replace("access-reader", "other"), "firmware-v0.6.1")
+
+    def test_managed_firmware_operation_terminal_states_do_not_resume(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data_dir = Path(temporary)
+            with patch.object(APP, "DATA_DIR", data_dir):
+                registry = APP.Registry(data_dir / "registry.db")
+                registry.create_firmware_operation(
+                    "completed-job", "front-reader.yaml", True,
+                    reader_id="front_reader", remote_job_id="remote-job",
+                    target_version="0.6.1", update_kind="managed_update",
+                )
+                registry.update_firmware_operation(
+                    "completed-job", status="completed_verified",
+                    step="completed_verified",
+                )
+                self.assertEqual(registry.firmware_operations(pending_only=True), [])
+                self.assertEqual(
+                    APP.HomeAssistantIngressTransport._ingress_token(
+                        {"ingress_entry": "/api/hassio_ingress/exampleToken_123"}
+                    ),
+                    "exampleToken_123",
+                )
+                with self.assertRaises(APP.DeviceBuilderError):
+                    APP.HomeAssistantIngressTransport._ingress_token({})
+                registry.connection.close()
+
+    def test_local_ingress_discovers_supported_addons_without_public_url(self):
+        class FakeHomeAssistant:
+            def __init__(self, addons):
+                self.addons = addons
+                self.calls = []
+
+            async def supervisor_api(self, method, path, data=None):
+                self.calls.append((method, path, data))
+                self.assertEqual(method, "GET")
+                self.assertEqual(path, "/addons")
+                return {"data": {"addons": self.addons}}
+
+            def assertEqual(self, left, right):
+                if left != right:
+                    raise AssertionError((left, right))
+
+        home_assistant = FakeHomeAssistant([{
+            "slug": "a0d7b954_esphome",
+            "name": "ESPHome Device Builder",
+            "repository": "core",
+            "state": "started",
+            "ingress": True,
+            "ingress_entry": "/api/hassio_ingress/local_ingress_token",
+            "stage": "stable",
+        }])
+        transport = APP.HomeAssistantIngressTransport(home_assistant)
+        addon = asyncio.run(transport._discover())
+        self.assertEqual(addon["slug"], "a0d7b954_esphome")
+        self.assertEqual(home_assistant.calls, [("GET", "/addons", None)])
+
+        stopped = APP.HomeAssistantIngressTransport(FakeHomeAssistant([{
+            "slug": "esphome_beta", "name": "ESPHome Device Builder Beta",
+            "state": "stopped", "ingress": True,
+        }]))
+        with self.assertRaisesRegex(APP.DeviceBuilderError, "stopped"):
+            asyncio.run(stopped._discover())
+        self.assertEqual(stopped.status["status"], "stopped")
 
     def test_index_disables_document_caching(self):
         admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)

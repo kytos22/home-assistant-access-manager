@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.1
+
+- Connects to the local ESPHome Device Builder automatically through Home Assistant Supervisor and Ingress, without exposing a dashboard port or requesting a URL/token.
+- Keeps external Device Builder configuration under advanced settings; a username/password login is used only to obtain an encrypted token and neither credential is retained.
+- Adds a two-step managed firmware update that verifies the canonical YAML hash, changes only the immutable Access Manager package `ref`, validates, compiles, installs by OTA, and verifies the reported firmware version after reconnecting.
+- Protects custom and newer firmware refs, checks required secret-key metadata without reading secret values, and records restart-safe update jobs, bounded diagnostics, and firmware audit events.
+
 ## 0.14.0
 
 - Removes the experimental bundled ESPHome compiler and writable shared-configuration mapping.

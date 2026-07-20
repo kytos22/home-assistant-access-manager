@@ -1,66 +1,77 @@
-# Firmware delivery and credential safety
+# Managed ESPHome firmware delivery
 
-Access Manager and ESPHome Fingerprint Access Reader are maintained in this single repository. They remain separate runtime components: Access Manager generates a small release-pinned YAML wrapper, while the existing ESPHome Device Builder owns each device configuration, validates it, compiles it, installs it, and remains the normal recovery path. Firmware packages live under `esphome/` and use `firmware-vX.Y.Z` tags so they cannot be confused with app releases.
+Access Manager and the ESPHome Fingerprint Access Reader are maintained in this repository, but they run independently. Access Manager never compiles ESPHome firmware. Every validation, compile, and OTA installation is performed by the user's ESPHome Device Builder with that device's canonical YAML.
 
-Access Manager does not bundle ESPHome, write to Home Assistant's shared ESPHome directory, or read a device YAML or `secrets.yaml`. Wi-Fi, API-encryption, and OTA secret values stay exclusively in Device Builder.
+Firmware packages live under `esphome/` and are pinned to immutable tags such as `firmware-v0.6.1`. The included Access Manager release is the only version source:
 
-## Supported connection
+```python
+READER_FIRMWARE_VERSION = "0.6.1"
+READER_FIRMWARE_REF = f"firmware-v{READER_FIRMWARE_VERSION}"
+```
 
-The optional connection in **Settings → ESPHome Device Builder connection** uses Device Builder's multiplexed `/ws` API and an optional bearer token. The token is encrypted at rest in the add-on's private `/data` volume and is never returned to the browser after saving.
+It does not query GitHub at runtime and never follows a moving `main` or `stable` branch.
 
-Access Manager can list Device Builder configurations, create a new wrapper, update the exact configuration selected for a reader, start a remote compile or OTA installation, and follow its persistent job. Existing files are updated only after all of these checks pass:
+## Device Builder connection
 
-- the exact `configuration` filename exists and belongs to the expected `esphome.name`;
-- no other configuration advertises the same device name;
-- Device Builder version history is enabled;
-- the administrator previews the generated YAML and confirms the exact filename.
+The normal connection is automatic: **Settings → ESPHome Device Builder** discovers the local Stable, Beta, or Dev Device Builder through Home Assistant's authenticated Supervisor WebSocket and opens a short-lived Ingress session. No URL, bearer token, Ingress token, cookie, or public port is requested from the administrator or stored by Access Manager.
 
-Access Manager never creates a second `*-access-manager.yaml` file for an existing device.
+The panel reports whether Device Builder is detecting, not installed, stopped, starting, Ingress-unavailable, incompatible, connected, or in error. Starting a stopped add-on is always an explicit button action.
 
-## Home Assistant add-on boundary
+**Advanced configuration → External Device Builder** is only for a Device Builder on another host. It supports URL, username/password login, and an existing token. A password is used only for `auth/login` and is immediately discarded; only a returned token is retained, encrypted in the add-on's private `/data` storage. Access Manager never returns that token to the browser.
 
-Device Builder's Home Assistant trusted-ingress endpoint rejects requests from other add-ons by design. Do not expose port 6052 with `leave_front_door_open`: that disables dashboard authentication. Until Device Builder provides a supported authenticated inter-add-on route, automatic control requires a separately reachable authenticated Device Builder endpoint.
+Do not expose port 6052 or enable `leave_front_door_open`. The managed local connection deliberately uses Home Assistant Ingress instead.
 
-The connection is optional. YAML generation, copy, download, manual import, validation, logs, compilation, OTA, and recovery remain available through Device Builder without connecting it to Access Manager.
+## What an update changes
 
-## Installation portability
+For a linked reader, Access Manager first reads the canonical YAML from Device Builder and verifies that it contains exactly one supported managed package, for example:
 
-No Device Builder URL, token, device name, board, pin, configuration filename, or Home Assistant entity is built into Access Manager. Each installation stores its own mappings in the existing SQLite database. Schema additions are created idempotently during startup, so upgrades keep existing readers and credentials.
+```yaml
+packages:
+  fingerprint_access_reader:
+    url: https://github.com/kytos22/home-assistant-access-manager
+    ref: firmware-v0.6.0
+    files:
+      - esphome/access-reader.yaml
+```
 
-The initial reader setup stores a firmware profile under the Access Manager `reader_id`: ESPHome device name, friendly name, exact Device Builder configuration filename, hardware profile, language, and the four secret key names selected by the administrator. The generated wrapper maps those names into package substitutions. Secret values remain exclusively in Device Builder's `secrets.yaml` and may use installation-specific names such as `wifi_ssid2`.
+The two-step panel flow presents the configuration filename, installed and target versions, SHA-256 of the YAML checked, and the exact proposed line change. Applying the update rechecks that hash under a per-configuration lock, then changes only:
 
-The Device Builder bearer token is encrypted with an installation-local key. The database and that key both live in the add-on's private `/data` volume and are therefore restored together by a Home Assistant add-on backup. A restored installation can replace or remove the connection without affecting YAML generation.
+```diff
+-    ref: firmware-v0.6.0
++    ref: firmware-v0.6.1
+```
 
-**Test connection** verifies the read-only device, preferences, and persistent-job APIs before saving. An incompatible, unreachable, or unauthenticated Device Builder is reported as a connection error; Access Manager does not fall back to a hidden compiler or shared-directory write.
+All other YAML bytes are preserved: board, framework, pins, display, substitutions, package additions, secret names, network settings, and manual customizations. Access Manager never rewrites the complete YAML for a normal update and never reads secret values or `secrets.yaml`; it checks only the required secret-key names through Device Builder metadata before validation.
 
-Access Manager assumes that the selected Device Builder can already compile the target firmware independently. A standalone Device Builder host must provide the operating-system libraries required by its ESPHome/ESP-IDF toolchain; for example, the isolated Ubuntu 24.04 compile test required `libusb-1.0-0` so ESP-IDF could run OpenOCD. Those compiler dependencies belong to Device Builder and are deliberately not added to the Access Manager image.
+The update is refused if the YAML does not contain one recognized package, has several recognized packages, uses a custom ref, belongs to a different project/profile, or is already newer than the firmware bundled with Access Manager. A custom ref is never silently overwritten and a newer firmware is never automatically downgraded.
 
-## Recommended workflow
+## Update lifecycle
 
-### New device
+1. The administrator selects **Update firmware** (or **Recompile firmware** when the installed version is unknown).
+2. Access Manager prepares the single-line patch and displays it for confirmation.
+3. It rechecks the canonical YAML SHA-256, checks required secret-key names, applies the patch if needed, and asks Device Builder to validate it.
+4. Device Builder compiles the canonical configuration and performs OTA.
+5. Access Manager follows the persistent Device Builder jobs, waits for Home Assistant to see the reader reconnect, and verifies the configured firmware-version sensor against the target version.
 
-1. Generate and review the wrapper in Access Manager.
-2. Either create it through a connected Device Builder or download and import it manually.
-3. Select the secret key names used by this installation and ensure those keys exist in Device Builder's `secrets.yaml`.
-4. Validate the configuration and perform the first installation over USB.
-5. Adopt the device in Home Assistant, create its Access Manager reader, map the entities, and link the exact Device Builder configuration filename.
+The persistent job status distinguishes validation/compile/upload failure, waiting for a device, version unconfirmed, a reconnection timeout, and completed-and-verified. If validation or compilation fails before OTA begins, Access Manager restores the original YAML only when it had changed the managed ref. It never rolls back after OTA has started, since doing so cannot undo a device already flashed.
 
-### Existing device update
+Operations and bounded diagnostic lines are stored in the Access Manager database and resume tracking after a restart. Audit events identify the reader and configuration only; they do not include YAML content, secrets, tokens, cookies, or authorization headers.
 
-1. Confirm the canonical Device Builder filename and enable its version history.
-2. Link that exact filename to the Access Manager reader.
-3. Keep the existing device name and secret values unchanged.
-4. Review the generated wrapper and confirm the exact overwrite.
-5. Compile/install through Device Builder and confirm that the reader reconnects. Device Builder remains available for logs and recovery.
+## Version states
 
-## Credential failure modes
+The configured `firmware_version_entity` provides the installed version. Comparison accepts a leading `v`, variable-length numeric versions, prerelease identifiers, and build metadata.
 
-| Change or problem | Result | Recovery |
+| Installed version | Panel state | Action |
 | --- | --- | --- |
-| Required secret key is missing | Validation fails before compilation | Add the key to Device Builder's `secrets.yaml` |
-| `api_encryption_key` changes | Home Assistant cannot authenticate the existing device API | Restore the old value or deliberately re-adopt the device |
-| `ota_password` changes | The next OTA upload cannot authenticate | Restore it or recover over USB |
-| `device_name` changes | ESPHome/Home Assistant may create a different identity | Restore the original name or deliberately remap the replacement |
-| Board or UART pins are wrong | Validation, boot, or sensor communication fails | Restore the working settings and use USB recovery if needed |
+| Lower than the bundled target | Update available | Managed update is offered |
+| Equal to target | Up to date | No update is offered |
+| Higher than target | Newer than supported | No automatic downgrade |
+| Missing, unavailable, or invalid | Unknown | Manual recompile is available; no update claim |
 
-The reader-only profile remains configurable because ESP32 board and UART choices vary. A universal precompiled image would need a separate secure provisioning and recovery design, so it is not used here.
+## Initial setup and portability
+
+The initial reader setup stores the reader ID, Device Builder configuration filename, hardware/display profile, language, and the administrator's four secret **names**. This makes one Access Manager installation portable without assuming that every site calls its Wi-Fi secret `wifi_ssid`; `wifi_ssid2` and other valid names are supported.
+
+The generated YAML wrapper is for an initial import or an explicit administrator-chosen full replacement. It is not used by the normal managed-update path. First flashes normally require USB; subsequent validated updates can use OTA.
+
+No Device Builder URL, token, board, pin, configuration filename, Home Assistant entity, or secret value is baked into the image. Existing database schema upgrades are idempotent, and external tokens are encrypted with an installation-local key in `/data`.
