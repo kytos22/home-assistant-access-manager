@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.2
+
+- Fixes the local Device Builder connection on current Home Assistant releases by using the Supervisor WebSocket `endpoint` field required for app discovery and Ingress sessions.
+
 ## 0.14.1
 
 - Connects to the local ESPHome Device Builder automatically through Home Assistant Supervisor and Ingress, without exposing a dashboard port or requesting a URL/token.

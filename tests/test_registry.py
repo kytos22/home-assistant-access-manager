@@ -81,7 +81,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.14.1"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.14.2"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
@@ -776,6 +776,25 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
                     "entity_id": None,
                 },
             ],
+        )
+
+    async def test_supervisor_api_uses_current_websocket_endpoint_schema(self):
+        commands = []
+
+        async def websocket_command(command):
+            commands.append(command)
+            return {"addons": []}
+
+        self.ha.websocket_command = websocket_command
+        result = await self.ha.supervisor_api("get", "/addons")
+        self.assertEqual(result, {"addons": []})
+        self.assertEqual(
+            commands,
+            [{
+                "type": "supervisor/api",
+                "method": "GET",
+                "endpoint": "/addons",
+            }],
         )
 
     async def test_home_assistant_tag_refresh_is_bounded(self):

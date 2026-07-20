@@ -3152,13 +3152,13 @@ class HomeAssistant:
                     raise RuntimeError(error)
                 return message.get("result")
 
-    async def supervisor_api(self, method, path, data=None):
+    async def supervisor_api(self, method, endpoint, data=None):
         """Call Supervisor through Home Assistant's supported WebSocket proxy."""
         result = await self.websocket_command(
             {
                 "type": "supervisor/api",
                 "method": str(method).upper(),
-                "path": str(path),
+                "endpoint": str(endpoint),
                 **({"data": data} if data is not None else {}),
             }
         )
