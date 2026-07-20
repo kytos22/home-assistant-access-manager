@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.2
+
+- Recommends reader firmware 0.6.3, which translates all ten stored finger positions according to the live English/Spanish display selection.
+- Points the panel header directly to the structured project documentation and adds documentation coverage checks.
+
 ## 0.15.1
 
 - Restores the official multiplexed `/ws` protocol for the current ESPHome Device Builder, fixing `405 Method Not Allowed` when creating or updating a YAML, while retaining the HTTP/process API as an automatic fallback for legacy Dashboard installations.

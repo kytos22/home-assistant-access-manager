@@ -1,6 +1,6 @@
 substitutions:
-  firmware_version: "0.6.2"
-  name_store_component_source: github://kytos22/home-assistant-access-manager@firmware-v0.6.2
+  firmware_version: "0.6.3"
+  name_store_component_source: github://kytos22/home-assistant-access-manager@firmware-v0.6.3
   device_name: fingerprint-access-reader
   friendly_name: Fingerprint Access Reader
   display_language: English
@@ -939,6 +939,29 @@ display:
       auto tr = [&](const char *english, const char *spanish_text) -> const char * {
         return spanish ? spanish_text : english;
       };
+      auto translated_finger = [&](const std::string &finger) -> std::string {
+        if (finger == "left_thumb" || finger == "Left thumb")
+          return tr("Left thumb", "Pulgar izquierdo");
+        if (finger == "left_index" || finger == "Left index")
+          return tr("Left index", "Índice izquierdo");
+        if (finger == "left_middle" || finger == "Left middle")
+          return tr("Left middle", "Corazón izquierdo");
+        if (finger == "left_ring" || finger == "Left ring")
+          return tr("Left ring", "Anular izquierdo");
+        if (finger == "left_pinky" || finger == "Left little finger")
+          return tr("Left little finger", "Meñique izquierdo");
+        if (finger == "right_thumb" || finger == "Right thumb")
+          return tr("Right thumb", "Pulgar derecho");
+        if (finger == "right_index" || finger == "Right index")
+          return tr("Right index", "Índice derecho");
+        if (finger == "right_middle" || finger == "Right middle")
+          return tr("Right middle", "Corazón derecho");
+        if (finger == "right_ring" || finger == "Right ring")
+          return tr("Right ring", "Anular derecho");
+        if (finger == "right_pinky" || finger == "Right little finger")
+          return tr("Right little finger", "Meñique derecho");
+        return finger;
+      };
 
       // Fit variable text to the 156 px usable display width.
       auto fit_text = [&](std::string value, auto *font, int max_width) {
@@ -987,7 +1010,7 @@ display:
 
       std::string dedo = "";
       if (id(dedo_huella).has_state()) {
-        dedo = id(dedo_huella).state;
+        dedo = translated_finger(id(dedo_huella).state);
       }
 
       const bool acceso = estado == "Access granted";

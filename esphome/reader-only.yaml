@@ -1,5 +1,5 @@
 substitutions:
-  firmware_version: "0.6.2"
+  firmware_version: "0.6.3"
   device_name: fingerprint-access-reader
   friendly_name: Fingerprint Access Reader
   board: esp32dev

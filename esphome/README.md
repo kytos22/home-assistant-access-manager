@@ -35,7 +35,7 @@ Review the pinout, voltage levels, display controller, and initialization sequen
 
 ## Installation
 
-The easiest route is **Access Manager → Settings → ESPHome reader configurator**. Choose the reference display or reader-only profile and whether this is a new device or an existing-device update. The setup stores a profile for the selected Access Manager reader ID, including its ESPHome device name, canonical configuration filename, hardware, language, and the installation's secret key names. The downloaded YAML is a release-pinned package wrapper, not an incomplete firmware file: ESPHome retrieves the `esphome/` package from this repository at a `firmware-vX.Y.Z` tag, combines it with the wrapper substitutions and local secrets, and compiles the complete firmware.
+The easiest route is **Access Manager → Fingerprint readers → ESPHome reader configurator**. Choose the reference display or reader-only profile and whether this is a new device or an existing-device update. The setup stores a profile for the selected Access Manager reader ID, including its ESPHome device name, canonical configuration filename, hardware, language, and the installation's secret key names. The downloaded YAML is a release-pinned package wrapper, not an incomplete firmware file: ESPHome retrieves the `esphome/` package from this repository at a `firmware-vX.Y.Z` tag, combines it with the wrapper substitutions and local secrets, and compiles the complete firmware.
 
 For a new device, import the YAML with **ESPHome Device Builder → New device → Import from file**, provide the required keys in `secrets.yaml`, validate it, and perform the first installation, normally over USB. For an existing device, back up the working YAML, use its exact current device name, keep the current secret values, validate, and then update over OTA. Changing the API encryption key, OTA password, or device name can require re-adoption or USB recovery. Wi-Fi, API-encryption and OTA credential values are never entered into Access Manager.
 
@@ -81,6 +81,10 @@ After the device is adopted, Home Assistant exposes controls and diagnostics inc
 The companion [Home Assistant Access Manager](https://github.com/kytos22/home-assistant-access-manager) lets an administrator map these entities to a reader, enroll a person and one of ten fingers, synchronize the local name mapping, associate the reader with a door, and directly run the configured action after authorization.
 
 The shared entity contract and setup sequence are documented in [INTEGRATION.md](INTEGRATION.md).
+
+### Display language
+
+The display profile exposes a persistent `Display language` select with `English` and `Español`. Changing it from Home Assistant or Access Manager refreshes the screen immediately and does not require a reflash. Firmware 0.6.3 translates all fixed interface states and the ten standardized left/right finger labels at render time. Personal names remain unchanged.
 
 Access Manager 0.11.0 remains compatible with reader firmware 0.5.0. Access Manager 0.10.0 and reader firmware 0.5.0 added guided configuration and firmware-version status, while Access Manager 0.9.0 and reader firmware 0.4.0 remain the first coordinated versions with door-scoped panel feedback. Fingerprint access remains compatible with older Access Manager versions; only the optional feedback and version-status features require their corresponding entity mappings.
 

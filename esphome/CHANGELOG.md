@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.3
+
+- Translates every stored left/right finger label at render time, so changing the live display language also updates the identity detail shown after a successful scan without reflashing.
+- Adds source-level coverage for both languages across idle, access, denial, enrollment, deletion, offline, door, keypad and finger-position display states.
+
 ## 0.6.2
 
 - Explicitly publishes the `Fingerprint reader firmware version` diagnostic entity during every boot in both hardware profiles, preventing Home Assistant and Access Manager from retaining an `unknown` state.

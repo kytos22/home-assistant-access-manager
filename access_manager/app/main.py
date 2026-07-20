@@ -33,7 +33,7 @@ HA_API = "http://supervisor/core/api"
 HA_WS = "ws://supervisor/core/websocket"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 APP_VERSION = os.environ.get("ACCESS_MANAGER_VERSION") or "development"
-READER_FIRMWARE_VERSION = "0.6.2"
+READER_FIRMWARE_VERSION = "0.6.3"
 READER_FIRMWARE_REF = f"firmware-v{READER_FIRMWARE_VERSION}"
 READER_FIRMWARE_REPOSITORY = (
     "https://github.com/kytos22/home-assistant-access-manager"
