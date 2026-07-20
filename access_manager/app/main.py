@@ -639,6 +639,19 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
                 "addon": str(addon.get("slug") or ""),
             }
             raise DeviceBuilderError("ESPHome Device Builder is stopped", "stopped")
+        slug = str(addon.get("slug") or "").strip()
+        details = self._unwrap(
+            await self.home_assistant.supervisor_api("GET", f"/addons/{slug}/info")
+        )
+        if not isinstance(details, Mapping):
+            self.status = {"mode": "local_ingress", "status": "ingress_unavailable"}
+            raise DeviceBuilderError("Could not read ESPHome Device Builder details", "ingress_unavailable")
+        addon = {**dict(addon), **details}
+        if str(addon.get("state")) != "started":
+            self.status = {
+                "mode": "local_ingress", "status": "stopped", "addon": slug,
+            }
+            raise DeviceBuilderError("ESPHome Device Builder is stopped", "stopped")
         if not addon.get("ingress"):
             self.status = {"mode": "local_ingress", "status": "ingress_unavailable"}
             raise DeviceBuilderError("ESPHome Device Builder Ingress is unavailable", "ingress_unavailable")

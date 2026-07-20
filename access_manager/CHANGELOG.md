@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.3
+
+- Fetches the detailed ESPHome Device Builder app record before opening Ingress, so the local connection receives the Supervisor-provided Ingress entrypoint instead of treating the summary listing as incomplete configuration.
+
 ## 0.14.2
 
 - Fixes the local Device Builder connection on current Home Assistant releases by using the Supervisor WebSocket `endpoint` field required for app discovery and Ingress sessions.
