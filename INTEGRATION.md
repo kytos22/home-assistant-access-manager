@@ -4,14 +4,14 @@ This app integrates with the [included ESPHome Fingerprint Access Reader](esphom
 
 ## Version compatibility
 
-The current Access Manager source recommends ESPHome Fingerprint Access Reader 0.6.2. The panel can generate release-pinned ESPHome YAML for the reference display terminal or a reader-only installation on any ESPHome-supported ESP32 board. The reader explicitly publishes its installed version during every boot.
+The current Access Manager source recommends ESPHome Fingerprint Access Reader 0.6.3. The panel can generate release-pinned ESPHome YAML for the reference display terminal or a reader-only installation on any ESPHome-supported ESP32 board. The reader explicitly publishes its installed version during every boot, and the display profile translates stored finger positions using the live language selection.
 
 Access Manager 0.9.0 and reader firmware 0.4.0 remain the first coordinated releases to implement the `v1` display-feedback contract described below. Older reader firmware remains usable for fingerprint access, but version status requires the optional firmware-version sensor and panel feedback requires the two optional display entities.
 
 ## Configuration
 
 1. Optionally connect Access Manager to an authenticated, separately reachable ESPHome Device Builder endpoint. The manual flow remains available without a connection.
-2. Open **Settings → ESPHome reader configurator**, choose the hardware profile and select **New device** or **Existing device update**.
+2. Open **Fingerprint readers → ESPHome reader configurator**, choose the hardware profile and select **New device** or **Existing device update**.
 3. Enter the ESPHome device name. For an update it must exactly match the current name, and the selected configuration must be that reader's canonical Device Builder YAML filename. Configure the board and UART pins for a reader-only device.
 4. Review the release-pinned wrapper. Create/compile it through the connected Device Builder, or download and import it manually.
 5. Enter the existing Wi-Fi, API-encryption, and OTA secret key names. Access Manager saves those names in the linked reader's firmware profile and generates the complete wrapper, but their values are never entered into Access Manager. On an existing device, preserve both the selected names and current values.

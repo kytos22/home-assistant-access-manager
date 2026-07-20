@@ -30,6 +30,58 @@ class RegistryTests(unittest.TestCase):
             readme,
         )
 
+    def test_readme_is_english_and_links_complete_documentation(self):
+        root = Path(__file__).parents[1]
+        readme = (root / "README.md").read_text(encoding="utf-8")
+        documentation = (root / "docs" / "index.md").read_text(encoding="utf-8")
+        self.assertIn("[Complete documentation](docs/index.md)", readme)
+        self.assertIn("# Access Manager documentation", documentation)
+        for panel_section in (
+            "### Users and credentials",
+            "### Fingerprint readers",
+            "### Keypads",
+            "### Doors",
+            "### Automations",
+            "### Settings",
+            "### Log",
+        ):
+            self.assertIn(panel_section, documentation)
+        for project_section in (
+            "## System overview",
+            "## Fingerprint-reader firmware",
+            "## Home Assistant integration",
+            "## Security and data",
+            "## Backups and recovery",
+            "## Troubleshooting",
+            "## Development and releases",
+        ):
+            self.assertIn(project_section, documentation)
+        for spanish_prose in (
+            "Usuarios y credenciales",
+            "Lectores de huellas",
+            "Configuración del lector",
+            "Añadir usuario",
+            "Puerta abierta",
+            "Huella registrada",
+        ):
+            self.assertNotIn(spanish_prose, readme)
+
+        for document_path in (root / "README.md", root / "docs" / "index.md"):
+            source = document_path.read_text(encoding="utf-8")
+            for target in re.findall(r"\]\(([^)]+)\)", source):
+                local_target = target.split("#", 1)[0]
+                if not local_target or "://" in local_target:
+                    continue
+                resolved = (document_path.parent / local_target).resolve()
+                self.assertTrue(
+                    resolved.is_relative_to(root.resolve()),
+                    f"Documentation link leaves the repository: {target}",
+                )
+                self.assertTrue(
+                    resolved.exists(),
+                    f"Broken documentation link in {document_path}: {target}",
+                )
+
     def test_native_log_configuration_and_quiet_http_access_log(self):
         root = Path(__file__).parents[1]
         config = (root / "access_manager" / "config.yaml").read_text(
@@ -82,7 +134,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.15.1"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.15.2"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
@@ -244,7 +296,7 @@ class RegistryTests(unittest.TestCase):
                 registry.connection.close()
 
     def test_esphome_generator_pins_firmware_and_never_embeds_secrets(self):
-        self.assertEqual(APP.READER_FIRMWARE_VERSION, "0.6.2")
+        self.assertEqual(APP.READER_FIRMWARE_VERSION, "0.6.3")
         generated = APP.esphome_reader_config({
             "profile": "reader_only",
             "install_mode": "new",
@@ -255,7 +307,7 @@ class RegistryTests(unittest.TestCase):
             "fingerprint_rx_pin": "GPIO18",
         })
         self.assertIn("reader-only.yaml", generated)
-        self.assertEqual(APP.READER_FIRMWARE_REF, "firmware-v0.6.2")
+        self.assertEqual(APP.READER_FIRMWARE_REF, "firmware-v0.6.3")
         self.assertIn("url: https://github.com/kytos22/home-assistant-access-manager", generated)
         self.assertIn(f"ref: {APP.READER_FIRMWARE_REF}", generated)
         self.assertIn("- esphome/reader-only.yaml", generated)
@@ -338,9 +390,78 @@ class RegistryTests(unittest.TestCase):
         )
         for filename in ("access-reader.yaml", "reader-only.yaml"):
             source = (firmware_root / filename).read_text(encoding="utf-8")
-            self.assertIn('firmware_version: "0.6.2"', source)
+            self.assertIn('firmware_version: "0.6.3"', source)
             self.assertIn("on_boot:", source)
             self.assertIn(publication, source)
+
+    def test_display_firmware_translates_every_finger_for_both_languages(self):
+        source = (
+            Path(__file__).parents[1] / "esphome" / "access-reader.yaml"
+        ).read_text(encoding="utf-8")
+        translations = {
+            "Left thumb": "Pulgar izquierdo",
+            "Left index": "Índice izquierdo",
+            "Left middle": "Corazón izquierdo",
+            "Left ring": "Anular izquierdo",
+            "Left little finger": "Meñique izquierdo",
+            "Right thumb": "Pulgar derecho",
+            "Right index": "Índice derecho",
+            "Right middle": "Corazón derecho",
+            "Right ring": "Anular derecho",
+            "Right little finger": "Meñique derecho",
+        }
+        self.assertIn('current_option() == "Español"', source)
+        self.assertIn("auto translated_finger", source)
+        self.assertIn("dedo = translated_finger", source)
+        for english, spanish in translations.items():
+            self.assertIn(f'tr("{english}", "{spanish}")', source)
+        for english, spanish in (
+            ("TOUCH SENSOR", "TOCA EL SENSOR"),
+            ("ENTRANCE", "ENTRADA"),
+            ("LOCK", "BLOQUEAR"),
+            ("DOOR", "PUERTA"),
+            ("Touch again", "Toca de nuevo"),
+            ("CONFIRM", "CONFIRMAR"),
+            ("OPEN", "ABIERTA"),
+            ("CODE", "CÓDIGO"),
+            ("CAPTURED", "REGISTRADO"),
+            ("INVALID", "NO VÁLIDO"),
+            ("Access denied", "Acceso denegado"),
+            ("ACCESS", "ACCESO"),
+            ("GRANTED", "PERMITIDO"),
+            ("User", "Usuario"),
+            ("NOT", "NO"),
+            ("RECOGNIZED", "RECONOCIDO"),
+            ("Try again", "Inténtalo de nuevo"),
+            ("DELETE", "BORRADO"),
+            ("FAILED", "FALLIDO"),
+            ("Will retry", "Se reintentará"),
+            ("INVALID", "LECTURA"),
+            ("SCAN", "NO VÁLIDA"),
+            ("REPOSITION", "RECOLOCA"),
+            ("FINGER", "EL DEDO"),
+            ("ENROLLING", "REGISTRANDO"),
+            ("Scan %d of 2", "Lectura %d de 2"),
+            ("FINGERPRINT", "HUELLA"),
+            ("ENROLLED", "REGISTRADA"),
+            ("ENROLLMENT", "REGISTRO"),
+            ("CANCELLED", "CANCELADO"),
+            ("DELETED", "BORRADA"),
+            ("Operation complete", "Operación completada"),
+            ("LOCK", "BLOQUEO"),
+            ("REQUESTED", "SOLICITADO"),
+            ("OFFLINE", "SIN RED"),
+            ("unavailable", "no disponible"),
+            ("TOUCH", "TOCA EL"),
+            ("Place finger", "Coloca el dedo"),
+        ):
+            self.assertIn(f'tr("{english}", "{spanish}")', source)
+        for action_prompt in (
+            "Abrir seleccionado",
+            "Desbloquear elegido",
+            "Bloquear elegido",
+        ):
+            self.assertIn(action_prompt, source)
 
     def test_managed_firmware_ref_patch_is_exact_and_version_safe(self):
         original = (
@@ -357,21 +478,21 @@ class RegistryTests(unittest.TestCase):
             "  ssid: ${wifi_ssid_value}\n"
         )
         patched = APP.patch_managed_firmware_ref(
-            original, "firmware-v0.6.2", "display"
+            original, "firmware-v0.6.3", "display"
         )
         self.assertEqual(
             patched["changed_lines"],
-            ["-     ref: firmware-v0.6.0  # managed package", "+     ref: firmware-v0.6.2  # managed package"],
+            ["-     ref: firmware-v0.6.0  # managed package", "+     ref: firmware-v0.6.3  # managed package"],
         )
         self.assertEqual(
-            patched["patched_content"].replace("firmware-v0.6.2", "firmware-v0.6.0"),
+            patched["patched_content"].replace("firmware-v0.6.3", "firmware-v0.6.0"),
             original,
         )
         self.assertEqual(APP.firmware_version_state("v0.6", "0.6.0"), "up_to_date")
-        self.assertEqual(APP.firmware_version_state("0.6.3", "0.6.2"), "newer_than_supported")
-        self.assertEqual(APP.firmware_version_state("unavailable", "0.6.2"), "unknown")
+        self.assertEqual(APP.firmware_version_state("0.6.4", "0.6.3"), "newer_than_supported")
+        self.assertEqual(APP.firmware_version_state("unavailable", "0.6.3"), "unknown")
         with self.assertRaisesRegex(ValueError, "No managed"):
-            APP.patch_managed_firmware_ref(original.replace("access-reader", "other"), "firmware-v0.6.2")
+            APP.patch_managed_firmware_ref(original.replace("access-reader", "other"), "firmware-v0.6.3")
 
     def test_managed_firmware_operation_terminal_states_do_not_resume(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -381,7 +502,7 @@ class RegistryTests(unittest.TestCase):
                 registry.create_firmware_operation(
                     "completed-job", "front-reader.yaml", True,
                     reader_id="front_reader", remote_job_id="remote-job",
-                    target_version="0.6.2", update_kind="managed_update",
+                    target_version="0.6.3", update_kind="managed_update",
                 )
                 registry.update_firmware_operation(
                     "completed-job", status="completed_verified",
@@ -679,7 +800,7 @@ class RegistryTests(unittest.TestCase):
                 "attributes": {"friendly_name": "Back reader Display language"},
             },
             "sensor.front_reader_fingerprint_reader_firmware_version": {
-                "state": "0.6.2",
+                "state": "0.6.3",
                 "attributes": {
                     "friendly_name": "Front reader Fingerprint reader firmware version"
                 },
