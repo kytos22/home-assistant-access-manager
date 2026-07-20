@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import hashlib
 import hmac
 import json
@@ -13,7 +14,14 @@ from urllib.parse import urlencode, urlparse
 from pathlib import Path
 from collections.abc import Mapping
 
-from aiohttp import ClientError, ClientSession, ClientTimeout, WSMsgType, web
+from aiohttp import (
+    ClientError,
+    ClientSession,
+    ClientTimeout,
+    WSMsgType,
+    WSServerHandshakeError,
+    web,
+)
 from cryptography.fernet import Fernet, InvalidToken
 from ruamel.yaml import YAML
 
@@ -25,7 +33,7 @@ HA_API = "http://supervisor/core/api"
 HA_WS = "ws://supervisor/core/websocket"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
 APP_VERSION = os.environ.get("ACCESS_MANAGER_VERSION") or "development"
-READER_FIRMWARE_VERSION = "0.6.1"
+READER_FIRMWARE_VERSION = "0.6.2"
 READER_FIRMWARE_REF = f"firmware-v{READER_FIRMWARE_VERSION}"
 READER_FIRMWARE_REPOSITORY = (
     "https://github.com/kytos22/home-assistant-access-manager"
@@ -76,6 +84,16 @@ def validate_esphome_configuration(value):
     ):
         raise ValueError("Enter a Device Builder YAML filename without a path")
     return value
+
+
+def esphome_configuration_for_device(device_name, value=None):
+    expected = validate_esphome_configuration(f"{str(device_name).strip().lower()}.yaml")
+    requested = str(value or "").strip()
+    if requested and requested != expected:
+        raise ValueError(
+            f"Configuration file must be {expected} for device {device_name}"
+        )
+    return expected
 
 def configured_log_level(path=OPTIONS_PATH):
     options = configured_options(path)
@@ -211,9 +229,9 @@ def esphome_reader_config(payload):
     reader_id = str(payload.get("reader_id") or "").strip()
     if reader_id and not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", reader_id):
         raise ValueError("Invalid Access Manager reader ID")
-    configuration = str(payload.get("configuration") or "").strip()
-    if configuration:
-        configuration = validate_esphome_configuration(configuration)
+    configuration = esphome_configuration_for_device(
+        device_name, payload.get("configuration")
+    )
 
     substitutions = {
         "device_name": device_name,
@@ -465,6 +483,10 @@ class DeviceBuilderError(RuntimeError):
         self.code = str(code or "unavailable")
 
 
+class _LegacyDashboardRequired(RuntimeError):
+    """The Ingress endpoint is the legacy Dashboard, not Device Builder API."""
+
+
 class DeviceBuilderTransport:
     """Transport boundary: no Device Builder command semantics live here."""
 
@@ -674,6 +696,125 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
             raise DeviceBuilderError("Could not create a temporary Ingress session", "ingress_unavailable")
         return session
 
+    async def _websocket_command(
+        self, command, args=None, on_event=None, streaming=False
+    ):
+        """Use the current Device Builder multiplexed API through Ingress."""
+        addon = await self._discover()
+        session_token = await self._session()
+        ingress_token = self._ingress_token(addon)
+        command_sent = False
+        timeout = ClientTimeout(
+            total=None if streaming else 30,
+            sock_connect=10,
+            sock_read=None if streaming else 30,
+        )
+        try:
+            async with ClientSession(timeout=timeout) as session:
+                async with session.ws_connect(
+                    f"ws://supervisor/ingress/{ingress_token}/ws",
+                    headers={"Cookie": f"ingress_session={session_token}"},
+                    heartbeat=30,
+                    max_msg_size=4 * 1024 * 1024,
+                ) as socket:
+                    first = await socket.receive()
+                    if first.type != WSMsgType.TEXT:
+                        raise _LegacyDashboardRequired
+                    try:
+                        server_info = json.loads(first.data)
+                    except (TypeError, json.JSONDecodeError) as error:
+                        raise _LegacyDashboardRequired from error
+                    if not isinstance(server_info, Mapping) or not all(
+                        key in server_info
+                        for key in ("server_version", "esphome_version", "requires_auth")
+                    ):
+                        raise _LegacyDashboardRequired
+                    if server_info.get("ha_addon") is not True:
+                        self.status = {"mode": "local_ingress", "status": "incompatible"}
+                        raise DeviceBuilderError(
+                            "ESPHome Device Builder did not confirm the local add-on context",
+                            "incompatible",
+                        )
+                    if server_info.get("requires_auth") is True:
+                        self.status = {"mode": "local_ingress", "status": "unauthorized"}
+                        raise DeviceBuilderError(
+                            "ESPHome Device Builder still requires authentication through Ingress",
+                            "unauthorized",
+                        )
+                    self.server_info = dict(server_info)
+                    self.status = {
+                        "mode": "local_ingress",
+                        "status": "connected",
+                        "addon": str(addon.get("slug") or ""),
+                        "channel": str(addon.get("stage") or "stable"),
+                        "api": "device_builder_ws",
+                        "ingress_reported": bool(server_info.get("ha_ingress")),
+                        "server_version": str(server_info.get("server_version") or ""),
+                        "esphome_version": str(server_info.get("esphome_version") or ""),
+                    }
+                    message_id = secrets.token_urlsafe(8)
+                    await socket.send_json(
+                        {
+                            "command": str(command),
+                            "message_id": message_id,
+                            "args": args or {},
+                        }
+                    )
+                    command_sent = True
+                    async for message in socket:
+                        if message.type == WSMsgType.ERROR:
+                            raise DeviceBuilderError(
+                                "ESPHome Device Builder WebSocket failed"
+                            )
+                        if message.type != WSMsgType.TEXT:
+                            continue
+                        try:
+                            event = json.loads(message.data)
+                        except (TypeError, json.JSONDecodeError):
+                            continue
+                        if (
+                            not isinstance(event, Mapping)
+                            or event.get("message_id") != message_id
+                        ):
+                            continue
+                        if event.get("error_code"):
+                            raise DeviceBuilderError(
+                                event.get("details") or event["error_code"],
+                                event["error_code"],
+                            )
+                        if "result" in event:
+                            return event.get("result")
+                        event_name = str(event.get("event") or "")
+                        if on_event:
+                            callback_result = on_event(event_name, event.get("data"))
+                            if asyncio.iscoroutine(callback_result):
+                                await callback_result
+                        if event_name == "result":
+                            return event.get("data")
+                    raise DeviceBuilderError(
+                        "ESPHome Device Builder closed the request unexpectedly"
+                    )
+        except _LegacyDashboardRequired:
+            raise
+        except WSServerHandshakeError as error:
+            if not command_sent and error.status in {200, 400, 404, 405}:
+                raise _LegacyDashboardRequired from error
+            code = "unauthorized" if error.status in {401, 403} else "unavailable"
+            raise DeviceBuilderError(
+                "ESPHome Device Builder WebSocket handshake failed", code
+            ) from error
+        except DeviceBuilderError:
+            raise
+        except (asyncio.TimeoutError, ClientError, OSError) as error:
+            status = getattr(error, "status", None)
+            code = "unauthorized" if status in {401, 403} else "unavailable"
+            raise DeviceBuilderError(
+                "Could not connect to local ESPHome Device Builder", code
+            ) from error
+        finally:
+            session_token = ""
+            ingress_token = ""
+
     async def _dashboard_context(self):
         """Create one ephemeral authenticated path to the current Dashboard API."""
         addon = await self._discover()
@@ -700,7 +841,7 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
     def _request_error(response_status, body):
         if response_status in {401, 403}:
             code = "unauthorized"
-        elif response_status == 404:
+        elif response_status in {404, 405}:
             code = "incompatible_api"
         else:
             code = "unavailable"
@@ -797,7 +938,9 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
             raise DeviceBuilderError("Unknown local ESPHome Dashboard job", "incompatible_api")
         return match.group(1), validate_esphome_configuration(match.group(2))
 
-    async def command(self, command, args=None, on_event=None, streaming=False):
+    async def _legacy_dashboard_command(
+        self, command, args=None, on_event=None, streaming=False
+    ):
         args = args if isinstance(args, Mapping) else {}
         configuration = str(args.get("configuration") or "").strip()
         if command == "devices/list":
@@ -827,9 +970,14 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
             content = args.get("file_content")
             if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", name) or not isinstance(content, str):
                 raise DeviceBuilderError("Invalid new Device Builder configuration", "invalid_request")
+            encoded_content = base64.b64encode(content.encode("utf-8")).decode("ascii")
             return await self._dashboard_request(
                 "POST", "wizard",
-                json_body={"type": "upload", "name": name, "file_content": content},
+                json_body={
+                    "type": "upload",
+                    "name": name,
+                    "file_content": encoded_content,
+                },
             )
         if command == "devices/validate":
             configuration = validate_esphome_configuration(configuration)
@@ -847,6 +995,16 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
                 spawn_args["port"] = "OTA"
             return await self._dashboard_process(endpoint, spawn_args, on_event)
         raise DeviceBuilderError("Unsupported local ESPHome Dashboard command", "incompatible_api")
+
+    async def command(self, command, args=None, on_event=None, streaming=False):
+        try:
+            return await self._websocket_command(
+                command, args, on_event=on_event, streaming=streaming
+            )
+        except _LegacyDashboardRequired:
+            return await self._legacy_dashboard_command(
+                command, args, on_event=on_event, streaming=streaming
+            )
 
 
 class DeviceBuilderClient(DeviceBuilderProtocol):
@@ -2986,6 +3144,7 @@ class HomeAssistant:
         self.session = None
         self.states = {}
         self.entities = {}
+        self.entity_candidates = {}
         self.connected = False
         self.management_message = ""
         self.names_synced = False
@@ -3088,6 +3247,7 @@ class HomeAssistant:
 
     def resolve_entities(self):
         resolved = {}
+        all_candidates = {}
         for key, labels in LABELS.items():
             domain = DOMAINS[key]
             candidates = []
@@ -3104,7 +3264,37 @@ class HomeAssistant:
             if candidates:
                 candidates.sort(key=lambda value: ("display1" not in value, len(value)))
                 resolved[key] = candidates[0]
+            all_candidates[key] = candidates
         self.entities = resolved
+        self.entity_candidates = all_candidates
+
+    def optional_reader_entity(self, config, key):
+        """Resolve an optional managed entity without crossing reader devices."""
+        config = config if isinstance(config, Mapping) else {}
+        configured = str(config.get(f"{key}_entity") or "").strip()
+        if configured:
+            return configured
+        candidates = list(self.entity_candidates.get(key) or ())
+        if not candidates:
+            return None
+        profile = config.get("firmware_profile")
+        device_name = str(
+            config.get("device_name")
+            or (profile.get("device_name") if isinstance(profile, Mapping) else "")
+            or ""
+        ).strip()
+        if device_name:
+            marker = normalized(device_name.replace("-", " "))
+            matching = []
+            for entity_id in candidates:
+                state = self.states.get(entity_id, {})
+                friendly = normalized(state.get("attributes", {}).get("friendly_name"))
+                object_id = normalized(entity_id.split(".", 1)[1].replace("_", " "))
+                if marker and (marker in object_id or marker in friendly):
+                    matching.append(entity_id)
+            if len(matching) == 1:
+                return matching[0]
+        return candidates[0] if len(candidates) == 1 else None
 
     async def call_service(self, domain, service, payload):
         return await self.request("POST", f"/services/{domain}/{service}", payload)
@@ -4756,18 +4946,24 @@ class FingerprintAdmin:
                     "hardware_profile",
                     "display" if display_entity else "reader_only",
                 )
-                language_id = config.get("display_language_entity") or (
-                    self.ha.entities.get("display_language") if legacy else None
+                language_id = (
+                    self.ha.entities.get("display_language") if legacy
+                    else self.ha.optional_reader_entity(config, "display_language")
                 )
+                if language_id and not config.get("display_language_entity"):
+                    config["display_language_entity"] = language_id
                 language_state = self.ha.states.get(language_id, {}) if language_id else {}
                 access_reader["display_language"] = (
                     language_state.get("state")
                     if language_state.get("state") not in {None, "unknown", "unavailable"}
                     else None
                 )
-                version_id = config.get("firmware_version_entity") or (
-                    self.ha.entities.get("firmware_version") if legacy else None
+                version_id = (
+                    self.ha.entities.get("firmware_version") if legacy
+                    else self.ha.optional_reader_entity(config, "firmware_version")
                 )
+                if version_id and not config.get("firmware_version_entity"):
+                    config["firmware_version_entity"] = version_id
                 access_reader["firmware_version"] = (
                     self.ha.states.get(version_id, {}).get("state")
                     if version_id else None
@@ -5815,9 +6011,8 @@ class FingerprintAdmin:
         yaml = esphome_reader_config(payload)
         device_name = str(payload.get("device_name", "")).strip().lower()
         install_mode = str(payload.get("install_mode", "new")).strip().lower()
-        default_configuration = f"{device_name}.yaml"
-        configuration = validate_esphome_configuration(
-            payload.get("configuration") or default_configuration
+        configuration = esphome_configuration_for_device(
+            device_name, payload.get("configuration")
         )
         client = self.device_builder_client()
         devices = await self.device_builder_devices(client)
@@ -5884,12 +6079,13 @@ class FingerprintAdmin:
         if not reader or reader["reader_type"] != "fingerprint":
             raise ValueError("Select a valid fingerprint reader")
         profile = str(payload.get("profile", "reader_only")).strip().lower()
-        configuration = validate_esphome_configuration(
-            configuration or payload.get("configuration")
+        device_name = str(payload.get("device_name", "")).strip().lower()
+        configuration = esphome_configuration_for_device(
+            device_name, configuration or payload.get("configuration")
         )
         firmware_profile = {
             "reader_id": reader_id,
-            "device_name": str(payload.get("device_name", "")).strip().lower(),
+            "device_name": device_name,
             "friendly_name": str(payload.get("friendly_name", "")).strip(),
             "configuration": configuration,
             "hardware_profile": profile,
@@ -5931,8 +6127,16 @@ class FingerprintAdmin:
             raise web.HTTPBadRequest(text=str(error))
         except DeviceBuilderError as error:
             return self.device_builder_response(error)
-        self.registry.set_esphome_secret_keys(payload)
         return web.json_response(preview)
+
+    async def save_esphome_environment_defaults(self, request):
+        self.require_admin_request(request)
+        payload = await request.json()
+        try:
+            secret_keys = self.registry.set_esphome_secret_keys(payload)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise web.HTTPBadRequest(text=str(error))
+        return web.json_response({"ok": True, "secret_keys": secret_keys})
 
     async def generate_esphome_config(self, request):
         self.require_admin_request(request)
@@ -5941,7 +6145,7 @@ class FingerprintAdmin:
             yaml = esphome_reader_config(payload)
         except (AttributeError, TypeError, ValueError) as error:
             raise web.HTTPBadRequest(text=str(error))
-        secret_keys = self.registry.set_esphome_secret_keys(payload)
+        secret_keys = esphome_secret_keys(payload)
         firmware_profile = self.save_esphome_firmware_profile(payload)
         return web.json_response(
             {
@@ -6167,7 +6371,7 @@ class FingerprintAdmin:
             return "version_not_confirmed"
         reader = self.registry.reader(reader_id) or {}
         config = reader.get("config", {})
-        version_entity = config.get("firmware_version_entity")
+        version_entity = self.ha.optional_reader_entity(config, "firmware_version")
         device_entity = config.get("device_status_entity")
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         saw_reconnect = False
@@ -6208,7 +6412,6 @@ class FingerprintAdmin:
             raise web.HTTPConflict(text=preview["collision"])
         if preview["exists"] and not payload.get("confirm_overwrite"):
             raise web.HTTPConflict(text="Confirm the exact configuration overwrite first")
-        self.registry.set_esphome_secret_keys(payload)
         device_name = str(payload.get("device_name", "")).strip().lower()
         configuration = preview["configuration"]
         client = self.device_builder_client()
@@ -6300,7 +6503,7 @@ class FingerprintAdmin:
         if not configuration:
             raise web.HTTPConflict(text="Link this reader to its Device Builder configuration first")
         configuration = validate_esphome_configuration(configuration)
-        version_entity = config.get("firmware_version_entity")
+        version_entity = self.ha.optional_reader_entity(config, "firmware_version")
         installed = self.ha.states.get(version_entity, {}).get("state") if version_entity else None
         if installed in {None, "", "unknown", "unavailable"}:
             installed = None
@@ -6616,9 +6819,11 @@ class FingerprintAdmin:
         if not reader or reader["reader_type"] != "fingerprint":
             raise web.HTTPNotFound(text="Fingerprint reader not found")
         config = reader.get("config", {})
-        entity_id = str(config.get("display_language_entity") or (
+        entity_id = str((
             self.ha.entities.get("display_language")
-            if config.get("legacy_autodiscovery") else "")).strip()
+            if config.get("legacy_autodiscovery")
+            else self.ha.optional_reader_entity(config, "display_language")
+        ) or "").strip()
         if not entity_id:
             raise web.HTTPConflict(
                 text="This reader has no display language entity configured"
@@ -7168,6 +7373,10 @@ class FingerprintAdmin:
         )
         app.router.add_post(
             "/api/esphome/config", self.generate_esphome_config
+        )
+        app.router.add_put(
+            "/api/settings/esphome-defaults",
+            self.save_esphome_environment_defaults,
         )
         app.router.add_get(
             "/api/esphome/connection", self.esphome_connection

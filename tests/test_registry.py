@@ -1,6 +1,7 @@
 import asyncio
 import importlib.util
 import inspect
+import json
 import re
 import sqlite3
 import tempfile
@@ -81,7 +82,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.15.0"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.15.1"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
@@ -243,7 +244,7 @@ class RegistryTests(unittest.TestCase):
                 registry.connection.close()
 
     def test_esphome_generator_pins_firmware_and_never_embeds_secrets(self):
-        self.assertEqual(APP.READER_FIRMWARE_VERSION, "0.6.1")
+        self.assertEqual(APP.READER_FIRMWARE_VERSION, "0.6.2")
         generated = APP.esphome_reader_config({
             "profile": "reader_only",
             "install_mode": "new",
@@ -254,7 +255,7 @@ class RegistryTests(unittest.TestCase):
             "fingerprint_rx_pin": "GPIO18",
         })
         self.assertIn("reader-only.yaml", generated)
-        self.assertEqual(APP.READER_FIRMWARE_REF, "firmware-v0.6.1")
+        self.assertEqual(APP.READER_FIRMWARE_REF, "firmware-v0.6.2")
         self.assertIn("url: https://github.com/kytos22/home-assistant-access-manager", generated)
         self.assertIn(f"ref: {APP.READER_FIRMWARE_REF}", generated)
         self.assertIn("- esphome/reader-only.yaml", generated)
@@ -272,7 +273,7 @@ class RegistryTests(unittest.TestCase):
             "install_mode": "existing",
             "device_name": "existing-reader",
             "friendly_name": "Existing reader",
-            "configuration": "display1.yaml",
+            "configuration": "existing-reader.yaml",
             "reader_id": "front_reader",
             "wifi_ssid_secret": "wifi_ssid2",
         })
@@ -282,7 +283,10 @@ class RegistryTests(unittest.TestCase):
         self.assertIn('display_language: "English"', existing)
         self.assertIn("wifi_ssid_value: !secret wifi_ssid2", existing)
         self.assertIn("# Access Manager reader ID: front_reader", existing)
-        self.assertIn("# Canonical Device Builder configuration: display1.yaml", existing)
+        self.assertIn(
+            "# Canonical Device Builder configuration: existing-reader.yaml",
+            existing,
+        )
         spanish = APP.esphome_reader_config({
             "profile": "display",
             "install_mode": "new",
@@ -325,6 +329,19 @@ class RegistryTests(unittest.TestCase):
                 "fingerprint_rx_pin": "GPIO17",
             })
 
+    def test_both_firmware_profiles_publish_their_version_on_boot(self):
+        firmware_root = Path(__file__).parents[1] / "esphome"
+        publication = (
+            "- text_sensor.template.publish:\n"
+            "          id: firmware_version_sensor\n"
+            "          state: \"${firmware_version}\""
+        )
+        for filename in ("access-reader.yaml", "reader-only.yaml"):
+            source = (firmware_root / filename).read_text(encoding="utf-8")
+            self.assertIn('firmware_version: "0.6.2"', source)
+            self.assertIn("on_boot:", source)
+            self.assertIn(publication, source)
+
     def test_managed_firmware_ref_patch_is_exact_and_version_safe(self):
         original = (
             "# User-owned comment and substitutions stay unchanged\n"
@@ -340,21 +357,21 @@ class RegistryTests(unittest.TestCase):
             "  ssid: ${wifi_ssid_value}\n"
         )
         patched = APP.patch_managed_firmware_ref(
-            original, "firmware-v0.6.1", "display"
+            original, "firmware-v0.6.2", "display"
         )
         self.assertEqual(
             patched["changed_lines"],
-            ["-     ref: firmware-v0.6.0  # managed package", "+     ref: firmware-v0.6.1  # managed package"],
+            ["-     ref: firmware-v0.6.0  # managed package", "+     ref: firmware-v0.6.2  # managed package"],
         )
         self.assertEqual(
-            patched["patched_content"].replace("firmware-v0.6.1", "firmware-v0.6.0"),
+            patched["patched_content"].replace("firmware-v0.6.2", "firmware-v0.6.0"),
             original,
         )
         self.assertEqual(APP.firmware_version_state("v0.6", "0.6.0"), "up_to_date")
-        self.assertEqual(APP.firmware_version_state("0.6.2", "0.6.1"), "newer_than_supported")
-        self.assertEqual(APP.firmware_version_state("unavailable", "0.6.1"), "unknown")
+        self.assertEqual(APP.firmware_version_state("0.6.3", "0.6.2"), "newer_than_supported")
+        self.assertEqual(APP.firmware_version_state("unavailable", "0.6.2"), "unknown")
         with self.assertRaisesRegex(ValueError, "No managed"):
-            APP.patch_managed_firmware_ref(original.replace("access-reader", "other"), "firmware-v0.6.1")
+            APP.patch_managed_firmware_ref(original.replace("access-reader", "other"), "firmware-v0.6.2")
 
     def test_managed_firmware_operation_terminal_states_do_not_resume(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -364,7 +381,7 @@ class RegistryTests(unittest.TestCase):
                 registry.create_firmware_operation(
                     "completed-job", "front-reader.yaml", True,
                     reader_id="front_reader", remote_job_id="remote-job",
-                    target_version="0.6.1", update_kind="managed_update",
+                    target_version="0.6.2", update_kind="managed_update",
                 )
                 registry.update_firmware_operation(
                     "completed-job", status="completed_verified",
@@ -431,10 +448,13 @@ class RegistryTests(unittest.TestCase):
             asyncio.run(stopped._discover())
         self.assertEqual(stopped.status["status"], "stopped")
 
-    def test_local_ingress_uses_current_dashboard_http_and_process_api(self):
+    def test_local_ingress_falls_back_to_legacy_dashboard_http_api(self):
         transport = APP.HomeAssistantIngressTransport(object())
         requests = []
         processes = []
+
+        async def websocket(*args, **kwargs):
+            raise APP._LegacyDashboardRequired
 
         async def request(method, path, text_body=None, json_body=None):
             requests.append((method, path, text_body, json_body))
@@ -456,6 +476,7 @@ class RegistryTests(unittest.TestCase):
                 "install_completed": endpoint == "run",
             }
 
+        transport._websocket_command = websocket
         transport._dashboard_request = request
         transport._dashboard_process = process
         client = APP.DeviceBuilderProtocol(transport)
@@ -482,6 +503,14 @@ class RegistryTests(unittest.TestCase):
             )),
             "ok",
         )
+        yaml_content = "esphome:\n  name: front-reader\n"
+        self.assertEqual(
+            asyncio.run(client.command(
+                "devices/create",
+                {"name": "front-reader", "file_content": yaml_content},
+            )),
+            "ok",
+        )
         validate = asyncio.run(client.command(
             "devices/validate", {"configuration": "front-reader.yaml"},
             on_event=lambda name, data: events.append((name, data)),
@@ -503,6 +532,18 @@ class RegistryTests(unittest.TestCase):
                 ("GET", "secret_keys", None, None),
                 ("GET", "edit?configuration=front-reader.yaml", None, None),
                 ("POST", "edit?configuration=front-reader.yaml", "esphome:\\n  name: front", None),
+                (
+                    "POST",
+                    "wizard",
+                    None,
+                    {
+                        "type": "upload",
+                        "name": "front-reader",
+                        "file_content": APP.base64.b64encode(
+                            yaml_content.encode("utf-8")
+                        ).decode("ascii"),
+                    },
+                ),
             ],
         )
         self.assertEqual(
@@ -517,6 +558,154 @@ class RegistryTests(unittest.TestCase):
             ("output", "ESPHome Dashboard process output\\n"),
         ])
         self.assertEqual(install["job_id"], "dashboard:run:front-reader.yaml")
+
+    def test_local_ingress_prefers_device_builder_websocket_api(self):
+        transport = APP.HomeAssistantIngressTransport(object())
+        calls = []
+
+        async def websocket(command, args=None, on_event=None, streaming=False):
+            calls.append((command, args, streaming))
+            return {"job_id": "device-builder-job"}
+
+        async def legacy(*args, **kwargs):
+            raise AssertionError("legacy Dashboard fallback must not run")
+
+        transport._websocket_command = websocket
+        transport._legacy_dashboard_command = legacy
+        yaml_content = "esphome:\n  name: front-reader\n"
+        result = asyncio.run(transport.command(
+            "devices/create",
+            {"name": "front-reader", "file_content": yaml_content},
+        ))
+
+        self.assertEqual(result, {"job_id": "device-builder-job"})
+        self.assertEqual(calls, [(
+            "devices/create",
+            {"name": "front-reader", "file_content": yaml_content},
+            False,
+        )])
+
+    def test_local_ingress_websocket_uses_multiplexed_device_builder_protocol(self):
+        transport = APP.HomeAssistantIngressTransport(object())
+        sent = []
+
+        async def discover():
+            return {"slug": "5c53de3b_esphome", "stage": "stable"}
+
+        async def ingress_session():
+            return "temporary-session"
+
+        class Message:
+            type = APP.WSMsgType.TEXT
+
+            def __init__(self, data):
+                self.data = json.dumps(data)
+
+        class Socket:
+            def __init__(self):
+                self.messages = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def receive(self):
+                return Message({
+                    "server_version": "2026.7.0",
+                    "esphome_version": "2026.7.0",
+                    "requires_auth": False,
+                    "ha_addon": True,
+                    # Supervisor's internal /ingress route does not add the
+                    # browser-facing X-Ingress-Path header.
+                    "ha_ingress": False,
+                })
+
+            async def send_json(self, payload):
+                sent.append(payload)
+                self.messages.append(Message({
+                    "message_id": payload["message_id"],
+                    "result": {"configured": []},
+                }))
+
+            def __aiter__(self):
+                return self
+
+            async def __anext__(self):
+                if not self.messages:
+                    raise StopAsyncIteration
+                return self.messages.pop(0)
+
+        class Session:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            def ws_connect(self, url, **kwargs):
+                self.url = url
+                self.kwargs = kwargs
+                return Socket()
+
+        fake_session = Session()
+        transport._discover = discover
+        transport._session = ingress_session
+        transport._ingress_token = lambda addon: "local_ingress_token"
+        with patch.object(APP, "ClientSession", return_value=fake_session):
+            result = asyncio.run(transport.command("devices/list"))
+
+        self.assertEqual(result, {"configured": []})
+        self.assertEqual(fake_session.url, "ws://supervisor/ingress/local_ingress_token/ws")
+        self.assertEqual(
+            fake_session.kwargs["headers"],
+            {"Cookie": "ingress_session=temporary-session"},
+        )
+        self.assertEqual(sent[0]["command"], "devices/list")
+        self.assertEqual(sent[0]["args"], {})
+        self.assertEqual(transport.status["api"], "device_builder_ws")
+        self.assertFalse(transport.status["ingress_reported"])
+
+    def test_optional_reader_entities_resolve_per_device_without_cross_linking(self):
+        home_assistant = APP.HomeAssistant(None)
+        home_assistant.states = {
+            "select.front_reader_display_language": {
+                "state": "Español",
+                "attributes": {"friendly_name": "Front reader Display language"},
+            },
+            "select.back_reader_display_language": {
+                "state": "English",
+                "attributes": {"friendly_name": "Back reader Display language"},
+            },
+            "sensor.front_reader_fingerprint_reader_firmware_version": {
+                "state": "0.6.2",
+                "attributes": {
+                    "friendly_name": "Front reader Fingerprint reader firmware version"
+                },
+            },
+        }
+        home_assistant.resolve_entities()
+
+        front_config = {"device_name": "front-reader"}
+        self.assertEqual(
+            home_assistant.optional_reader_entity(front_config, "display_language"),
+            "select.front_reader_display_language",
+        )
+        self.assertEqual(
+            home_assistant.optional_reader_entity(front_config, "firmware_version"),
+            "sensor.front_reader_fingerprint_reader_firmware_version",
+        )
+        self.assertIsNone(
+            home_assistant.optional_reader_entity({}, "display_language")
+        )
+        self.assertEqual(
+            home_assistant.optional_reader_entity(
+                {"display_language_entity": "select.custom_language"},
+                "display_language",
+            ),
+            "select.custom_language",
+        )
 
     def test_index_disables_document_caching(self):
         admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
@@ -596,6 +785,56 @@ class RegistryTests(unittest.TestCase):
             self.assertEqual(stored["device_name"], "display1")
             self.assertEqual(stored["display_language"], "Español")
             restarted.connection.close()
+
+    def test_esphome_environment_defaults_are_saved_only_by_explicit_endpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            registry = APP.Registry(Path(directory) / "esphome-defaults.db")
+            admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+            admin.registry = registry
+            payload = {
+                "profile": "reader_only",
+                "install_mode": "new",
+                "device_name": "front-reader",
+                "friendly_name": "Front reader",
+                "wifi_ssid_secret": "wifi_ssid2",
+                "wifi_password_secret": "wifi_password2",
+                "api_encryption_key_secret": "api_encryption_key2",
+                "ota_password_secret": "ota_password2",
+                "board": "esp32dev",
+                "fingerprint_tx_pin": "GPIO17",
+                "fingerprint_rx_pin": "GPIO16",
+            }
+
+            class Request:
+                headers = {"X-Fingerprint-Admin": "1"}
+
+                async def json(self):
+                    return payload
+
+            generated = asyncio.run(admin.generate_esphome_config(Request()))
+            self.assertEqual(generated.status, 200)
+            self.assertEqual(
+                registry.esphome_secret_keys()["wifi_ssid_secret"], "wifi_ssid"
+            )
+            saved = asyncio.run(admin.save_esphome_environment_defaults(Request()))
+            self.assertEqual(saved.status, 200)
+            self.assertEqual(
+                registry.esphome_secret_keys()["wifi_ssid_secret"], "wifi_ssid2"
+            )
+            registry.connection.close()
+
+    def test_esphome_configuration_filename_is_fixed_by_device_name(self):
+        self.assertEqual(
+            APP.esphome_configuration_for_device("front-reader"),
+            "front-reader.yaml",
+        )
+        self.assertEqual(
+            APP.esphome_configuration_for_device("front-reader", "front-reader.yaml"),
+            "front-reader.yaml",
+        )
+        with self.assertRaisesRegex(ValueError, "must be front-reader.yaml"):
+            APP.esphome_configuration_for_device("front-reader", "display1.yaml")
 
     def test_shared_keypad_credentials_are_encrypted_private_and_unique(self):
         with tempfile.TemporaryDirectory() as directory:

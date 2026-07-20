@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.2
+
+- Explicitly publishes the `Fingerprint reader firmware version` diagnostic entity during every boot in both hardware profiles, preventing Home Assistant and Access Manager from retaining an `unknown` state.
+
 ## 0.6.1
 
 - Lets each installation map its own ESPHome secret key names through package substitutions instead of requiring fixed `wifi_ssid`, `wifi_password`, `api_encryption_key`, and `ota_password` names.

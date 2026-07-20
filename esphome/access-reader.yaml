@@ -1,6 +1,6 @@
 substitutions:
-  firmware_version: "0.6.1"
-  name_store_component_source: github://kytos22/home-assistant-access-manager@firmware-v0.6.1
+  firmware_version: "0.6.2"
+  name_store_component_source: github://kytos22/home-assistant-access-manager@firmware-v0.6.2
   device_name: fingerprint-access-reader
   friendly_name: Fingerprint Access Reader
   display_language: English
@@ -26,6 +26,9 @@ esphome:
   on_boot:
     priority: -10
     then:
+      - text_sensor.template.publish:
+          id: firmware_version_sensor
+          state: "${firmware_version}"
       - script.execute: wake_screen
       - script.execute: set_idle_screen
 

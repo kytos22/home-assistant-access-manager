@@ -4,7 +4,7 @@ This app integrates with the [included ESPHome Fingerprint Access Reader](esphom
 
 ## Version compatibility
 
-The current Access Manager source recommends ESPHome Fingerprint Access Reader 0.6.1. The panel can generate release-pinned ESPHome YAML for the reference display terminal or a reader-only installation on any ESPHome-supported ESP32 board. The reader publishes its installed version during boot.
+The current Access Manager source recommends ESPHome Fingerprint Access Reader 0.6.2. The panel can generate release-pinned ESPHome YAML for the reference display terminal or a reader-only installation on any ESPHome-supported ESP32 board. The reader explicitly publishes its installed version during every boot.
 
 Access Manager 0.9.0 and reader firmware 0.4.0 remain the first coordinated releases to implement the `v1` display-feedback contract described below. Older reader firmware remains usable for fingerprint access, but version status requires the optional firmware-version sensor and panel feedback requires the two optional display entities.
 

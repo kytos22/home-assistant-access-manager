@@ -4,7 +4,7 @@ This firmware integrates with [Home Assistant Access Manager](https://github.com
 
 ## Version compatibility
 
-ESPHome Fingerprint Access Reader 0.6.1 adds per-device secret-key mapping for Access Manager generated wrappers. Reader 0.5.0 and Access Manager 0.10.0 introduced release-pinned configuration generation and reader version reporting. Both firmware profiles publish ESPHome project version metadata and a `Fingerprint reader firmware version` diagnostic sensor.
+ESPHome Fingerprint Access Reader 0.6.2 explicitly publishes its diagnostic version entity during every boot. Reader 0.6.1 added per-device secret-key mapping for Access Manager generated wrappers. Reader 0.5.0 and Access Manager 0.10.0 introduced release-pinned configuration generation and reader version reporting. Both firmware profiles publish ESPHome project version metadata and a `Fingerprint reader firmware version` diagnostic sensor.
 
 Reader 0.4.0 and Access Manager 0.9.0 remain the first coordinated releases to implement the `v1` display-feedback contract described below. Reader 0.4.0 remains compatible with older Access Manager versions for fingerprint access, but it will not receive panel feedback until the manager exposes and configures the two optional display entities.
 

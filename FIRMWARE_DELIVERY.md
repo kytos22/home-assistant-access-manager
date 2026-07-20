@@ -2,10 +2,10 @@
 
 Access Manager and the ESPHome Fingerprint Access Reader are maintained in this repository, but they run independently. Access Manager never compiles ESPHome firmware. Every validation, compile, and OTA installation is performed by the user's ESPHome Device Builder with that device's canonical YAML.
 
-Firmware packages live under `esphome/` and are pinned to immutable tags such as `firmware-v0.6.1`. The included Access Manager release is the only version source:
+Firmware packages live under `esphome/` and are pinned to immutable tags such as `firmware-v0.6.2`. The included Access Manager release is the only version source:
 
 ```python
-READER_FIRMWARE_VERSION = "0.6.1"
+READER_FIRMWARE_VERSION = "0.6.2"
 READER_FIRMWARE_REF = f"firmware-v{READER_FIRMWARE_VERSION}"
 ```
 
@@ -37,8 +37,8 @@ packages:
 The two-step panel flow presents the configuration filename, installed and target versions, SHA-256 of the YAML checked, and the exact proposed line change. Applying the update rechecks that hash under a per-configuration lock, then changes only:
 
 ```diff
--    ref: firmware-v0.6.0
-+    ref: firmware-v0.6.1
+-    ref: firmware-v0.6.1
++    ref: firmware-v0.6.2
 ```
 
 All other YAML bytes are preserved: board, framework, pins, display, substitutions, package additions, secret names, network settings, and manual customizations. Access Manager never rewrites the complete YAML for a normal update and never reads secret values or `secrets.yaml`; it checks only the required secret-key names through Device Builder metadata before validation.

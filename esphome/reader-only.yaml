@@ -1,5 +1,5 @@
 substitutions:
-  firmware_version: "0.6.1"
+  firmware_version: "0.6.2"
   device_name: fingerprint-access-reader
   friendly_name: Fingerprint Access Reader
   board: esp32dev
@@ -13,6 +13,12 @@ esphome:
   project:
     name: kytos22.fingerprint_access_reader
     version: ${firmware_version}
+  on_boot:
+    priority: -10
+    then:
+      - text_sensor.template.publish:
+          id: firmware_version_sensor
+          state: "${firmware_version}"
 
 esp32:
   board: ${board}
