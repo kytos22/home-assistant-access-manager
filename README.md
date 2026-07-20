@@ -62,6 +62,8 @@ Keypads are intentionally not pictured because compatibility depends on their Ho
 
 Access Manager requires [Home Assistant OS](https://www.home-assistant.io/apps/).
 
+**ESPHome Device Builder and the Home Assistant ESPHome integration are required dependencies for fingerprint readers.** Install and start Device Builder before using Access Manager to create, validate, compile, install, or update either the display terminal or the reader-only firmware profile. After installing the firmware, add the device to the ESPHome integration so Home Assistant exposes its fingerprint sensors, controls, diagnostic entities, and events to Access Manager. Access Manager connects to the existing Device Builder through Supervisor Ingress and communicates with readers through their Home Assistant entities; it does not bundle an ESPHome compiler or connect directly to the hardware. These dependencies are not required when Access Manager is used only with existing Home Assistant keypads, NFC tags, and door entities.
+
 [![Open your Home Assistant instance and add the Access Manager app repository.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fkytos22%2Fhome-assistant-access-manager)
 
 Use the button above, or install manually:
@@ -69,8 +71,10 @@ Use the button above, or install manually:
 1. In Home Assistant, open **Settings → Apps** and select **Install app**.
 2. Open the app-store menu and choose **Repositories**.
 3. Add `https://github.com/kytos22/home-assistant-access-manager`.
-4. Install and start **Access Manager**.
-5. Enable **Show in sidebar**, then open **Access**.
+4. If you will create a fingerprint reader or display terminal, install and start **ESPHome Device Builder**.
+5. After installing the reader firmware, add the device to Home Assistant's **ESPHome integration**.
+6. Install and start **Access Manager**.
+7. Enable **Show in sidebar**, then open **Access**.
 
 Supported architectures are `amd64`, `aarch64`, and `armv7`.
 
