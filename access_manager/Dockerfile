@@ -16,7 +16,7 @@ RUN apk add --no-cache libffi \
         pip==26.1.2 \
         aiohttp==3.14.1 \
         cryptography==49.0.0 \
-        ruamel.yaml==0.18.16 \
+        ruamel.yaml==0.19.1 \
     && apk del .credential-build-deps
 
 COPY app /app
