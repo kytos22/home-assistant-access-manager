@@ -81,7 +81,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.14.2"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.14.3"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
@@ -383,15 +383,19 @@ class RegistryTests(unittest.TestCase):
 
     def test_local_ingress_discovers_supported_addons_without_public_url(self):
         class FakeHomeAssistant:
-            def __init__(self, addons):
+            def __init__(self, addons, details=None):
                 self.addons = addons
+                self.details = details or {}
                 self.calls = []
 
-            async def supervisor_api(self, method, path, data=None):
-                self.calls.append((method, path, data))
+            async def supervisor_api(self, method, endpoint, data=None):
+                self.calls.append((method, endpoint, data))
                 self.assertEqual(method, "GET")
-                self.assertEqual(path, "/addons")
-                return {"data": {"addons": self.addons}}
+                if endpoint == "/addons":
+                    return {"data": {"addons": self.addons}}
+                expected = f"/addons/{self.addons[0]['slug']}/info"
+                self.assertEqual(endpoint, expected)
+                return {"data": self.details}
 
             def assertEqual(self, left, right):
                 if left != right:
@@ -402,14 +406,22 @@ class RegistryTests(unittest.TestCase):
             "name": "ESPHome Device Builder",
             "repository": "core",
             "state": "started",
+            "stage": "stable",
+        }], {
+            "state": "started",
             "ingress": True,
             "ingress_entry": "/api/hassio_ingress/local_ingress_token",
-            "stage": "stable",
-        }])
+        })
         transport = APP.HomeAssistantIngressTransport(home_assistant)
         addon = asyncio.run(transport._discover())
         self.assertEqual(addon["slug"], "a0d7b954_esphome")
-        self.assertEqual(home_assistant.calls, [("GET", "/addons", None)])
+        self.assertEqual(
+            home_assistant.calls,
+            [
+                ("GET", "/addons", None),
+                ("GET", "/addons/a0d7b954_esphome/info", None),
+            ],
+        )
 
         stopped = APP.HomeAssistantIngressTransport(FakeHomeAssistant([{
             "slug": "esphome_beta", "name": "ESPHome Device Builder Beta",
