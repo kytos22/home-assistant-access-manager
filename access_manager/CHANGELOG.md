@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.0
+
+- Replaces the obsolete local Ingress WebSocket protocol with the current ESPHome Device Builder API: device and YAML operations use its Ingress HTTP endpoints, while validation, compilation and OTA use its native process WebSockets.
+- Keeps the integration local and ephemeral through Home Assistant Supervisor Ingress. Access Manager requests only secret-key names from ESPHome and never reads `secrets.yaml` values.
+
 ## 0.14.3
 
 - Fetches the detailed ESPHome Device Builder app record before opening Ingress, so the local connection receives the Supervisor-provided Ingress entrypoint instead of treating the summary listing as incomplete configuration.

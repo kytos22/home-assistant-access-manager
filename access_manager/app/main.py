@@ -9,7 +9,7 @@ import secrets
 import sqlite3
 import unicodedata
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 from pathlib import Path
 from collections.abc import Mapping
 
@@ -674,82 +674,179 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
             raise DeviceBuilderError("Could not create a temporary Ingress session", "ingress_unavailable")
         return session
 
-    async def command(self, command, args=None, on_event=None, streaming=False):
-        last_error = None
-        for attempt in range(2):
-            session_token = ""
-            ingress_token = ""
-            try:
-                addon = await self._discover()
-                session_token = await self._session()
-                ingress_token = self._ingress_token(addon)
-                timeout = ClientTimeout(
-                    total=None if streaming else 30,
-                    sock_connect=10,
-                    sock_read=None if streaming else 30,
-                )
-                async with ClientSession(timeout=timeout) as session:
-                    async with session.ws_connect(
-                        f"ws://supervisor/ingress/{ingress_token}/ws",
-                        headers={"Cookie": f"ingress_session={session_token}"},
-                        heartbeat=30, max_msg_size=4 * 1024 * 1024,
-                    ) as socket:
-                        first = await socket.receive()
-                        if first.type != WSMsgType.TEXT:
-                            raise DeviceBuilderError("Device Builder Ingress did not send server information")
-                        self.server_info = json.loads(first.data)
-                        if not isinstance(self.server_info, Mapping) or not (
-                            self.server_info.get("ha_addon") is True
-                            and self.server_info.get("ha_ingress") is True
-                            and self.server_info.get("requires_auth") is False
-                        ):
-                            self.status = {"mode": "local_ingress", "status": "incompatible"}
-                            raise DeviceBuilderError("Local Device Builder Ingress is incompatible", "incompatible")
-                        self.status = {
-                            "mode": "local_ingress", "status": "connected",
-                            "addon": str(addon.get("slug") or ""),
-                            "channel": str(addon.get("stage") or "stable"),
-                            "server_version": str(self.server_info.get("server_version") or ""),
-                            "esphome_version": str(self.server_info.get("esphome_version") or ""),
-                        }
-                        message_id = secrets.token_urlsafe(8)
-                        await socket.send_json({"command": str(command), "message_id": message_id, "args": args or {}})
-                        async for message in socket:
-                            if message.type == WSMsgType.ERROR:
-                                raise DeviceBuilderError("Device Builder Ingress WebSocket failed")
-                            if message.type != WSMsgType.TEXT:
-                                continue
+    async def _dashboard_context(self):
+        """Create one ephemeral authenticated path to the current Dashboard API."""
+        addon = await self._discover()
+        session_token = await self._session()
+        ingress_token = self._ingress_token(addon)
+        self.server_info = {
+            "api": "dashboard_http",
+            "server_version": str(addon.get("version") or ""),
+            "esphome_version": str(addon.get("version") or ""),
+        }
+        self.status = {
+            "mode": "local_ingress", "status": "connected",
+            "addon": str(addon.get("slug") or ""),
+            "channel": str(addon.get("stage") or "stable"),
+            "server_version": self.server_info["server_version"],
+            "esphome_version": self.server_info["esphome_version"],
+        }
+        return (
+            f"http://supervisor/ingress/{ingress_token}/",
+            {"Cookie": f"ingress_session={session_token}"},
+        )
+
+    @staticmethod
+    def _request_error(response_status, body):
+        if response_status in {401, 403}:
+            code = "unauthorized"
+        elif response_status == 404:
+            code = "incompatible_api"
+        else:
+            code = "unavailable"
+        detail = str(body or "").strip().replace("\n", " ")[:240]
+        return DeviceBuilderError(
+            f"ESPHome Dashboard request failed ({response_status})"
+            + (f": {detail}" if detail else ""),
+            code,
+        )
+
+    async def _dashboard_request(self, method, path, text_body=None, json_body=None):
+        base_url, headers = await self._dashboard_context()
+        timeout = ClientTimeout(total=30, sock_connect=10, sock_read=30)
+        try:
+            async with ClientSession(timeout=timeout) as session:
+                async with session.request(
+                    method, f"{base_url}{str(path).lstrip('/')}", headers=headers,
+                    data=text_body, json=json_body,
+                ) as response:
+                    body = await response.text()
+                    if response.status >= 400:
+                        raise self._request_error(response.status, body)
+                    content_type = response.headers.get("Content-Type", "").lower()
+                    if "json" in content_type:
+                        try:
+                            return json.loads(body)
+                        except json.JSONDecodeError as error:
+                            raise DeviceBuilderError(
+                                "ESPHome Dashboard returned invalid JSON", "incompatible_api"
+                            ) from error
+                    return body
+        except DeviceBuilderError:
+            raise
+        except (asyncio.TimeoutError, ClientError, OSError) as error:
+            raise DeviceBuilderError(
+                "Could not connect to local ESPHome Dashboard", "unavailable"
+            ) from error
+
+    async def _dashboard_process(self, endpoint, spawn_args, on_event=None):
+        if endpoint not in {"compile", "run", "validate"}:
+            raise DeviceBuilderError("Unsupported ESPHome Dashboard process", "incompatible_api")
+        base_url, headers = await self._dashboard_context()
+        websocket_url = f"ws{base_url[4:]}{endpoint}"
+        timeout = ClientTimeout(total=None, sock_connect=10, sock_read=None)
+        try:
+            async with ClientSession(timeout=timeout) as session:
+                async with session.ws_connect(
+                    websocket_url, headers=headers, heartbeat=30,
+                    max_msg_size=4 * 1024 * 1024,
+                ) as socket:
+                    await socket.send_json({"type": "spawn", **spawn_args})
+                    async for message in socket:
+                        if message.type == WSMsgType.ERROR:
+                            raise DeviceBuilderError("ESPHome Dashboard process failed")
+                        if message.type != WSMsgType.TEXT:
+                            continue
+                        try:
                             event = json.loads(message.data)
-                            if event.get("message_id") != message_id:
-                                continue
-                            if event.get("error_code"):
-                                raise DeviceBuilderError(event.get("details") or event["error_code"], event["error_code"])
-                            if "result" in event:
-                                return event.get("result")
-                            if on_event:
-                                callback_result = on_event(str(event.get("event") or ""), event.get("data"))
-                                if asyncio.iscoroutine(callback_result):
-                                    await callback_result
-                            if event.get("event") == "result":
-                                return event.get("data")
-                        raise DeviceBuilderError("Device Builder Ingress closed the request unexpectedly")
-            except DeviceBuilderError as error:
-                last_error = error
-                if error.code not in {"unauthorized", "forbidden", "401", "403"} or attempt:
-                    raise
-            except (asyncio.TimeoutError, ClientError, OSError, TypeError, json.JSONDecodeError) as error:
-                status = getattr(error, "status", None)
-                last_error = DeviceBuilderError(
-                    "Could not connect to local Device Builder Ingress",
-                    "unauthorized" if status in {401, 403} else "unavailable",
-                )
-                if status not in {401, 403} or attempt:
-                    raise last_error from error
-            finally:
-                # Explicitly drop all temporary material before the optional retry.
-                session_token = ""
-                ingress_token = ""
-        raise last_error or DeviceBuilderError("Local Device Builder Ingress failed")
+                        except (TypeError, json.JSONDecodeError) as error:
+                            raise DeviceBuilderError(
+                                "ESPHome Dashboard returned an invalid process event",
+                                "incompatible_api",
+                            ) from error
+                        if not isinstance(event, Mapping):
+                            continue
+                        if event.get("event") == "line" and on_event:
+                            callback_result = on_event("output", event.get("data"))
+                            if asyncio.iscoroutine(callback_result):
+                                await callback_result
+                        if event.get("event") == "exit":
+                            code = int(event.get("code") or 0)
+                            return {
+                                "success": code == 0,
+                                "status": "completed" if code == 0 else "failed",
+                                "exit_code": code,
+                                "install_completed": endpoint == "run" and code == 0,
+                            }
+                    raise DeviceBuilderError("ESPHome Dashboard closed the process unexpectedly")
+        except DeviceBuilderError:
+            raise
+        except (asyncio.TimeoutError, ClientError, OSError) as error:
+            raise DeviceBuilderError(
+                "Could not connect to local ESPHome Dashboard", "unavailable"
+            ) from error
+
+    @staticmethod
+    def _dashboard_job_id(endpoint, configuration):
+        return f"dashboard:{endpoint}:{validate_esphome_configuration(configuration)}"
+
+    @staticmethod
+    def _dashboard_job(job_id):
+        match = re.fullmatch(r"dashboard:(compile|run):(.+)", str(job_id or ""))
+        if not match:
+            raise DeviceBuilderError("Unknown local ESPHome Dashboard job", "incompatible_api")
+        return match.group(1), validate_esphome_configuration(match.group(2))
+
+    async def command(self, command, args=None, on_event=None, streaming=False):
+        args = args if isinstance(args, Mapping) else {}
+        configuration = str(args.get("configuration") or "").strip()
+        if command == "devices/list":
+            return await self._dashboard_request("GET", "devices")
+        if command == "config/get_preferences":
+            return {"transport": "dashboard_http"}
+        if command == "firmware/get_jobs":
+            return []
+        if command == "config/get_secrets":
+            return await self._dashboard_request("GET", "secret_keys")
+        if command == "devices/get_config":
+            configuration = validate_esphome_configuration(configuration)
+            return await self._dashboard_request(
+                "GET", f"edit?{urlencode({'configuration': configuration})}"
+            )
+        if command == "devices/update_config":
+            configuration = validate_esphome_configuration(configuration)
+            content = args.get("content")
+            if not isinstance(content, str):
+                raise DeviceBuilderError("Device Builder YAML content is missing", "invalid_request")
+            return await self._dashboard_request(
+                "POST", f"edit?{urlencode({'configuration': configuration})}",
+                text_body=content,
+            )
+        if command == "devices/create":
+            name = str(args.get("name") or "").strip().lower()
+            content = args.get("file_content")
+            if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,62}", name) or not isinstance(content, str):
+                raise DeviceBuilderError("Invalid new Device Builder configuration", "invalid_request")
+            return await self._dashboard_request(
+                "POST", "wizard",
+                json_body={"type": "upload", "name": name, "file_content": content},
+            )
+        if command == "devices/validate":
+            configuration = validate_esphome_configuration(configuration)
+            return await self._dashboard_process(
+                "validate", {"configuration": configuration}, on_event
+            )
+        if command in {"firmware/compile", "firmware/install"}:
+            configuration = validate_esphome_configuration(configuration)
+            endpoint = "run" if command == "firmware/install" else "compile"
+            return {"job_id": self._dashboard_job_id(endpoint, configuration)}
+        if command == "firmware/follow_job":
+            endpoint, configuration = self._dashboard_job(args.get("job_id"))
+            spawn_args = {"configuration": configuration}
+            if endpoint == "run":
+                spawn_args["port"] = "OTA"
+            return await self._dashboard_process(endpoint, spawn_args, on_event)
+        raise DeviceBuilderError("Unsupported local ESPHome Dashboard command", "incompatible_api")
 
 
 class DeviceBuilderClient(DeviceBuilderProtocol):
@@ -5942,7 +6039,13 @@ class FingerprintAdmin:
                 isinstance(result, dict)
                 and result.get("queued_update_armed") is True
             )
-            if operation["install"] and not following_tail and queued_update_armed:
+            direct_install_completed = bool(
+                isinstance(result, dict)
+                and result.get("install_completed") is True
+            )
+            if operation["install"] and not following_tail and direct_install_completed:
+                upload_started = True
+            elif operation["install"] and not following_tail and queued_update_armed:
                 logs = (logs + [
                     "Device Builder armed the OTA update for the next device wake-up"
                 ])[-80:]
