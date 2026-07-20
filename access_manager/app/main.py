@@ -11,9 +11,11 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 from pathlib import Path
+from collections.abc import Mapping
 
 from aiohttp import ClientError, ClientSession, ClientTimeout, WSMsgType, web
 from cryptography.fernet import Fernet, InvalidToken
+from ruamel.yaml import YAML
 
 
 PORT = 8099
@@ -29,6 +31,11 @@ READER_FIRMWARE_REPOSITORY = (
     "https://github.com/kytos22/home-assistant-access-manager"
 )
 READER_FIRMWARE_DIRECTORY = "esphome"
+READER_FIRMWARE_PROJECT = "kytos22.fingerprint_access_reader"
+READER_FIRMWARE_FILES = {
+    "display": "esphome/access-reader.yaml",
+    "reader_only": "esphome/reader-only.yaml",
+}
 OPTIONS_PATH = DATA_DIR / "options.json"
 INDEX_PATH = Path(__file__).with_name("index.html")
 
@@ -288,28 +295,260 @@ def esphome_reader_config(payload):
     return "\n".join(lines)
 
 
+SEMVER_RE = re.compile(
+    r"^v?(?P<core>(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))*)(?:-(?P<pre>[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+(?P<build>[0-9A-Za-z.-]+))?$"
+)
+
+
+def semantic_version(value):
+    """Return a SemVer-compatible comparison key without assuming three parts."""
+    match = SEMVER_RE.fullmatch(str(value or "").strip())
+    if not match:
+        return None
+    core = tuple(int(part) for part in match.group("core").split("."))
+    # 1.2 and 1.2.0 are equivalent for the firmware compatibility contract.
+    core = core + (0,) * max(0, 3 - len(core))
+    pre = match.group("pre")
+    if pre is None:
+        pre_key = (1,)
+    else:
+        identifiers = []
+        for part in pre.split("."):
+            identifiers.append((0, int(part)) if part.isdigit() else (1, part))
+        pre_key = (0, tuple(identifiers))
+    return core, pre_key
+
+
+def compare_semantic_versions(left, right):
+    left_key = semantic_version(left)
+    right_key = semantic_version(right)
+    if left_key is None or right_key is None:
+        return None
+    return (left_key > right_key) - (left_key < right_key)
+
+
+def firmware_version_state(installed_version, target_version=READER_FIRMWARE_VERSION):
+    comparison = compare_semantic_versions(installed_version, target_version)
+    if comparison is None:
+        return "unknown"
+    if comparison < 0:
+        return "update_available"
+    if comparison > 0:
+        return "newer_than_supported"
+    return "up_to_date"
+
+
+def _yaml_value(mapping, key, default=None):
+    if isinstance(mapping, Mapping):
+        return mapping.get(key, default)
+    return default
+
+
+def _package_files(package):
+    files = _yaml_value(package, "files", [])
+    if isinstance(files, str):
+        files = [files]
+    result = []
+    if isinstance(files, list):
+        for item in files:
+            if isinstance(item, str):
+                result.append(item)
+            elif isinstance(item, Mapping):
+                result.append(str(item.get("path") or item.get("file") or ""))
+    return result
+
+
+def managed_firmware_package(content, expected_profile=None):
+    """Locate the one Access Manager package without serialising the YAML again."""
+    yaml = YAML(typ="rt")
+    yaml.preserve_quotes = True
+    try:
+        document = yaml.load(content)
+    except Exception as error:
+        raise ValueError("The canonical Device Builder YAML is invalid") from error
+    if not isinstance(document, Mapping):
+        raise ValueError("The canonical Device Builder YAML must be a mapping")
+    project_name = _yaml_value(_yaml_value(document, "esphome", {}), "project", {})
+    project_name = _yaml_value(project_name, "name")
+    if project_name and str(project_name) != READER_FIRMWARE_PROJECT:
+        raise ValueError("The YAML belongs to a different ESPHome project")
+    packages = _yaml_value(document, "packages", {})
+    if not isinstance(packages, Mapping):
+        raise ValueError("No managed Access Manager package was found")
+    expected_file = READER_FIRMWARE_FILES.get(expected_profile)
+    candidates = []
+    for package_key, package in packages.items():
+        if not isinstance(package, Mapping):
+            continue
+        url = str(package.get("url") or "").rstrip("/")
+        files = _package_files(package)
+        matched_file = next(
+            (item for item in files if item in READER_FIRMWARE_FILES.values()), None
+        )
+        if url != READER_FIRMWARE_REPOSITORY or not matched_file:
+            continue
+        if expected_file and matched_file != expected_file:
+            raise ValueError("The managed package does not match this reader profile")
+        if "ref" not in package:
+            raise ValueError("The managed package has no immutable firmware ref")
+        candidates.append((package_key, package, matched_file))
+    if not candidates:
+        raise ValueError("No managed Access Manager package was found")
+    if len(candidates) != 1:
+        raise ValueError("Several managed Access Manager packages were found")
+    package_key, package, package_file = candidates[0]
+    try:
+        line, _column = package.lc.value("ref")
+    except (AttributeError, KeyError, TypeError, ValueError) as error:
+        raise ValueError("The managed firmware ref has no safe source position") from error
+    return {
+        "package_key": str(package_key),
+        "package_file": package_file,
+        "current_ref": str(package.get("ref") or "").strip(),
+        "ref_line": int(line),
+    }
+
+
+def managed_ref_state(current_ref, target_ref=READER_FIRMWARE_REF):
+    if current_ref == target_ref:
+        return "managed_current"
+    if not current_ref.startswith("firmware-v"):
+        return "custom_ref"
+    comparison = compare_semantic_versions(current_ref.removeprefix("firmware-v"), target_ref.removeprefix("firmware-v"))
+    if comparison is None:
+        return "custom_ref"
+    if comparison > 0:
+        return "newer_than_supported"
+    return "managed_older"
+
+
+def patch_managed_firmware_ref(content, target_ref, expected_profile=None):
+    """Change only the ref scalar while preserving original text byte-for-byte elsewhere."""
+    package = managed_firmware_package(content, expected_profile)
+    lines = content.splitlines(keepends=True)
+    if package["ref_line"] >= len(lines):
+        raise ValueError("The managed firmware ref line is unavailable")
+    original = lines[package["ref_line"]]
+    match = re.match(
+        r"^(?P<prefix>\s*ref\s*:\s*)(?:(?P<quote>['\"])(?P<quoted>.*?)\2|(?P<plain>[^#\r\n]*?))(?P<suffix>\s*(?:#.*)?)(?P<newline>\r?\n?)$",
+        original,
+    )
+    if not match:
+        raise ValueError("The managed firmware ref cannot be patched safely")
+    current_ref = (match.group("quoted") if match.group("quote") else match.group("plain")).strip()
+    if current_ref != package["current_ref"]:
+        raise ValueError("The managed firmware ref changed while preparing the update")
+    quote = match.group("quote") or ""
+    replacement = (
+        f"{match.group('prefix')}{quote}{target_ref}{quote}"
+        f"{match.group('suffix')}{match.group('newline')}"
+    )
+    lines[package["ref_line"]] = replacement
+    patched = "".join(lines)
+    # Parse the result again before Device Builder sees it; no whole-document dump.
+    verified = managed_firmware_package(patched, expected_profile)
+    if verified["current_ref"] != target_ref:
+        raise ValueError("The managed firmware ref patch could not be verified")
+    package.update(
+        patched_content=patched,
+        changed_lines=[
+            f"- {original.rstrip()}",
+            f"+ {replacement.rstrip()}",
+        ],
+    )
+    return package
+
+
 class DeviceBuilderError(RuntimeError):
     def __init__(self, message, code="unavailable"):
         super().__init__(str(message or "Device Builder request failed"))
         self.code = str(code or "unavailable")
 
 
-class DeviceBuilderClient:
-    """Small authenticated client for the official multiplexed /ws API."""
+class DeviceBuilderTransport:
+    """Transport boundary: no Device Builder command semantics live here."""
 
-    def __init__(self, base_url, token=""):
+    server_info = None
+
+    async def command(self, command, args=None, on_event=None, streaming=False):
+        raise NotImplementedError
+
+
+class DeviceBuilderProtocol:
+    """The official multiplexed Device Builder protocol shared by all transports."""
+
+    def __init__(self, transport):
+        self.transport = transport
+
+    @property
+    def server_info(self):
+        return self.transport.server_info or {}
+
+    async def command(self, command, args=None, on_event=None, streaming=False):
+        return await self.transport.command(command, args, on_event, streaming)
+
+    async def test_connection(self):
+        devices = await self.command("devices/list")
+        preferences = await self.command("config/get_preferences")
+        await self.command("firmware/get_jobs")
+        if not isinstance(preferences, dict):
+            raise DeviceBuilderError(
+                "Device Builder returned invalid preferences", "incompatible_api"
+            )
+        return self.server_info, devices, preferences
+
+
+class ExternalDeviceBuilderTransport(DeviceBuilderTransport):
+    """Optional expert transport for a separately hosted Device Builder."""
+
+    def __init__(self, base_url, token="", username="", password=""):
         self.base_url = validate_esphome_base_url(base_url)
         self.token = str(token or "").strip()
+        self.username = str(username or "").strip()
+        self.password = str(password or "")
         parsed = urlparse(self.base_url)
         websocket_scheme = "wss" if parsed.scheme == "https" else "ws"
         self.websocket_url = parsed._replace(
-            scheme=websocket_scheme,
-            path=f"{parsed.path.rstrip('/')}/ws",
+            scheme=websocket_scheme, path=f"{parsed.path.rstrip('/')}/ws"
         ).geturl()
         self.server_info = {}
 
-    async def command(self, command, args=None, on_event=None, streaming=False):
+    async def _receive_result(self, socket, message_id, on_event=None):
+        async for message in socket:
+            if message.type == WSMsgType.ERROR:
+                raise DeviceBuilderError("Device Builder WebSocket failed")
+            if message.type != WSMsgType.TEXT:
+                continue
+            try:
+                event = json.loads(message.data)
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if event.get("message_id") != message_id:
+                continue
+            if event.get("error_code"):
+                raise DeviceBuilderError(
+                    event.get("details") or event["error_code"], event["error_code"]
+                )
+            if "result" in event:
+                return event.get("result")
+            event_name = str(event.get("event", ""))
+            event_data = event.get("data")
+            if on_event:
+                callback_result = on_event(event_name, event_data)
+                if asyncio.iscoroutine(callback_result):
+                    await callback_result
+            if event_name == "result":
+                return event_data
+        raise DeviceBuilderError("Device Builder closed the request unexpectedly")
+
+    async def _send_command(self, socket, command, args, on_event=None):
         message_id = secrets.token_urlsafe(8)
+        await socket.send_json(
+            {"command": str(command), "message_id": message_id, "args": args or {}}
+        )
+        return await self._receive_result(socket, message_id, on_event)
+
+    async def command(self, command, args=None, on_event=None, streaming=False):
         headers = {}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
@@ -321,82 +560,190 @@ class DeviceBuilderClient:
         try:
             async with ClientSession(timeout=timeout) as session:
                 async with session.ws_connect(
-                    self.websocket_url,
-                    headers=headers,
-                    heartbeat=30,
+                    self.websocket_url, headers=headers, heartbeat=30,
                     max_msg_size=4 * 1024 * 1024,
                 ) as socket:
                     first = await socket.receive()
                     if first.type != WSMsgType.TEXT:
-                        raise DeviceBuilderError(
-                            "Device Builder did not send its server information"
-                        )
+                        raise DeviceBuilderError("Device Builder did not send server information")
                     try:
                         self.server_info = json.loads(first.data)
                     except (TypeError, json.JSONDecodeError) as error:
-                        raise DeviceBuilderError(
-                            "Device Builder returned an invalid handshake"
-                        ) from error
+                        raise DeviceBuilderError("Device Builder returned an invalid handshake") from error
                     if not isinstance(self.server_info, dict) or not any(
                         key in self.server_info
                         for key in ("server_version", "esphome_version", "requires_auth")
                     ):
-                        raise DeviceBuilderError(
-                            "The URL does not expose the supported Device Builder API"
+                        raise DeviceBuilderError("The URL does not expose the supported Device Builder API")
+                    if self.server_info.get("requires_auth") and not self.token:
+                        if not self.username or not self.password:
+                            raise DeviceBuilderError("Device Builder requires authentication", "requires_auth")
+                        login = await self._send_command(
+                            socket, "auth/login",
+                            {"username": self.username, "password": self.password},
                         )
-                    await socket.send_json(
-                        {
-                            "command": str(command),
-                            "message_id": message_id,
-                            "args": args or {},
-                        }
-                    )
-                    async for message in socket:
-                        if message.type == WSMsgType.ERROR:
-                            raise DeviceBuilderError("Device Builder WebSocket failed")
-                        if message.type != WSMsgType.TEXT:
-                            continue
-                        try:
-                            event = json.loads(message.data)
-                        except (TypeError, json.JSONDecodeError):
-                            continue
-                        if event.get("message_id") != message_id:
-                            continue
-                        if event.get("error_code"):
-                            raise DeviceBuilderError(
-                                event.get("details") or event["error_code"],
-                                event["error_code"],
-                            )
-                        if "result" in event:
-                            return event.get("result")
-                        event_name = str(event.get("event", ""))
-                        event_data = event.get("data")
-                        if on_event:
-                            callback_result = on_event(event_name, event_data)
-                            if asyncio.iscoroutine(callback_result):
-                                await callback_result
-                        if event_name == "result":
-                            return event_data
-                    raise DeviceBuilderError(
-                        f"Device Builder closed the {command} request unexpectedly"
-                    )
+                        token = login.get("token") if isinstance(login, dict) else None
+                        if not token:
+                            raise DeviceBuilderError("Device Builder did not return an authentication token", "auth_failed")
+                        self.token = str(token)
+                        # Never retain an external password after the one login attempt.
+                        self.password = ""
+                    return await self._send_command(socket, command, args, on_event)
         except DeviceBuilderError:
             raise
         except (asyncio.TimeoutError, ClientError, OSError) as error:
-            raise DeviceBuilderError(
-                f"Could not connect to Device Builder: {error}"
-            ) from error
+            status = getattr(error, "status", None)
+            code = "unauthorized" if status in {401, 403} else "unavailable"
+            raise DeviceBuilderError("Could not connect to Device Builder", code) from error
 
-    async def test_connection(self):
-        devices = await self.command("devices/list")
-        preferences = await self.command("config/get_preferences")
-        await self.command("firmware/get_jobs")
-        if not isinstance(preferences, dict):
-            raise DeviceBuilderError(
-                "Device Builder returned invalid preferences",
-                "incompatible_api",
-            )
-        return self.server_info, devices, preferences
+
+class HomeAssistantIngressTransport(DeviceBuilderTransport):
+    """Ephemeral local Ingress transport; it never stores a URL, cookie or token."""
+
+    KNOWN_SLUGS = {"a0d7b954_esphome", "esphome", "esphome_beta", "esphome_dev"}
+
+    def __init__(self, home_assistant):
+        self.home_assistant = home_assistant
+        self.server_info = {}
+        self.status = {"mode": "local_ingress", "status": "detecting"}
+
+    @staticmethod
+    def _unwrap(response):
+        if isinstance(response, Mapping) and "data" in response:
+            return response.get("data")
+        return response
+
+    async def _discover(self):
+        self.status = {"mode": "local_ingress", "status": "detecting"}
+        result = self._unwrap(await self.home_assistant.supervisor_api("GET", "/addons"))
+        addons = result.get("addons", []) if isinstance(result, Mapping) else []
+        candidates = []
+        for addon in addons if isinstance(addons, list) else []:
+            if not isinstance(addon, Mapping):
+                continue
+            slug = str(addon.get("slug") or "").lower()
+            name = str(addon.get("name") or "").lower()
+            repository = str(addon.get("repository") or "").lower()
+            is_known = slug in self.KNOWN_SLUGS
+            is_named = "esphome" in name or "esphome" in slug
+            if is_known or (is_named and ("device builder" in name or "esphome" in repository)):
+                candidates.append(addon)
+        if not candidates:
+            self.status = {"mode": "local_ingress", "status": "not_installed"}
+            raise DeviceBuilderError("ESPHome Device Builder is not installed", "not_installed")
+        started = [item for item in candidates if str(item.get("state")) == "started"]
+        addon = (started or candidates)[0]
+        if str(addon.get("state")) != "started":
+            self.status = {
+                "mode": "local_ingress", "status": "stopped",
+                "addon": str(addon.get("slug") or ""),
+            }
+            raise DeviceBuilderError("ESPHome Device Builder is stopped", "stopped")
+        if not addon.get("ingress"):
+            self.status = {"mode": "local_ingress", "status": "ingress_unavailable"}
+            raise DeviceBuilderError("ESPHome Device Builder Ingress is unavailable", "ingress_unavailable")
+        return addon
+
+    @staticmethod
+    def _ingress_token(addon):
+        entry = str(addon.get("ingress_entry") or addon.get("ingress_url") or "").strip()
+        parsed = urlparse(entry)
+        parts = [part for part in parsed.path.split("/") if part]
+        token = str(addon.get("ingress_token") or (parts[-1] if parts else "")).strip()
+        if not token or not re.fullmatch(r"[A-Za-z0-9_-]{8,512}", token):
+            raise DeviceBuilderError("ESPHome Device Builder Ingress token is unavailable", "ingress_unavailable")
+        return token
+
+    async def _session(self):
+        response = self._unwrap(await self.home_assistant.supervisor_api("POST", "/ingress/session", {}))
+        session = str(response.get("session") or "") if isinstance(response, Mapping) else ""
+        if not session:
+            raise DeviceBuilderError("Could not create a temporary Ingress session", "ingress_unavailable")
+        return session
+
+    async def command(self, command, args=None, on_event=None, streaming=False):
+        last_error = None
+        for attempt in range(2):
+            session_token = ""
+            ingress_token = ""
+            try:
+                addon = await self._discover()
+                session_token = await self._session()
+                ingress_token = self._ingress_token(addon)
+                timeout = ClientTimeout(
+                    total=None if streaming else 30,
+                    sock_connect=10,
+                    sock_read=None if streaming else 30,
+                )
+                async with ClientSession(timeout=timeout) as session:
+                    async with session.ws_connect(
+                        f"ws://supervisor/ingress/{ingress_token}/ws",
+                        headers={"Cookie": f"ingress_session={session_token}"},
+                        heartbeat=30, max_msg_size=4 * 1024 * 1024,
+                    ) as socket:
+                        first = await socket.receive()
+                        if first.type != WSMsgType.TEXT:
+                            raise DeviceBuilderError("Device Builder Ingress did not send server information")
+                        self.server_info = json.loads(first.data)
+                        if not isinstance(self.server_info, Mapping) or not (
+                            self.server_info.get("ha_addon") is True
+                            and self.server_info.get("ha_ingress") is True
+                            and self.server_info.get("requires_auth") is False
+                        ):
+                            self.status = {"mode": "local_ingress", "status": "incompatible"}
+                            raise DeviceBuilderError("Local Device Builder Ingress is incompatible", "incompatible")
+                        self.status = {
+                            "mode": "local_ingress", "status": "connected",
+                            "addon": str(addon.get("slug") or ""),
+                            "channel": str(addon.get("stage") or "stable"),
+                            "server_version": str(self.server_info.get("server_version") or ""),
+                            "esphome_version": str(self.server_info.get("esphome_version") or ""),
+                        }
+                        message_id = secrets.token_urlsafe(8)
+                        await socket.send_json({"command": str(command), "message_id": message_id, "args": args or {}})
+                        async for message in socket:
+                            if message.type == WSMsgType.ERROR:
+                                raise DeviceBuilderError("Device Builder Ingress WebSocket failed")
+                            if message.type != WSMsgType.TEXT:
+                                continue
+                            event = json.loads(message.data)
+                            if event.get("message_id") != message_id:
+                                continue
+                            if event.get("error_code"):
+                                raise DeviceBuilderError(event.get("details") or event["error_code"], event["error_code"])
+                            if "result" in event:
+                                return event.get("result")
+                            if on_event:
+                                callback_result = on_event(str(event.get("event") or ""), event.get("data"))
+                                if asyncio.iscoroutine(callback_result):
+                                    await callback_result
+                            if event.get("event") == "result":
+                                return event.get("data")
+                        raise DeviceBuilderError("Device Builder Ingress closed the request unexpectedly")
+            except DeviceBuilderError as error:
+                last_error = error
+                if error.code not in {"unauthorized", "forbidden", "401", "403"} or attempt:
+                    raise
+            except (asyncio.TimeoutError, ClientError, OSError, TypeError, json.JSONDecodeError) as error:
+                status = getattr(error, "status", None)
+                last_error = DeviceBuilderError(
+                    "Could not connect to local Device Builder Ingress",
+                    "unauthorized" if status in {401, 403} else "unavailable",
+                )
+                if status not in {401, 403} or attempt:
+                    raise last_error from error
+            finally:
+                # Explicitly drop all temporary material before the optional retry.
+                session_token = ""
+                ingress_token = ""
+        raise last_error or DeviceBuilderError("Local Device Builder Ingress failed")
+
+
+class DeviceBuilderClient(DeviceBuilderProtocol):
+    """Backward-compatible external client name used by prior integrations and tests."""
+
+    def __init__(self, base_url, token="", username="", password=""):
+        super().__init__(ExternalDeviceBuilderTransport(base_url, token, username, password))
 
 
 class Registry:
@@ -449,6 +796,8 @@ class Registry:
                 progress INTEGER,
                 logs_json TEXT NOT NULL DEFAULT '[]',
                 error TEXT,
+                target_version TEXT,
+                update_kind TEXT NOT NULL DEFAULT 'create',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 finished_at TEXT
@@ -831,6 +1180,19 @@ class Registry:
         self.connection.execute(
             "UPDATE deletion_queue SET state = 'queued' WHERE state = 'sent'"
         )
+        firmware_columns = {
+            row[1] for row in self.connection.execute(
+                "PRAGMA table_info(firmware_operations)"
+            ).fetchall()
+        }
+        if "target_version" not in firmware_columns:
+            self.connection.execute(
+                "ALTER TABLE firmware_operations ADD COLUMN target_version TEXT"
+            )
+        if "update_kind" not in firmware_columns:
+            self.connection.execute(
+                "ALTER TABLE firmware_operations ADD COLUMN update_kind TEXT NOT NULL DEFAULT 'create'"
+            )
         self.connection.commit()
         if migrated_plaintext_credentials:
             # Remove both old database pages and WAL frames that could retain
@@ -2331,6 +2693,16 @@ class Registry:
             connection = {}
         if not isinstance(connection, dict):
             connection = {}
+        # Existing 0.14.0 URL/token records remain external automatically.
+        mode = str(connection.get("mode") or ("external" if connection.get("base_url") else "local_ingress"))
+        if mode not in {"local_ingress", "external", "manual"}:
+            mode = "manual"
+        connection["mode"] = mode
+        # A login username is only input for an external auth/login request.
+        # Do not expose or continue retaining it after the token is issued.
+        if "username" in connection:
+            connection.pop("username", None)
+            self.set_setting("esphome_connection", json.dumps(connection))
         ciphertext = self.setting("esphome_token")
         token = ""
         if ciphertext:
@@ -2341,17 +2713,18 @@ class Registry:
             except (InvalidToken, UnicodeDecodeError, ValueError):
                 connection["status"] = "error"
                 connection["last_error"] = "The encrypted Device Builder token could not be read"
-        connection["configured"] = bool(connection.get("base_url"))
+        connection["configured"] = mode in {"local_ingress", "external"}
         connection["token_configured"] = bool(ciphertext)
         if include_token:
             connection["token"] = token
         return connection
 
     def save_esphome_connection(
-        self, base_url, token, server_info, device_count, preferences=None
+        self, base_url, token, server_info, device_count, preferences=None, username=""
     ):
         timestamp = now_iso()
         connection = {
+            "mode": "external",
             "base_url": validate_esphome_base_url(base_url),
             "status": "connected",
             "last_test_at": timestamp,
@@ -2394,9 +2767,22 @@ class Registry:
                 )
         return self.esphome_connection()
 
+    def set_esphome_connection_mode(self, mode):
+        mode = str(mode or "").strip()
+        if mode not in {"local_ingress", "manual"}:
+            raise ValueError("Invalid Device Builder connection mode")
+        with self.connection:
+            self.connection.execute(
+                "INSERT INTO settings(key, value) VALUES ('esphome_connection', ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (json.dumps({"mode": mode}),),
+            )
+            self.connection.execute("DELETE FROM settings WHERE key = 'esphome_token'")
+        return self.esphome_connection()
+
     def mark_esphome_connection_error(self, error):
         connection = self.esphome_connection()
-        if not connection.get("base_url"):
+        if connection.get("mode") != "external" or not connection.get("base_url"):
             return
         connection.update(
             status="error", last_error=str(error)[:240], last_test_at=now_iso()
@@ -2406,10 +2792,7 @@ class Registry:
         self.set_setting("esphome_connection", json.dumps(connection))
 
     def clear_esphome_connection(self):
-        with self.connection:
-            self.connection.execute(
-                "DELETE FROM settings WHERE key IN ('esphome_connection', 'esphome_token')"
-            )
+        return self.set_esphome_connection_mode("manual")
 
     @staticmethod
     def public_firmware_operation(row):
@@ -2422,19 +2805,20 @@ class Registry:
         return operation
 
     def create_firmware_operation(
-        self, operation_id, configuration, install, reader_id=None, remote_job_id=None
+        self, operation_id, configuration, install, reader_id=None, remote_job_id=None,
+        target_version=None, update_kind="create",
     ):
         timestamp = now_iso()
         self.connection.execute(
             """
             INSERT INTO firmware_operations(
                 id, reader_id, configuration, install, remote_job_id,
-                status, step, logs_json, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, 'queued', 'queued', '[]', ?, ?)
+                status, step, logs_json, target_version, update_kind, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, 'queued', 'queued', '[]', ?, ?, ?, ?)
             """,
             (
                 operation_id, reader_id or None, configuration, int(bool(install)),
-                remote_job_id, timestamp, timestamp,
+                remote_job_id, target_version, str(update_kind or "create"), timestamp, timestamp,
             ),
         )
         self.connection.commit()
@@ -2443,7 +2827,7 @@ class Registry:
     def update_firmware_operation(self, operation_id, **changes):
         allowed = {
             "remote_job_id", "remote_tail_job_id", "status", "step",
-            "progress", "logs", "error", "finished_at",
+            "progress", "logs", "error", "finished_at", "target_version", "update_kind",
         }
         assignments = []
         values = []
@@ -2472,7 +2856,10 @@ class Registry:
 
     def firmware_operations(self, pending_only=False, limit=50):
         where = (
-            "WHERE status NOT IN ('completed', 'failed', 'cancelled')"
+            "WHERE status NOT IN ("
+            "'completed', 'completed_verified', 'version_not_confirmed', "
+            "'device_did_not_reconnect', 'compile_failed', 'upload_failed', "
+            "'validation_failed', 'failed', 'cancelled')"
             if pending_only else ""
         )
         rows = self.connection.execute(
@@ -2764,6 +3151,20 @@ class HomeAssistant:
                     error = message.get("error", {}).get("message", "Error WebSocket")
                     raise RuntimeError(error)
                 return message.get("result")
+
+    async def supervisor_api(self, method, path, data=None):
+        """Call Supervisor through Home Assistant's supported WebSocket proxy."""
+        result = await self.websocket_command(
+            {
+                "type": "supervisor/api",
+                "method": str(method).upper(),
+                "path": str(path),
+                **({"data": data} if data is not None else {}),
+            }
+        )
+        if isinstance(result, Mapping) and result.get("result") not in {None, "ok"}:
+            raise DeviceBuilderError("Supervisor rejected the Device Builder request", "supervisor_error")
+        return result
 
     def ha_people(self):
         people = []
@@ -3594,6 +3995,9 @@ class FingerprintAdmin:
         self.recent_mobile_tag_scans = {}
         self.esphome_devices_cache = []
         self.firmware_tasks = set()
+        self.firmware_update_locks = {}
+        self.firmware_original_configs = {}
+        self.local_device_builder_transport = None
     async def handle_mobile_tag_scan(self, event):
         data = event.get("data", {}) if isinstance(event, dict) else {}
         context = event.get("context", {}) if isinstance(event, dict) else {}
@@ -4263,6 +4667,9 @@ class FingerprintAdmin:
                 }:
                     access_reader["firmware_version"] = None
                 access_reader["latest_firmware_version"] = READER_FIRMWARE_VERSION
+                access_reader["firmware_update_state"] = firmware_version_state(
+                    access_reader["firmware_version"], READER_FIRMWARE_VERSION
+                )
             else:
                 config = access_reader.get("config", {})
                 entity_id = config.get("transaction_entity") or config.get("access_event_entity")
@@ -4316,10 +4723,10 @@ class FingerprintAdmin:
             {
                 "version": APP_VERSION,
                 "reader_firmware_version": READER_FIRMWARE_VERSION,
-                "esphome_configured": self.registry.esphome_connection().get(
+                "esphome_configured": self.public_device_builder_connection().get(
                     "configured", False
                 ),
-                "esphome_connection": self.registry.esphome_connection(),
+                "esphome_connection": self.public_device_builder_connection(),
                 "esphome_devices": self.esphome_devices_cache,
                 "esphome_secret_keys": self.registry.esphome_secret_keys(),
                 "privacy_mode": self.registry.privacy_mode(),
@@ -5132,9 +5539,26 @@ class FingerprintAdmin:
 
     def device_builder_client(self):
         connection = self.registry.esphome_connection(include_token=True)
-        if not connection.get("configured"):
-            raise DeviceBuilderError("Configure Device Builder first", "not_configured")
-        return DeviceBuilderClient(connection["base_url"], connection.get("token", ""))
+        mode = connection.get("mode", "local_ingress")
+        if mode == "manual":
+            raise DeviceBuilderError("Device Builder is set to manual mode", "not_configured")
+        if mode == "external":
+            if not connection.get("base_url"):
+                raise DeviceBuilderError("Configure external Device Builder first", "not_configured")
+            return DeviceBuilderClient(
+                connection["base_url"], connection.get("token", ""),
+            )
+        transport = HomeAssistantIngressTransport(self.ha)
+        self.local_device_builder_transport = transport
+        return DeviceBuilderProtocol(transport)
+
+    def public_device_builder_connection(self):
+        connection = self.registry.esphome_connection()
+        if connection.get("mode") == "local_ingress" and self.local_device_builder_transport:
+            connection.update(self.local_device_builder_transport.status)
+            connection["configured"] = True
+            connection["token_configured"] = False
+        return connection
 
     async def device_builder_devices(self, client=None):
         client = client or self.device_builder_client()
@@ -5148,8 +5572,9 @@ class FingerprintAdmin:
         try:
             await self.device_builder_devices()
         except DeviceBuilderError as error:
-            self.registry.mark_esphome_connection_error(error)
-            LOGGER.warning("Device Builder refresh failed: %s", error)
+            if self.registry.esphome_connection().get("mode") == "external":
+                self.registry.mark_esphome_connection_error(error)
+            LOGGER.warning("Device Builder refresh failed: %s", error.code)
 
     @staticmethod
     def device_builder_response(error):
@@ -5160,22 +5585,25 @@ class FingerprintAdmin:
 
     async def esphome_connection(self, request):
         self.require_admin_request(request)
-        return web.json_response(self.registry.esphome_connection())
+        return web.json_response(self.public_device_builder_connection())
 
     async def test_esphome_connection(self, request):
         self.require_admin_request(request)
         payload = await request.json()
         saved = self.registry.esphome_connection(include_token=True)
         try:
-            base_url = validate_esphome_base_url(
-                payload.get("base_url") or saved.get("base_url")
-            )
-            token = (
-                saved.get("token", "")
-                if payload.get("preserve_token") or "token" not in payload
-                else str(payload.get("token") or "").strip()
-            )
-            client = DeviceBuilderClient(base_url, token)
+            mode = str(payload.get("mode") or saved.get("mode") or "local_ingress")
+            if mode == "external":
+                base_url = validate_esphome_base_url(payload.get("base_url") or saved.get("base_url"))
+                token = saved.get("token", "") if payload.get("preserve_token") or "token" not in payload else str(payload.get("token") or "").strip()
+                client = DeviceBuilderClient(
+                    base_url, token, payload.get("username") or "",
+                    payload.get("password") or "",
+                )
+            elif mode == "local_ingress":
+                client = DeviceBuilderProtocol(HomeAssistantIngressTransport(self.ha))
+            else:
+                raise ValueError("Device Builder is set to manual mode")
             server_info, result, preferences = await client.test_connection()
             devices = self.public_esphome_devices(result)
         except (TypeError, ValueError) as error:
@@ -5198,6 +5626,7 @@ class FingerprintAdmin:
                 "version_history_enabled": bool(
                     preferences.get("version_history_enabled", True)
                 ),
+                "mode": mode,
             }
         )
 
@@ -5206,18 +5635,29 @@ class FingerprintAdmin:
         payload = await request.json()
         saved = self.registry.esphome_connection(include_token=True)
         try:
-            base_url = validate_esphome_base_url(payload.get("base_url"))
-            token = (
-                saved.get("token", "")
-                if payload.get("preserve_token")
-                else str(payload.get("token") or "").strip()
-            )
-            client = DeviceBuilderClient(base_url, token)
-            server_info, result, preferences = await client.test_connection()
-            devices = self.public_esphome_devices(result)
-            connection = self.registry.save_esphome_connection(
-                base_url, token, server_info, len(devices), preferences
-            )
+            mode = str(payload.get("mode") or ("external" if payload.get("base_url") else "local_ingress"))
+            if mode == "local_ingress":
+                client = DeviceBuilderProtocol(HomeAssistantIngressTransport(self.ha))
+                server_info, result, preferences = await client.test_connection()
+                devices = self.public_esphome_devices(result)
+                connection = self.registry.set_esphome_connection_mode("local_ingress")
+                self.local_device_builder_transport = client.transport
+            elif mode == "external":
+                base_url = validate_esphome_base_url(payload.get("base_url"))
+                token = saved.get("token", "") if payload.get("preserve_token") else str(payload.get("token") or "").strip()
+                client = DeviceBuilderClient(
+                    base_url, token, payload.get("username") or "", payload.get("password") or ""
+                )
+                server_info, result, preferences = await client.test_connection()
+                devices = self.public_esphome_devices(result)
+                connection = self.registry.save_esphome_connection(
+                    base_url, client.transport.token, server_info, len(devices), preferences,
+                )
+            elif mode == "manual":
+                connection = self.registry.set_esphome_connection_mode("manual")
+                devices = []
+            else:
+                raise ValueError("Invalid Device Builder connection mode")
             self.esphome_devices_cache = devices
         except (TypeError, ValueError) as error:
             raise web.HTTPBadRequest(text=str(error))
@@ -5232,6 +5672,25 @@ class FingerprintAdmin:
         self.registry.clear_esphome_connection()
         self.esphome_devices_cache = []
         return web.json_response({"ok": True})
+
+    async def start_local_device_builder(self, request):
+        self.require_admin_request(request)
+        transport = HomeAssistantIngressTransport(self.ha)
+        try:
+            addon = await transport._discover()
+        except DeviceBuilderError as error:
+            if error.code != "stopped":
+                return self.device_builder_response(error)
+            addon = {"slug": transport.status.get("addon")}
+        slug = str(addon.get("slug") or "")
+        if not slug:
+            return self.device_builder_response(DeviceBuilderError("ESPHome Device Builder was not found", "not_installed"))
+        try:
+            await self.ha.supervisor_api("POST", f"/addons/{slug}/start", {})
+        except (DeviceBuilderError, RuntimeError) as error:
+            return self.device_builder_response(DeviceBuilderError("Could not start ESPHome Device Builder", "supervisor_error"))
+        self.local_device_builder_transport = None
+        return web.json_response({"ok": True, "status": "starting"})
 
     async def list_esphome_devices(self, request):
         self.require_admin_request(request)
@@ -5405,6 +5864,8 @@ class FingerprintAdmin:
                 )
             return
         logs = list(operation.get("logs") or [])
+        rollback = getattr(self, "firmware_original_configs", {}).get(operation_id)
+        upload_started = bool(operation.get("remote_tail_job_id"))
 
         async def record_event(event_name, data):
             nonlocal logs
@@ -5491,6 +5952,7 @@ class FingerprintAdmin:
                 )
                 if tail:
                     tail_job_id = self.remote_job_id(tail)
+                    upload_started = True
                     self.registry.update_firmware_operation(
                         operation_id, remote_tail_job_id=tail_job_id,
                         status="installing", step="installing",
@@ -5519,14 +5981,36 @@ class FingerprintAdmin:
                     raise DeviceBuilderError(
                         "Device Builder did not expose the dependent OTA upload job"
                     )
-            self.registry.update_firmware_operation(
-                operation_id, status="completed", step="completed",
-                progress=100, finished_at=now_iso(),
-            )
+            target_version = operation.get("target_version")
+            if target_version and operation.get("reader_id"):
+                self.registry.update_firmware_operation(
+                    operation_id, status="completed_waiting_for_device",
+                    step="completed_waiting_for_device", progress=100,
+                )
+                verification = await self.verify_reader_firmware_version(
+                    operation["reader_id"], target_version
+                )
+                self.registry.update_firmware_operation(
+                    operation_id, status=verification, step=verification,
+                    progress=100, finished_at=now_iso(),
+                )
+                if verification == "completed_verified":
+                    self.audit_firmware_event(
+                        "firmware_update_completed", operation["reader_id"], operation["configuration"]
+                    )
+                    self.audit_firmware_event(
+                        "firmware_version_confirmed", operation["reader_id"], operation["configuration"]
+                    )
+            else:
+                self.registry.update_firmware_operation(
+                    operation_id, status="completed", step="completed",
+                    progress=100, finished_at=now_iso(),
+                )
+            getattr(self, "firmware_original_configs", {}).pop(operation_id, None)
         except asyncio.CancelledError:
             raise
         except DeviceBuilderError as error:
-            LOGGER.warning("Device Builder job %s failed: %s", operation_id, error)
+            LOGGER.warning("Device Builder job %s failed: %s", operation_id, error.code)
             if error.code == "unavailable":
                 self.registry.update_firmware_operation(
                     operation_id, status="queued", step="queued",
@@ -5536,10 +6020,57 @@ class FingerprintAdmin:
                 if self.registry.firmware_operation(operation_id):
                     self.start_firmware_follow(operation_id)
                 return
+            if rollback and rollback.get("changed") and not upload_started:
+                try:
+                    client = self.device_builder_client()
+                    await self.restore_firmware_yaml(
+                        client, rollback["configuration"], rollback["content"], rollback["reader_id"]
+                    )
+                except DeviceBuilderError as rollback_error:
+                    LOGGER.warning(
+                        "Could not restore canonical YAML after failed job %s: %s",
+                        operation_id, rollback_error.code,
+                    )
+            status = "upload_failed" if upload_started else "compile_failed"
+            if operation.get("reader_id"):
+                self.audit_firmware_event(
+                    "firmware_upload_failed" if upload_started else "firmware_compile_failed",
+                    operation["reader_id"], operation["configuration"],
+                )
             self.registry.update_firmware_operation(
-                operation_id, status="failed", step="failed",
+                operation_id, status=status, step=status,
                 error=str(error)[:500], finished_at=now_iso(),
             )
+            getattr(self, "firmware_original_configs", {}).pop(operation_id, None)
+
+    async def verify_reader_firmware_version(self, reader_id, target_version, timeout_seconds=90):
+        """Wait for Home Assistant to see the reader again and report the target version."""
+        try:
+            _, _, _, _, _ = self.reader_firmware_update_details(reader_id)
+        except web.HTTPException:
+            return "version_not_confirmed"
+        reader = self.registry.reader(reader_id) or {}
+        config = reader.get("config", {})
+        version_entity = config.get("firmware_version_entity")
+        device_entity = config.get("device_status_entity")
+        deadline = asyncio.get_running_loop().time() + timeout_seconds
+        saw_reconnect = False
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                await self.ha.refresh_states()
+            except Exception:
+                pass
+            if device_entity:
+                device_state = self.ha.states.get(device_entity, {}).get("state")
+                saw_reconnect = saw_reconnect or device_state in {"on", "available"}
+            if version_entity:
+                version = self.ha.states.get(version_entity, {}).get("state")
+                if compare_semantic_versions(version, target_version) == 0:
+                    return "completed_verified"
+                if version not in {None, "", "unknown", "unavailable"}:
+                    saw_reconnect = True
+            await asyncio.sleep(2)
+        return "version_not_confirmed" if saw_reconnect else "device_did_not_reconnect"
 
     def start_firmware_follow(self, operation_id):
         task = asyncio.create_task(
@@ -5612,68 +6143,247 @@ class FingerprintAdmin:
         self.start_firmware_follow(operation_id)
         return web.json_response(operation)
 
-    async def update_reader_firmware(self, request):
-        self.require_admin_request(request)
-        reader_id = str(request.match_info["reader_id"])
+    @staticmethod
+    def device_builder_config_content(result):
+        if isinstance(result, str):
+            return result
+        if isinstance(result, Mapping):
+            for key in ("content", "config", "yaml"):
+                if isinstance(result.get(key), str):
+                    return result[key]
+        raise DeviceBuilderError("Device Builder did not return a canonical YAML", "incompatible_api")
+
+    @staticmethod
+    def device_builder_secret_names(result):
+        if isinstance(result, Mapping):
+            values = result.get("secrets", result.get("names", result))
+            if isinstance(values, Mapping):
+                return {str(key) for key in values}
+            if isinstance(values, list):
+                names = set()
+                for value in values:
+                    if isinstance(value, str):
+                        names.add(value)
+                    elif isinstance(value, Mapping) and value.get("name"):
+                        names.add(str(value["name"]))
+                return names
+        if isinstance(result, list):
+            return {str(value) for value in result if isinstance(value, str)}
+        raise DeviceBuilderError("Device Builder returned invalid secret metadata", "incompatible_api")
+
+    def reader_firmware_update_details(self, reader_id):
         reader = self.registry.reader(reader_id)
         if not reader or reader["reader_type"] != "fingerprint":
             raise web.HTTPNotFound(text="Fingerprint reader not found")
         config = reader.get("config", {})
         saved_profile = config.get("firmware_profile") or {}
-        profile = saved_profile.get("hardware_profile") or config.get(
-            "hardware_profile",
-            "display"
-            if (
-                config.get("display_event_entity")
-                or (config.get("legacy_autodiscovery") and self.ha.entities.get("display_event"))
-            ) else "reader_only",
-        )
-        payload = {
-            "profile": profile,
-            "install_mode": "existing",
-            "device_name": (
-                saved_profile.get("device_name")
-                or config.get("device_name")
-                or reader_id.replace("_", "-")
-            ),
-            "friendly_name": saved_profile.get("friendly_name") or reader["name"],
-            "configuration": (
-                saved_profile.get("configuration")
-                or config.get("esphome_configuration")
-            ),
-            "reader_id": reader_id,
-            "install": True,
-            "confirm_overwrite": True,
-        }
-        payload.update(
-            saved_profile.get("secret_keys")
-            or config.get("firmware_secret_keys")
-            or self.registry.esphome_secret_keys()
-        )
-        if not payload["configuration"]:
-            raise web.HTTPConflict(
-                text="Link this reader to its Device Builder configuration first"
-            )
-        if profile == "display":
-            payload["display_language"] = (
-                saved_profile.get("display_language")
-                or config.get("display_language")
-                or ("Español" if config.get("preferred_language") == "es" else "English")
-            )
+        profile = saved_profile.get("hardware_profile") or config.get("hardware_profile") or "reader_only"
+        if profile not in READER_FIRMWARE_FILES:
+            raise web.HTTPConflict(text="Unsupported reader firmware profile")
+        configuration = saved_profile.get("configuration") or config.get("esphome_configuration")
+        if not configuration:
+            raise web.HTTPConflict(text="Link this reader to its Device Builder configuration first")
+        configuration = validate_esphome_configuration(configuration)
+        version_entity = config.get("firmware_version_entity")
+        installed = self.ha.states.get(version_entity, {}).get("state") if version_entity else None
+        if installed in {None, "", "unknown", "unavailable"}:
+            installed = None
+        secret_keys = saved_profile.get("secret_keys") or config.get("firmware_secret_keys") or self.registry.esphome_secret_keys()
+        return reader, str(profile), configuration, installed, esphome_secret_keys(secret_keys)
+
+    async def canonical_reader_firmware_preflight(self, reader_id):
+        reader, profile, configuration, installed, secret_keys = self.reader_firmware_update_details(reader_id)
+        client = self.device_builder_client()
+        raw = await client.command("devices/get_config", {"configuration": configuration})
+        content = self.device_builder_config_content(raw)
+        config_sha256 = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        package = patch_managed_firmware_ref(content, READER_FIRMWARE_REF, profile)
+        ref_state = managed_ref_state(package["current_ref"])
+        installed_state = firmware_version_state(installed)
+        if ref_state == "custom_ref":
+            update_state = "custom_ref"
+        elif ref_state == "newer_than_supported" or installed_state == "newer_than_supported":
+            update_state = "newer_than_supported"
+        elif installed_state == "unknown":
+            update_state = "unknown"
+        elif ref_state == "managed_current" and installed_state == "up_to_date":
+            update_state = "up_to_date"
         else:
-            firmware = saved_profile.get("hardware") or config.get("firmware_config", {})
-            if not all(firmware.get(key) for key in ("board", "fingerprint_tx_pin", "fingerprint_rx_pin")):
-                raise web.HTTPConflict(
-                    text="Configure the board and UART pins before updating this sensor-only reader"
+            update_state = "update_available"
+        warnings = []
+        if ref_state == "managed_current" and installed_state == "update_available":
+            warnings.append("The managed ref is current; Device Builder will recompile the canonical YAML")
+        if installed_state == "unknown":
+            warnings.append("The installed firmware version cannot be confirmed")
+        return {
+            "reader": reader,
+            "profile": profile,
+            "configuration": configuration,
+            "installed_version": installed,
+            "secret_keys": secret_keys,
+            "content": content,
+            "config_sha256": config_sha256,
+            "current_ref": package["current_ref"],
+            "target_ref": READER_FIRMWARE_REF,
+            "target_version": READER_FIRMWARE_VERSION,
+            "update_state": update_state,
+            "changed_lines": package["changed_lines"] if package["current_ref"] != READER_FIRMWARE_REF else [],
+            "patched_content": package["patched_content"],
+            "ref_state": ref_state,
+            "warnings": warnings,
+        }
+
+    @staticmethod
+    def public_firmware_prepare(preflight):
+        return {
+            "reader_id": preflight["reader"]["id"],
+            "configuration": preflight["configuration"],
+            "installed_version": preflight["installed_version"],
+            "current_ref": preflight["current_ref"],
+            "target_version": preflight["target_version"],
+            "target_ref": preflight["target_ref"],
+            "config_sha256": preflight["config_sha256"],
+            "update_state": preflight["update_state"],
+            "changed_lines": preflight["changed_lines"],
+            "warnings": preflight["warnings"],
+        }
+
+    async def ensure_reader_firmware_secrets(self, client, configuration, secret_keys):
+        result = await client.command("config/get_secrets", {"configuration": configuration})
+        available = self.device_builder_secret_names(result)
+        missing = sorted(set(secret_keys.values()) - available)
+        if missing:
+            raise DeviceBuilderError(
+                "Missing required secrets: " + ", ".join(missing), "missing_secrets"
+            )
+
+    def firmware_update_lock(self, configuration):
+        lock = self.firmware_update_locks.get(configuration)
+        if lock is None:
+            lock = asyncio.Lock()
+            self.firmware_update_locks[configuration] = lock
+        return lock
+
+    def audit_firmware_event(self, event_type, reader_id, configuration):
+        self.registry.add_event(
+            event_type, detail=f"reader={reader_id}; configuration={configuration}",
+            source="firmware_update",
+        )
+
+    async def prepare_reader_firmware_update(self, request):
+        self.require_admin_request(request)
+        reader_id = str(request.match_info["reader_id"])
+        try:
+            preflight = await self.canonical_reader_firmware_preflight(reader_id)
+        except (TypeError, ValueError) as error:
+            raise web.HTTPConflict(text=str(error))
+        except DeviceBuilderError as error:
+            return self.device_builder_response(error)
+        self.audit_firmware_event("firmware_update_prepared", reader_id, preflight["configuration"])
+        return web.json_response(self.public_firmware_prepare(preflight))
+
+    async def restore_firmware_yaml(self, client, configuration, original, reader_id):
+        try:
+            await client.command(
+                "devices/update_config",
+                {"configuration": configuration, "content": original, "allow_wipe": False},
+            )
+            self.audit_firmware_event("firmware_rollback_completed", reader_id, configuration)
+            return True
+        except DeviceBuilderError:
+            self.audit_firmware_event("firmware_rollback_failed", reader_id, configuration)
+            return False
+
+    async def apply_reader_firmware_update(self, request):
+        self.require_admin_request(request)
+        reader_id = str(request.match_info["reader_id"])
+        payload = await request.json()
+        expected_hash = str(payload.get("expected_config_sha256") or "")
+        if not re.fullmatch(r"[a-f0-9]{64}", expected_hash):
+            raise web.HTTPBadRequest(text="expected_config_sha256 is required")
+        try:
+            initial = await self.canonical_reader_firmware_preflight(reader_id)
+        except (TypeError, ValueError) as error:
+            raise web.HTTPConflict(text=str(error))
+        except DeviceBuilderError as error:
+            return self.device_builder_response(error)
+        if initial["config_sha256"] != expected_hash:
+            raise web.HTTPConflict(text="The canonical Device Builder YAML changed; prepare the update again")
+        if initial["update_state"] in {"custom_ref", "newer_than_supported"}:
+            raise web.HTTPConflict(text="This reader uses a protected custom or newer firmware ref")
+        lock = self.firmware_update_lock(initial["configuration"])
+        if lock.locked():
+            raise web.HTTPConflict(text="A firmware update is already running for this configuration")
+        async with lock:
+            try:
+                preflight = await self.canonical_reader_firmware_preflight(reader_id)
+            except (TypeError, ValueError) as error:
+                raise web.HTTPConflict(text=str(error))
+            except DeviceBuilderError as error:
+                return self.device_builder_response(error)
+            if preflight["config_sha256"] != expected_hash:
+                raise web.HTTPConflict(text="The canonical Device Builder YAML changed; prepare the update again")
+            client = self.device_builder_client()
+            try:
+                await self.ensure_reader_firmware_secrets(
+                    client, preflight["configuration"], preflight["secret_keys"]
                 )
-            payload.update(firmware)
-        class FirmwareUpdateRequest:
-            headers = {"X-Fingerprint-Admin": "1"}
+            except DeviceBuilderError as error:
+                return self.device_builder_response(error)
+            changed = preflight["current_ref"] != READER_FIRMWARE_REF
+            if changed:
+                try:
+                    await client.command(
+                        "devices/update_config",
+                        {
+                            "configuration": preflight["configuration"],
+                            "content": preflight["patched_content"],
+                            "allow_wipe": False,
+                        },
+                    )
+                except DeviceBuilderError as error:
+                    return self.device_builder_response(error)
+            self.audit_firmware_event("firmware_update_started", reader_id, preflight["configuration"])
+            try:
+                validation = await client.command(
+                    "devices/validate", {"configuration": preflight["configuration"]}
+                )
+                if isinstance(validation, Mapping) and validation.get("success") is False:
+                    raise DeviceBuilderError("Device Builder rejected the updated YAML", "validation_failed")
+            except DeviceBuilderError as error:
+                if changed:
+                    await self.restore_firmware_yaml(client, preflight["configuration"], preflight["content"], reader_id)
+                self.audit_firmware_event("firmware_validation_failed", reader_id, preflight["configuration"])
+                return web.json_response(
+                    {"ok": False, "error": str(error), "code": "validation_failed"}, status=422
+                )
+            try:
+                remote_result = await client.command(
+                    "firmware/install", {"configuration": preflight["configuration"], "port": "OTA"}
+                )
+                remote_job_id = self.remote_job_id(remote_result)
+            except DeviceBuilderError as error:
+                if changed:
+                    await self.restore_firmware_yaml(client, preflight["configuration"], preflight["content"], reader_id)
+                self.audit_firmware_event("firmware_compile_failed", reader_id, preflight["configuration"])
+                return self.device_builder_response(error)
+            operation_id = secrets.token_urlsafe(9)
+            operation = self.registry.create_firmware_operation(
+                operation_id, preflight["configuration"], True, reader_id, remote_job_id,
+                READER_FIRMWARE_VERSION, "managed_update",
+            )
+            self.firmware_original_configs[operation_id] = {
+                "content": preflight["content"], "changed": changed,
+                "reader_id": reader_id, "configuration": preflight["configuration"],
+            }
+            self.start_firmware_follow(operation_id)
+            return web.json_response(operation)
 
-            async def json(self):
-                return payload
-
-        return await self.build_esphome_firmware(FirmwareUpdateRequest())
+    async def update_reader_firmware(self, request):
+        self.require_admin_request(request)
+        raise web.HTTPGone(
+            text="Prepare the firmware update first; this endpoint no longer replaces canonical YAML files"
+        )
 
     async def firmware_job(self, request):
         self.require_admin_request(request)
@@ -6355,6 +7065,9 @@ class FingerprintAdmin:
         app.router.add_post(
             "/api/esphome/connection/test", self.test_esphome_connection
         )
+        app.router.add_post(
+            "/api/esphome/local/start", self.start_local_device_builder
+        )
         app.router.add_get(
             "/api/esphome/devices", self.list_esphome_devices
         )
@@ -6363,6 +7076,12 @@ class FingerprintAdmin:
         )
         app.router.add_post("/api/esphome/build", self.build_esphome_firmware)
         app.router.add_get("/api/esphome/jobs/{job_id}", self.firmware_job)
+        app.router.add_post(
+            "/api/readers/{reader_id}/firmware/prepare", self.prepare_reader_firmware_update
+        )
+        app.router.add_post(
+            "/api/readers/{reader_id}/firmware/apply", self.apply_reader_firmware_update
+        )
         app.router.add_post(
             "/api/readers/{reader_id}/firmware/update", self.update_reader_firmware)
         app.router.add_post("/api/readers", self.create_reader)

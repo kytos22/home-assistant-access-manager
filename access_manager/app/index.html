@@ -426,14 +426,22 @@
       </div>
     </section>
     <section class="card infrastructure">
-      <div class="section-head"><h2 data-i18n="device_builder_connection">ESPHome Device Builder connection</h2><span id="esphome-connection-status" class="status">—</span></div>
-      <p class="hint" data-i18n="device_builder_connection_hint">Connect to the existing Device Builder API. Access Manager does not include an ESPHome compiler.</p>
-      <div class="config-grid">
-        <div><label for="esphome-base-url" data-i18n="device_builder_url">Device Builder URL</label><input id="esphome-base-url" type="url" placeholder="http://homeassistant.local:6052"></div>
-        <div><label for="esphome-token" data-i18n="device_builder_token">Bearer token</label><input id="esphome-token" type="password" autocomplete="new-password" placeholder="••••••••"></div>
-      </div>
-      <div class="actions"><button id="save-esphome-connection" type="button" data-i18n="connect">Connect</button><button id="test-esphome-connection" class="secondary" type="button" data-i18n="test_connection">Test connection</button><button id="delete-esphome-connection" class="danger" type="button" data-i18n="disconnect">Disconnect</button></div>
+      <div class="section-head"><h2 data-i18n="device_builder_connection">ESPHome Device Builder</h2><span id="esphome-connection-status" class="status">—</span></div>
+      <p class="hint" data-i18n="device_builder_connection_hint">Access Manager automatically uses the ESPHome Device Builder installed in this Home Assistant system. It never includes an ESPHome compiler.</p>
+      <div id="esphome-local-detail" class="entity"></div>
+      <div class="actions"><button id="reconnect-local-esphome" type="button" data-i18n="reconnect">Reconnect</button><button id="start-local-esphome" class="secondary" type="button" hidden data-i18n="start_device_builder">Start Device Builder</button></div>
       <pre id="esphome-connection-result" class="generated-config" hidden></pre>
+      <details class="advanced-settings">
+        <summary data-i18n="external_device_builder">Advanced configuration → External Device Builder</summary>
+        <p class="hint" data-i18n="external_device_builder_hint">Use this only when Device Builder runs on another host. Passwords are used once to obtain a token and are never saved.</p>
+        <div class="config-grid">
+          <div><label for="esphome-base-url" data-i18n="device_builder_url">Device Builder URL</label><input id="esphome-base-url" type="url" placeholder="https://builder.example"></div>
+          <div><label for="esphome-username" data-i18n="device_builder_username">Username</label><input id="esphome-username" autocomplete="username"></div>
+          <div><label for="esphome-password" data-i18n="device_builder_password">Password</label><input id="esphome-password" type="password" autocomplete="current-password"></div>
+          <div><label for="esphome-token" data-i18n="device_builder_token">Existing token (expert)</label><input id="esphome-token" type="password" autocomplete="off"></div>
+        </div>
+        <div class="actions"><button id="save-esphome-connection" type="button" data-i18n="connect_external">Connect external Device Builder</button><button id="test-esphome-connection" class="secondary" type="button" data-i18n="test_connection">Test connection</button><button id="delete-esphome-connection" class="danger" type="button" data-i18n="disconnect">Use local automatic connection</button></div>
+      </details>
     </section>
     <section class="card infrastructure">
       <div class="section-head"><h2 data-i18n="esphome_configurator">ESPHome reader configurator</h2><span id="esphome-firmware-version" class="status">v…</span></div>
@@ -646,7 +654,7 @@
 <script>
 (() => {
   const $ = selector => document.querySelector(selector);
-  const PANEL_BUILD_VERSION = "0.14.0";
+  const PANEL_BUILD_VERSION = "0.14.1";
   let data = null;
   let busy = false;
   let refreshPromise = null;
@@ -728,13 +736,13 @@
       raw_action:"Keypad action", mapped_action:"Door action", ignore:"Ignore", enabled:"Enabled", disabled:"Disabled", internal_id:"Internal ID", save_changes:"Save changes",
       confirm:"Confirm", important_warning:"Important warning", test_warning:"This sends a real command to {door}. Check the selected action before confirming.",
       confirm_action:"CONFIRM {action}", edit_keypad:"Edit keypad", edit_fingerprint_reader:"Edit fingerprint reader", add_person_title:"Add user", edit_person_title:"Edit user",
-      link_person:"Home Assistant person", create_new_person:"Create a new Home Assistant Person", reader_settings:"Reader settings", entity_settings:"Home Assistant entities", firmware:"Firmware", firmware_current:"Up to date", firmware_update:"Update available", firmware_unknown:"Not reported", firmware_not_configured:"Not configured",
+      link_person:"Home Assistant person", create_new_person:"Create a new Home Assistant Person", reader_settings:"Reader settings", entity_settings:"Home Assistant entities", firmware:"Firmware", firmware_current:"Up to date", firmware_update:"Update available", firmware_unknown:"Not reported", firmware_not_configured:"Not configured", firmware_newer_than_supported:"Newer than this Access Manager release", firmware_custom_ref:"Custom firmware ref", firmware_recompile:"Recompile firmware", firmware_prepare_warning:"Only the managed package reference will change. The device YAML, board, secrets, and custom settings are preserved.", firmware_changed_lines:"Planned change", firmware_waiting:"Waiting for reader reconnection", firmware_version_not_confirmed:"OTA completed; version not confirmed", firmware_device_did_not_reconnect:"OTA completed; reader did not reconnect in time",
       esphome_configurator:"ESPHome reader configurator", esphome_config_hint:"This creates a small package wrapper. ESPHome downloads the complete pinned firmware, compiles it, and installs it; Access Manager never compiles firmware or receives credentials.", installation_mode:"Installation", new_device:"New device", existing_device:"Update existing device", hardware_profile:"Hardware profile", reader_only:"Fingerprint reader only", reader_display:"Waveshare reader and display", device_name:"Device name", friendly_name:"Friendly name", wifi_ssid_secret:"Wi-Fi SSID secret key", wifi_password_secret:"Wi-Fi password secret key", api_encryption_key_secret:"API encryption secret key", ota_password_secret:"OTA password secret key", esp32_board:"ESP32 board ID", uart_tx_pin:"Reader UART TX pin", uart_rx_pin:"Reader UART RX pin", generate_config:"Generate configuration", copy:"Copy", download_yaml:"Download YAML", copied:"Configuration copied", setup_new_title:"New device setup", setup_new_1:"Download the generated YAML and choose Import from File in ESPHome Device Builder.", setup_new_2:"Confirm that the secret key names above exist in ESPHome secrets.yaml, then validate the configuration.", setup_new_3:"Use Install. The first flash normally needs USB; later updates can use OTA.", setup_existing_title:"Existing device update", setup_existing_1:"Back up the current YAML and use exactly the same device name.", setup_existing_2:"Enter the existing Wi-Fi, API-encryption, and OTA secret key names without changing their values.", setup_existing_3:"Replace the YAML with the generated wrapper, validate it, and install wirelessly only after validation succeeds.", setup_credentials:"Only secret key names are configured here. Their values stay exclusively in ESPHome.", source_access_manager:"Access Manager", source_external:"External / Home Assistant", transition:"Transition",
       reader_type:"Reader type", reader_display_type:"Display + sensor", reader_sensor_type:"Sensor only", display_language:"Display language",
       prompt_display_language_entity:"Display language select entity (display readers):", reader_display_language_changed:"Display language changed",
-      build_in_esphome:"Create and compile in ESPHome", update_firmware:"Update firmware", update_firmware_title:"Update reader firmware?", update_firmware_warning:"ESPHome will compile the managed configuration and install it over Wi-Fi. Do not disconnect power during installation.",
-      firmware_step:"Firmware", firmware_queued:"Queued", firmware_saving:"Saving configuration", firmware_compiling:"Compiling", firmware_installing:"Installing OTA", firmware_completed:"Completed", firmware_failed:"Failed", firmware_cancelled:"Cancelled",
-      esphome_direct_hint:"Create and compile a managed configuration through the existing ESPHome Device Builder. Secret values remain only in ESPHome.", device_builder_connection:"ESPHome Device Builder connection", device_builder_connection_hint:"Connect to the existing Device Builder API. Access Manager does not include an ESPHome compiler.", device_builder_url:"Device Builder URL", device_builder_token:"Bearer token", connect:"Connect", disconnect:"Disconnect", test_connection:"Test connection", connection_ready:"Connected", connection_missing:"Not connected", connection_ok:"Connection successful", configuration_file:"Configuration file", linked_reader:"Linked reader", none:"None", exact_overwrite_title:"Confirm configuration", exact_overwrite_warning:"Device Builder will replace exactly {configuration}. Its version history must be enabled before Access Manager allows this operation.", create_configuration_warning:"Device Builder will create {configuration} and compile it. The first installation still requires the normal USB workflow.", confirm_and_build:"Confirm and compile",
+      build_in_esphome:"Create and compile in ESPHome", update_firmware:"Update firmware", update_firmware_title:"Update reader firmware?", update_firmware_warning:"ESPHome will compile the canonical device YAML and install it over Wi-Fi. Do not disconnect power during installation.", reconnect:"Reconnect", start_device_builder:"Start Device Builder", external_device_builder:"Advanced configuration → External Device Builder", external_device_builder_hint:"Use this only when Device Builder runs on another host. Passwords are used once to obtain a token and are never saved.", device_builder_username:"Username", device_builder_password:"Password", connect_external:"Connect external Device Builder", detecting:"Detecting", not_installed:"Not installed", stopped:"Stopped", starting:"Starting", ingress_unavailable:"Ingress unavailable", incompatible:"Incompatible", connection_error:"Error",
+      firmware_step:"Firmware", firmware_queued:"Queued", firmware_saving:"Saving configuration", firmware_compiling:"Compiling", firmware_installing:"Installing OTA", firmware_completed:"Completed", firmware_completed_waiting_for_device:"Waiting for reader reconnection", firmware_completed_verified:"Completed and verified", firmware_version_not_confirmed:"OTA completed; version not confirmed", firmware_device_did_not_reconnect:"OTA completed; reader did not reconnect in time", firmware_compile_failed:"Compile failed", firmware_upload_failed:"OTA upload failed", firmware_validation_failed:"Validation failed", firmware_failed:"Failed", firmware_cancelled:"Cancelled",
+      esphome_direct_hint:"Create and compile a managed configuration through the existing ESPHome Device Builder. Secret values remain only in ESPHome.", device_builder_connection:"ESPHome Device Builder", device_builder_connection_hint:"Access Manager automatically uses the ESPHome Device Builder installed in this Home Assistant system. It never includes an ESPHome compiler.", device_builder_url:"Device Builder URL", device_builder_token:"Existing token (expert)", connect:"Connect", disconnect:"Use local automatic connection", test_connection:"Test connection", connection_ready:"Connected", connection_missing:"Not connected", connection_ok:"Connection successful", configuration_file:"Configuration file", linked_reader:"Linked reader", none:"None", exact_overwrite_title:"Confirm configuration", exact_overwrite_warning:"Device Builder will replace exactly {configuration}. Its version history must be enabled before Access Manager allows this operation.", create_configuration_warning:"Device Builder will create {configuration} and compile it. The first installation still requires the normal USB workflow.", confirm_and_build:"Confirm and compile",
       left_thumb:"Left thumb", left_index:"Left index", left_middle:"Left middle", left_ring:"Left ring", left_pinky:"Left little finger",
       right_thumb:"Right thumb", right_index:"Right index", right_middle:"Right middle", right_ring:"Right ring", right_pinky:"Right little finger",
       left_hand:"LEFT HAND", right_hand:"RIGHT HAND"
@@ -802,13 +810,13 @@
       raw_action:"Acción del keypad", mapped_action:"Acción de puerta", ignore:"Ignorar", enabled:"Activado", disabled:"Desactivado", internal_id:"ID interno", save_changes:"Guardar cambios",
       confirm:"Confirmar", important_warning:"Aviso importante", test_warning:"Esto enviará una orden real a {door}. Comprueba la acción seleccionada antes de confirmar.",
       confirm_action:"CONFIRMAR {action}", edit_keypad:"Editar keypad", edit_fingerprint_reader:"Editar lector de huellas", add_person_title:"Añadir usuario", edit_person_title:"Editar usuario",
-      link_person:"Persona de Home Assistant", create_new_person:"Crear una nueva persona en Home Assistant", reader_settings:"Configuración del lector", entity_settings:"Entidades de Home Assistant", firmware:"Firmware", firmware_current:"Actualizado", firmware_update:"Actualización disponible", firmware_unknown:"Sin informar", firmware_not_configured:"Sin configurar",
+      link_person:"Persona de Home Assistant", create_new_person:"Crear una nueva persona en Home Assistant", reader_settings:"Configuración del lector", entity_settings:"Entidades de Home Assistant", firmware:"Firmware", firmware_current:"Actualizado", firmware_update:"Actualización disponible", firmware_unknown:"Sin informar", firmware_not_configured:"Sin configurar", firmware_newer_than_supported:"Más reciente que esta versión de Access Manager", firmware_custom_ref:"Referencia de firmware personalizada", firmware_recompile:"Recompilar firmware", firmware_prepare_warning:"Solo cambiará la referencia del paquete gestionado. Se conservan el YAML, placa, secretos y ajustes personalizados.", firmware_changed_lines:"Cambio previsto", firmware_waiting:"Esperando la reconexión del lector", firmware_version_not_confirmed:"OTA completada; versión sin confirmar", firmware_device_did_not_reconnect:"OTA completada; el lector no se reconectó a tiempo",
       esphome_configurator:"Configurador de lector ESPHome", esphome_config_hint:"Esto crea un pequeño envoltorio de paquete. ESPHome descarga el firmware completo fijado, lo compila y lo instala; Access Manager nunca compila firmware ni recibe credenciales.", installation_mode:"Instalación", new_device:"Dispositivo nuevo", existing_device:"Actualizar dispositivo existente", hardware_profile:"Perfil de hardware", reader_only:"Solo lector de huellas", reader_display:"Lector y pantalla Waveshare", device_name:"Nombre del dispositivo", friendly_name:"Nombre visible", wifi_ssid_secret:"Clave secreta del SSID Wi-Fi", wifi_password_secret:"Clave secreta de la contraseña Wi-Fi", api_encryption_key_secret:"Clave secreta del cifrado API", ota_password_secret:"Clave secreta de la contraseña OTA", esp32_board:"ID de placa ESP32", uart_tx_pin:"Pin TX UART del lector", uart_rx_pin:"Pin RX UART del lector", generate_config:"Generar configuración", copy:"Copiar", download_yaml:"Descargar YAML", copied:"Configuración copiada", setup_new_title:"Configuración de un dispositivo nuevo", setup_new_1:"Descarga el YAML generado y elige Importar desde archivo en ESPHome Device Builder.", setup_new_2:"Confirma que los nombres de las claves indicados arriba existen en secrets.yaml de ESPHome y valida la configuración.", setup_new_3:"Pulsa Instalar. La primera carga normalmente requiere USB; las posteriores pueden hacerse por OTA.", setup_existing_title:"Actualización de un dispositivo existente", setup_existing_1:"Haz una copia del YAML actual y utiliza exactamente el mismo nombre de dispositivo.", setup_existing_2:"Introduce los nombres existentes de las claves Wi-Fi, cifrado API y OTA sin cambiar sus valores.", setup_existing_3:"Sustituye el YAML por el envoltorio generado, valídalo e instálalo por Wi-Fi únicamente cuando la validación termine correctamente.", setup_credentials:"Aquí solo se configuran nombres de claves secretas. Sus valores permanecen exclusivamente en ESPHome.", source_access_manager:"Access Manager", source_external:"Externo / Home Assistant", transition:"Transición",
       reader_type:"Tipo de lector", reader_display_type:"Pantalla + sensor", reader_sensor_type:"Solo sensor", display_language:"Idioma del display",
       prompt_display_language_entity:"Entidad select del idioma del display (lectores con pantalla):", reader_display_language_changed:"Idioma del display cambiado",
-      build_in_esphome:"Crear y compilar en ESPHome", update_firmware:"Actualizar firmware", update_firmware_title:"¿Actualizar el firmware del lector?", update_firmware_warning:"ESPHome compilará la configuración gestionada y la instalará por Wi-Fi. No desconectes la alimentación durante la instalación.",
-      firmware_step:"Firmware", firmware_queued:"En cola", firmware_saving:"Guardando configuración", firmware_compiling:"Compilando", firmware_installing:"Instalando por OTA", firmware_completed:"Completado", firmware_failed:"Fallido", firmware_cancelled:"Cancelado",
-      esphome_direct_hint:"Crea y compila una configuración gestionada mediante el ESPHome Device Builder existente. Los secretos permanecen únicamente en ESPHome.", device_builder_connection:"Conexión con ESPHome Device Builder", device_builder_connection_hint:"Conecta con la API del Device Builder existente. Access Manager no incluye un compilador ESPHome.", device_builder_url:"URL de Device Builder", device_builder_token:"Token Bearer", connect:"Conectar", disconnect:"Desconectar", test_connection:"Probar conexión", connection_ready:"Conectado", connection_missing:"Sin conectar", connection_ok:"Conexión correcta", configuration_file:"Archivo de configuración", linked_reader:"Lector vinculado", none:"Ninguno", exact_overwrite_title:"Confirmar configuración", exact_overwrite_warning:"Device Builder sustituirá exactamente {configuration}. Su historial de versiones debe estar activado antes de que Access Manager permita esta operación.", create_configuration_warning:"Device Builder creará {configuration} y lo compilará. La primera instalación sigue requiriendo el flujo USB habitual.", confirm_and_build:"Confirmar y compilar",
+      build_in_esphome:"Crear y compilar en ESPHome", update_firmware:"Actualizar firmware", update_firmware_title:"¿Actualizar el firmware del lector?", update_firmware_warning:"ESPHome compilará el YAML canónico del dispositivo y lo instalará por Wi-Fi. No desconectes la alimentación durante la instalación.", reconnect:"Reconectar", start_device_builder:"Iniciar Device Builder", external_device_builder:"Configuración avanzada → Device Builder externo", external_device_builder_hint:"Úsalo solo si Device Builder está en otro equipo. La contraseña se usa una vez para obtener un token y nunca se guarda.", device_builder_username:"Usuario", device_builder_password:"Contraseña", connect_external:"Conectar Device Builder externo", detecting:"Detectando", not_installed:"No instalado", stopped:"Detenido", starting:"Iniciando", ingress_unavailable:"Ingress no disponible", incompatible:"Incompatible", connection_error:"Error",
+      firmware_step:"Firmware", firmware_queued:"En cola", firmware_saving:"Guardando configuración", firmware_compiling:"Compilando", firmware_installing:"Instalando por OTA", firmware_completed:"Completado", firmware_completed_waiting_for_device:"Esperando la reconexión del lector", firmware_completed_verified:"Completado y verificado", firmware_version_not_confirmed:"OTA completada; versión sin confirmar", firmware_device_did_not_reconnect:"OTA completada; el lector no se reconectó a tiempo", firmware_compile_failed:"Compilación fallida", firmware_upload_failed:"Carga OTA fallida", firmware_validation_failed:"Validación fallida", firmware_failed:"Fallido", firmware_cancelled:"Cancelado",
+      esphome_direct_hint:"Crea y compila una configuración gestionada mediante el ESPHome Device Builder existente. Los secretos permanecen únicamente en ESPHome.", device_builder_connection:"ESPHome Device Builder", device_builder_connection_hint:"Access Manager usa automáticamente el ESPHome Device Builder instalado en este Home Assistant. Nunca incluye un compilador ESPHome.", device_builder_url:"URL de Device Builder", device_builder_token:"Token existente (experto)", connect:"Conectar", disconnect:"Usar conexión local automática", test_connection:"Probar conexión", connection_ready:"Conectado", connection_missing:"Sin conectar", connection_ok:"Conexión correcta", configuration_file:"Archivo de configuración", linked_reader:"Lector vinculado", none:"Ninguno", exact_overwrite_title:"Confirmar configuración", exact_overwrite_warning:"Device Builder sustituirá exactamente {configuration}. Su historial de versiones debe estar activado antes de que Access Manager permita esta operación.", create_configuration_warning:"Device Builder creará {configuration} y lo compilará. La primera instalación sigue requiriendo el flujo USB habitual.", confirm_and_build:"Confirmar y compilar",
       left_thumb:"Pulgar izquierdo", left_index:"Índice izquierdo", left_middle:"Corazón izquierdo", left_ring:"Anular izquierdo", left_pinky:"Meñique izquierdo",
       right_thumb:"Pulgar derecho", right_index:"Índice derecho", right_middle:"Corazón derecho", right_ring:"Anular derecho", right_pinky:"Meñique derecho",
       left_hand:"MANO IZQUIERDA", right_hand:"MANO DERECHA"
@@ -1012,32 +1020,39 @@
     $("#fingerprint-reader-summary").textContent = selected ? t("reader_summary", {count:selected.fingerprint_count ?? "—", capacity:selected.capacity ?? 50, status:statusLabel(selected.availability)}) : t("choose_reader");
     $("#fingerprint-readers-body").innerHTML = readers.length ? readers.map(reader => {
       const current=reader.firmware_version, latest=reader.latest_firmware_version;
-      const needsUpdate=Boolean(current&&latest&&olderVersion(current,latest));
+      const updateState=reader.firmware_update_state||(!current?"unknown":olderVersion(current,latest)?"update_available":"up_to_date");
+      const needsUpdate=updateState==="update_available";
       const firmwareConfigured=Boolean(reader.config?.firmware_version_entity);
-      const firmwareState=!firmwareConfigured?t("firmware_not_configured"):!current?t("firmware_unknown"):needsUpdate?t("firmware_update"):t("firmware_current");
-      const firmwareClass=!current||needsUpdate?"pending":"";
+      const firmwareState=!firmwareConfigured?t("firmware_not_configured"):updateState==="up_to_date"?t("firmware_current"):updateState==="update_available"?t("firmware_update"):t(`firmware_${updateState}`);
+      const firmwareClass=["unknown","update_available","newer_than_supported","custom_ref"].includes(updateState)?"pending":"";
       const displayReader=reader.hardware_profile==="display";
       const typeLabel=t(displayReader?"reader_display_type":"reader_sensor_type");
       const languageControl=displayReader&&(reader.config?.display_language_entity||reader.display_language)
         ? `<select aria-label="${esc(t("display_language"))}" onchange="setReaderDisplayLanguage('${reader.id}',this.value)"><option value="en" ${reader.display_language!=="Español"?"selected":""}>English</option><option value="es" ${reader.display_language==="Español"?"selected":""}>Español</option></select>`
         : "";
       const canUpdate=data.esphome_configured&&Boolean(reader.config?.esphome_configuration)&&(displayReader||Boolean(reader.config?.firmware_config));
-      return `<tr><td><strong>${esc(reader.id)}</strong></td><td>${esc(reader.name)}</td><td><strong>${esc(typeLabel)}</strong>${languageControl}</td><td><select onchange="associateReader('${reader.id}',this.value)">${doorOptions(reader.door_id)}</select></td><td><strong>${esc(current||"—")}</strong><div><span class="status ${firmwareClass}">${esc(firmwareState)}</span></div>${latest&&needsUpdate?`<span class="entity">${esc(latest)}</span>`:""}</td><td><span class="status ${reader.availability === "available" ? "" : "deleting"}">${statusLabel(reader.availability)}</span></td><td class="actions-cell">${canUpdate?`<button onclick="updateReaderFirmware('${reader.id}')">${t("update_firmware")}</button>`:""}<button class="secondary" onclick="editReader('${reader.id}')">${t("edit")}</button></td></tr>`;
+      const firmwareAction=canUpdate&&needsUpdate?`<button onclick="updateReaderFirmware('${reader.id}')">${t("update_firmware")}</button>`:canUpdate&&updateState==="unknown"?`<button class="secondary" onclick="updateReaderFirmware('${reader.id}')">${t("firmware_recompile")}</button>`:"";
+      return `<tr><td><strong>${esc(reader.id)}</strong></td><td>${esc(reader.name)}</td><td><strong>${esc(typeLabel)}</strong>${languageControl}</td><td><select onchange="associateReader('${reader.id}',this.value)">${doorOptions(reader.door_id)}</select></td><td><strong>${esc(current||"—")}</strong><div><span class="status ${firmwareClass}">${esc(firmwareState)}</span></div>${latest&&needsUpdate?`<span class="entity">${esc(latest)}</span>`:""}</td><td><span class="status ${reader.availability === "available" ? "" : "deleting"}">${statusLabel(reader.availability)}</span></td><td class="actions-cell">${firmwareAction}<button class="secondary" onclick="editReader('${reader.id}')">${t("edit")}</button></td></tr>`;
     }).join("") : `<tr><td colspan="7" class="empty">${t("no_records")}</td></tr>`;
     renderFingerprints();
   }
   window.setReaderDisplayLanguage=async(readerId,language)=>{
     await mutate(`readers/${readerId}/display-language`,"PUT",{language});
   };
-  window.updateReaderFirmware=readerId=>{
+  window.updateReaderFirmware=async readerId=>{
     const reader=(data.access_readers||[]).find(item=>item.id===readerId);
     if(!reader)return;
-    openConfirm({title:t("update_firmware_title"),subtitle:reader.name,message:t("update_firmware_warning"),confirmLabel:t("update_firmware"),onConfirm:async()=>{
+    try{
+      const prepared=await request(`readers/${readerId}/firmware/prepare`,{method:"POST",body:"{}"});
+      if(["custom_ref","newer_than_supported"].includes(prepared.update_state))throw new Error(t(`firmware_${prepared.update_state}`));
+      const changes=(prepared.changed_lines||[]).map(line=>esc(line)).join("\n")||"—";
+      openConfirm({title:t("update_firmware_title"),subtitle:`${reader.name} · ${prepared.configuration}`,message:`${t("firmware_prepare_warning")}\n\n${t("firmware_changed_lines")}:\n${changes}\n\n${t("update_firmware_warning")}`,confirmLabel:t("update_firmware"),onConfirm:async()=>{
       try{
-        const job=await request(`readers/${readerId}/firmware/update`,{method:"POST",body:"{}"});
+        const job=await request(`readers/${readerId}/firmware/apply`,{method:"POST",body:JSON.stringify({expected_config_sha256:prepared.config_sha256})});
         closeConfirm();switchTab("settings");await followFirmwareJob(job);await refresh();
       }catch(error){showError(error.message);}
     }});
+    }catch(error){showError(error.message);}
   };
 
 
@@ -1182,13 +1197,18 @@
     $("#privacy-toggle").className = privacyMode ? "danger" : "secondary";
     $("#esphome-firmware-version").textContent=`v${data.reader_firmware_version||"—"}`;
     const connection=data.esphome_connection||{};
-    $("#esphome-connection-status").textContent=t(connection.configured?"connection_ready":"connection_missing");
-    $("#esphome-connection-status").className=`status ${connection.status==="error"?"deleting":""}`;
+    const localMode=connection.mode!=="external";
+    const connectionStatus=connection.status||(connection.configured?"detecting":"connection_missing");
+    $("#esphome-connection-status").textContent=t(connectionStatus==="connected"?"connection_ready":connectionStatus);
+    $("#esphome-connection-status").className=`status ${["error","not_installed","stopped","ingress_unavailable","incompatible"].includes(connectionStatus)?"deleting":""}`;
+    $("#esphome-local-detail").textContent=localMode?(connection.addon?`${connection.addon}${connection.esphome_version?` · ESPHome ${connection.esphome_version}`:""}`:t("device_builder_connection_hint")):t("external_device_builder");
+    $("#reconnect-local-esphome").hidden=!localMode;
+    $("#start-local-esphome").hidden=connectionStatus!=="stopped";
     if(!$("#esphome-base-url").dataset.edited)$("#esphome-base-url").value=connection.base_url||"";
     $("#esphome-token").placeholder=connection.token_configured?"••••••••":"";
     const savedSecretKeys=data.esphome_secret_keys||{};
     [["esphome-wifi-ssid-secret","wifi_ssid_secret","wifi_ssid"],["esphome-wifi-password-secret","wifi_password_secret","wifi_password"],["esphome-api-key-secret","api_encryption_key_secret","api_encryption_key"],["esphome-ota-password-secret","ota_password_secret","ota_password"]].forEach(([id,key,fallback])=>{const input=$("#"+id);if(!input.dataset.edited)input.value=savedSecretKeys[key]||fallback;});
-    $("#delete-esphome-connection").disabled=!connection.configured;
+    $("#delete-esphome-connection").disabled=!connection.configured||localMode;
     $("#esphome-configurations").innerHTML=(data.esphome_devices||[]).map(device=>`<option value="${esc(device.configuration)}">${esc(device.name||device.configuration)}</option>`).join("");
     const currentReader=$("#esphome-reader-link").value;
     $("#esphome-reader-link").innerHTML=`<option value="">${t("none")}</option>${(data.access_readers||[]).filter(reader=>reader.reader_type==="fingerprint").map(reader=>`<option value="${esc(reader.id)}" ${reader.id===currentReader?"selected":""}>${esc(reader.name)} · ${esc(reader.id)}</option>`).join("")}`;
@@ -1237,14 +1257,14 @@
 
   async function followFirmwareJob(job){
     const output=$("#esphome-job-status");output.hidden=false;
-    while(job&&!["completed","failed","cancelled"].includes(job.status)){
+    while(job&&!["completed","completed_verified","version_not_confirmed","device_did_not_reconnect","compile_failed","upload_failed","validation_failed","failed","cancelled"].includes(job.status)){
       output.textContent=`${t("firmware_step")}: ${t(`firmware_${job.step}`)}\n${(job.logs||[]).slice(-12).join("\n")}`;
       await new Promise(resolve=>setTimeout(resolve,1500));
       job=await request(`esphome/jobs/${job.id}`);
     }
     output.textContent=`${t("firmware_step")}: ${t(`firmware_${job.step}`)}${job.error?`\n${job.error}`:""}\n${(job.logs||[]).slice(-12).join("\n")}`;
     $("#build-esphome").disabled=!data.esphome_configured;
-    if(job.status==="failed")showError(job.error);
+    if(["failed","compile_failed","upload_failed","validation_failed"].includes(job.status))showError(job.error);
     else showError();
     return job;
   }
@@ -1268,7 +1288,7 @@
   }
 
   function esphomeConnectionPayload(){
-    const token=$("#esphome-token").value.trim(),payload={base_url:$("#esphome-base-url").value.trim()};
+    const token=$("#esphome-token").value.trim(),payload={mode:"external",base_url:$("#esphome-base-url").value.trim(),username:$("#esphome-username").value.trim(),password:$("#esphome-password").value};
     if(token)payload.token=token;else if(data.esphome_connection?.token_configured)payload.preserve_token=true;else payload.token="";
     return payload;
   }
@@ -1280,12 +1300,23 @@
   }
 
   async function saveEsphomeConnection(){
-    try{const result=await request("esphome/connection",{method:"PUT",body:JSON.stringify(esphomeConnectionPayload())});data.esphome_connection=result.connection;data.esphome_devices=result.devices||[];data.esphome_configured=true;$("#esphome-token").value="";$("#esphome-base-url").dataset.edited="";renderSettings();showError();}
+    try{const result=await request("esphome/connection",{method:"PUT",body:JSON.stringify(esphomeConnectionPayload())});data.esphome_connection=result.connection;data.esphome_devices=result.devices||[];data.esphome_configured=true;$("#esphome-token").value="";$("#esphome-password").value="";$("#esphome-base-url").dataset.edited="";renderSettings();showError();}
     catch(error){showError(error.message);}
   }
 
   async function deleteEsphomeConnection(){
     try{await request("esphome/connection",{method:"DELETE"});data.esphome_connection={};data.esphome_devices=[];data.esphome_configured=false;$("#esphome-token").value="";$("#esphome-base-url").value="";$("#esphome-base-url").dataset.edited="";renderSettings();showError();}
+    catch(error){showError(error.message);}
+  }
+
+  async function reconnectLocalEsphome(){
+    const output=$("#esphome-connection-result");output.hidden=false;output.textContent="…";
+    try{const result=await request("esphome/connection",{method:"PUT",body:JSON.stringify({mode:"local_ingress"})});data.esphome_connection=result.connection;data.esphome_devices=result.devices||[];data.esphome_configured=true;output.textContent=`${t("connection_ok")} · ${result.devices?.length||0}`;renderSettings();showError();}
+    catch(error){output.textContent=error.message;showError(error.message);}
+  }
+
+  async function startLocalEsphome(){
+    try{const result=await request("esphome/local/start",{method:"POST",body:"{}"});data.esphome_connection={mode:"local_ingress",configured:true,status:result.status};renderSettings();showError();}
     catch(error){showError(error.message);}
   }
 
@@ -1673,10 +1704,13 @@
   $("#esphome-device-name").addEventListener("input",()=>{if($("#esphome-install-mode").value==="new"&&!$("#esphome-configuration").dataset.edited)$("#esphome-configuration").value=`${$("#esphome-device-name").value.trim()}.yaml`;});
   $("#esphome-configuration").addEventListener("input",()=>$("#esphome-configuration").dataset.edited="1");
   $("#esphome-base-url").addEventListener("input",()=>$("#esphome-base-url").dataset.edited="1");
+  $("#esphome-username").addEventListener("input",()=>$("#esphome-username").dataset.edited="1");
   ["#esphome-wifi-ssid-secret","#esphome-wifi-password-secret","#esphome-api-key-secret","#esphome-ota-password-secret"].forEach(id=>$(id).addEventListener("input",event=>event.currentTarget.dataset.edited="1"));
   $("#test-esphome-connection").addEventListener("click",testEsphomeConnection);
   $("#save-esphome-connection").addEventListener("click",saveEsphomeConnection);
   $("#delete-esphome-connection").addEventListener("click",deleteEsphomeConnection);
+  $("#reconnect-local-esphome").addEventListener("click",reconnectLocalEsphome);
+  $("#start-local-esphome").addEventListener("click",startLocalEsphome);
   $("#generate-esphome").addEventListener("click",generateEsphomeConfig);
   $("#build-esphome").addEventListener("click",buildEsphomeFirmware);
   $("#copy-esphome").addEventListener("click",copyEsphomeConfig);
