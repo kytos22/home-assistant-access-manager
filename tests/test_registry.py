@@ -81,7 +81,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.14.3"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.15.0"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
@@ -430,6 +430,93 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(APP.DeviceBuilderError, "stopped"):
             asyncio.run(stopped._discover())
         self.assertEqual(stopped.status["status"], "stopped")
+
+    def test_local_ingress_uses_current_dashboard_http_and_process_api(self):
+        transport = APP.HomeAssistantIngressTransport(object())
+        requests = []
+        processes = []
+
+        async def request(method, path, text_body=None, json_body=None):
+            requests.append((method, path, text_body, json_body))
+            if path == "devices":
+                return {"configured": [{"configuration": "front-reader.yaml"}]}
+            if path == "secret_keys":
+                return ["wifi_ssid2", "wifi_password2"]
+            return "ok"
+
+        async def process(endpoint, spawn_args, on_event=None):
+            processes.append((endpoint, spawn_args))
+            if on_event:
+                callback_result = on_event("output", "ESPHome Dashboard process output\\n")
+                if asyncio.iscoroutine(callback_result):
+                    await callback_result
+            return {
+                "success": True,
+                "status": "completed",
+                "install_completed": endpoint == "run",
+            }
+
+        transport._dashboard_request = request
+        transport._dashboard_process = process
+        client = APP.DeviceBuilderProtocol(transport)
+        events = []
+
+        self.assertEqual(
+            asyncio.run(client.command("devices/list")),
+            {"configured": [{"configuration": "front-reader.yaml"}]},
+        )
+        self.assertEqual(
+            asyncio.run(client.command("config/get_secrets")),
+            ["wifi_ssid2", "wifi_password2"],
+        )
+        self.assertEqual(
+            asyncio.run(client.command(
+                "devices/get_config", {"configuration": "front-reader.yaml"}
+            )),
+            "ok",
+        )
+        self.assertEqual(
+            asyncio.run(client.command(
+                "devices/update_config",
+                {"configuration": "front-reader.yaml", "content": "esphome:\\n  name: front"},
+            )),
+            "ok",
+        )
+        validate = asyncio.run(client.command(
+            "devices/validate", {"configuration": "front-reader.yaml"},
+            on_event=lambda name, data: events.append((name, data)),
+        ))
+        install = asyncio.run(client.command(
+            "firmware/install", {"configuration": "front-reader.yaml"}
+        ))
+        follow = asyncio.run(client.command(
+            "firmware/follow_job", {"job_id": install["job_id"]},
+            on_event=lambda name, data: events.append((name, data)),
+        ))
+
+        self.assertTrue(validate["success"])
+        self.assertTrue(follow["install_completed"])
+        self.assertEqual(
+            requests,
+            [
+                ("GET", "devices", None, None),
+                ("GET", "secret_keys", None, None),
+                ("GET", "edit?configuration=front-reader.yaml", None, None),
+                ("POST", "edit?configuration=front-reader.yaml", "esphome:\\n  name: front", None),
+            ],
+        )
+        self.assertEqual(
+            processes,
+            [
+                ("validate", {"configuration": "front-reader.yaml"}),
+                ("run", {"configuration": "front-reader.yaml", "port": "OTA"}),
+            ],
+        )
+        self.assertEqual(events, [
+            ("output", "ESPHome Dashboard process output\\n"),
+            ("output", "ESPHome Dashboard process output\\n"),
+        ])
+        self.assertEqual(install["job_id"], "dashboard:run:front-reader.yaml")
 
     def test_index_disables_document_caching(self):
         admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
