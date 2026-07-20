@@ -252,7 +252,7 @@ Fingerprint templates remain in the sensor. The **Settings** configurator genera
 
 The shared entity contract and setup sequence are documented in [INTEGRATION.md](INTEGRATION.md). Delivery choices, credential-preservation rules, and recovery guidance are documented in [FIRMWARE_DELIVERY.md](FIRMWARE_DELIVERY.md).
 
-Firmware 0.6.1 exposes ESPHome project metadata, publishes the `Fingerprint reader firmware version` diagnostic sensor during boot, and lets every reader profile map its own ESPHome secret key names. Map the version sensor in the reader editor to see the installed and recommended versions. Compatible display firmware also exposes optional `Access Manager door ID` and `Access Manager display event` text entities. Add both to enable panel feedback. Access Manager synchronizes the assigned door ID and sends only door-matching, credential-free display messages; readers without these entities continue to work without display feedback.
+Firmware 0.6.2 exposes ESPHome project metadata, explicitly publishes the `Fingerprint reader firmware version` diagnostic sensor during every boot, and lets every reader profile map its own ESPHome secret key names. Map the version sensor in the reader editor to see the installed and recommended versions. Compatible display firmware also exposes optional `Access Manager door ID` and `Access Manager display event` text entities. Add both to enable panel feedback. Access Manager synchronizes the assigned door ID and sends only door-matching, credential-free display messages; readers without these entities continue to work without display feedback.
 
 ## Data and backups
 

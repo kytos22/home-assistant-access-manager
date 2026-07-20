@@ -28,6 +28,11 @@
     body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 10% -10%, #17334a, transparent 35%), var(--bg); color: var(--text); }
     main { width: min(1180px, calc(100% - 32px)); min-width: 0; margin: 0 auto; padding: 30px 0 56px; }
     header { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 24px; }
+    .brand p { margin: 6px 0 0; }
+    .repository-docs { display: inline-flex; align-items: center; gap: 9px; margin-top: 14px; padding: 9px 12px; border: 1px solid rgba(114,167,255,.42); border-radius: 11px; background: linear-gradient(135deg, rgba(114,167,255,.14), rgba(70,198,161,.09)); color: #dceaff; font-size: .84rem; font-weight: 650; text-decoration: none; transition: transform .15s ease, border-color .15s ease, background .15s ease; }
+    .repository-docs:hover, .repository-docs:focus-visible { transform: translateY(-1px); border-color: var(--accent-2); background: linear-gradient(135deg, rgba(114,167,255,.22), rgba(70,198,161,.14)); outline: none; }
+    .repository-docs svg { width: 18px; height: 18px; flex: 0 0 auto; }
+    .repository-docs .external-arrow { color: var(--accent-2); font-size: 1rem; }
     h1 { margin: 0; font-size: clamp(1.6rem, 4vw, 2.4rem); letter-spacing: -.04em; }
     h2 { font-size: 1.05rem; margin: 0 0 16px; }
     p { color: var(--muted); }
@@ -69,7 +74,9 @@
     .status.unknown { background: rgba(114,167,255,.13); color: #bad3ff; }
     .status.unlinked { background: rgba(157,176,194,.12); color: #c7d6e2; }
     .person-heading { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-    .person-lifecycle { display: grid; gap: 8px; margin-top: 9px; }
+    .person-lifecycle { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 5px; }
+    .person-lifecycle .entity { display: inline; margin: 0; font-size: .7rem; }
+    .person-link-warning { flex-basis: 100%; color: var(--muted); font-size: .74rem; line-height: 1.3; }
     .person-link-actions { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
     .person-link-actions button { padding: 7px 9px; font-size: .78rem; }
     .deletion-progress { min-width: min(340px, 100%); padding: 12px; border: 1px solid rgba(255,107,114,.35); border-radius: 12px; background: rgba(255,107,114,.08); }
@@ -92,6 +99,22 @@
     .credential { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid rgba(72,99,124,.75); border-radius: 999px; background: rgba(18,31,43,.9); color: #c7d6e2; font-size: .78rem; }
     .credential.keypad { border-color: rgba(114,167,255,.55); color: #bad3ff; }
     .credential button { padding: 0; background: transparent; color: #ff9ca1; font-size: .9rem; }
+    .people-table { table-layout: fixed; }
+    .people-table th:first-child { width: 25%; }
+    .people-table th:nth-child(2) { width: 38%; }
+    .people-table th:last-child { width: 37%; }
+    .people-table td { padding-block: 7px; vertical-align: middle; }
+    .people-table .credential-list { min-width: 0; gap: 4px; }
+    .people-table .credential { padding: 3px 6px; font-size: .72rem; line-height: 1.2; }
+    .person-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
+    .person-primary-actions { display: flex; align-items: center; gap: 5px; }
+    .people-table td.actions-cell button, .person-actions-menu summary { min-height: 32px; margin: 0; padding: 6px 8px; font-size: .75rem; }
+    .person-actions-menu { width: auto; }
+    .person-actions-menu[open] { flex-basis: 100%; }
+    .person-actions-menu summary { display: flex; align-items: center; justify-content: center; width: max-content; margin-left: auto; border-radius: 8px; background: #293b4e; color: var(--text); font-weight: 650; cursor: pointer; list-style: none; user-select: none; }
+    .person-actions-menu summary::-webkit-details-marker { display: none; }
+    .person-actions-menu[open] summary { background: #354b61; }
+    .person-actions-menu-content { display: flex; justify-content: flex-end; gap: 5px; flex-wrap: wrap; margin-top: 6px; padding-top: 6px; border-top: 1px solid rgba(40,57,75,.7); }
     .reader-name { display: flex; align-items: center; gap: 8px; }
     .reader-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--danger); }
     .reader-dot.online { background: var(--accent); }
@@ -109,6 +132,10 @@
     .log-detail .log-source { color: #9dd7ff; border-color: rgba(114,167,255,.4); }
     .config-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 0 14px; }
     .config-grid .wide { grid-column: 1 / -1; }
+    .config-section { margin-top: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(8,15,22,.35); }
+    .config-section h3 { margin: 0 0 5px; }
+    .config-section > .hint { margin: 0 0 10px; }
+    .config-section .actions { margin-bottom: 0; }
     .generated-config { min-height: 270px; margin-top: 12px; resize: vertical; font: .78rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; }
     .muted { color: var(--muted); }
     .empty { padding: 24px 8px; color: var(--muted); text-align: center; }
@@ -226,6 +253,19 @@
       table.responsive-table td.actions-cell::before, table.responsive-table td.empty::before { display: none; }
       table.responsive-table td.actions-cell button { flex: 1 1 140px; margin: 0; }
       table.responsive-table td.empty { display: block; }
+      table.people-table tr { margin-top: 7px; padding: 8px; }
+      table.people-table td { display: block; padding: 5px 0; border-bottom: 0; }
+      table.people-table td::before { display: none; }
+      table.people-table td:nth-child(2) { margin-top: 4px; }
+      table.people-table td.actions-cell { display: block; padding-top: 6px; border-top: 1px solid rgba(40,57,75,.55); }
+      table.people-table td.actions-cell button { flex: 0 1 auto; min-height: 40px; }
+      .person-row-actions, .person-primary-actions { justify-content: flex-start; }
+      .person-primary-actions { width: 100%; }
+      .person-primary-actions button { flex: 1 1 0 !important; }
+      .person-actions-menu { width: 100%; }
+      .person-actions-menu summary { min-height: 40px; margin: 5px 0 0; }
+      .person-actions-menu-content { justify-content: flex-start; }
+      .person-actions-menu-content button { flex: 1 1 130px !important; }
       .modal { place-items: end center; padding: 0; }
       .modal-card { width: 100%; max-height: calc(100dvh - 10px); overflow-x: hidden; overscroll-behavior: contain; border-radius: 20px 20px 0 0; }
       .modal-head { position: sticky; top: 0; z-index: 3; padding: 15px 16px 10px; background: rgba(18,31,44,.98); }
@@ -255,9 +295,14 @@
 <body>
 <main>
   <header>
-    <div>
+    <div class="brand">
       <h1 data-i18n="app_title">Access Manager</h1>
       <p data-i18n="app_subtitle">Users · credentials · readers · doors</p>
+      <a class="repository-docs" href="https://github.com/kytos22/home-assistant-access-manager#readme" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 3h11a3 3 0 0 1 3 3v13.25a.75.75 0 0 1-1.08.67A4.9 4.9 0 0 0 15.5 19H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm0 2v10.17c.31-.11.65-.17 1-.17h9.5c.52 0 1.02.07 1.5.22V6a1 1 0 0 0-1-1H5Zm1 12a1 1 0 0 0 0 2h9.5c.48 0 .96.07 1.5.22V17H6Z"/></svg>
+        <span data-i18n="repository_documentation">Repository documentation</span>
+        <span class="external-arrow" aria-hidden="true">↗</span>
+      </a>
     </div>
     <div class="header-actions">
       <div id="app-version" class="badge" title="Installed version" aria-label="Installed version">v…</div>
@@ -309,7 +354,7 @@
         <button id="add-person" class="secondary" data-i18n="add_user">Add user</button>
       </div>
       <div class="table-wrap">
-        <table>
+        <table class="people-table">
           <thead><tr><th data-i18n="user">User</th><th data-i18n="linked_credentials">Linked credentials</th><th></th></tr></thead>
           <tbody id="people-body"></tbody>
         </table>
@@ -380,6 +425,59 @@
         </table>
       </div>
     </section>
+    <section class="card infrastructure">
+      <div class="section-head"><h2 data-i18n="device_builder_connection">ESPHome Device Builder</h2><span id="esphome-connection-status" class="status">—</span></div>
+      <p class="hint" data-i18n="device_builder_connection_hint">Access Manager automatically uses the ESPHome Device Builder installed in this Home Assistant system. It never includes an ESPHome compiler.</p>
+      <div id="esphome-local-detail" class="entity"></div>
+      <div class="actions"><button id="reconnect-local-esphome" type="button" data-i18n="reconnect">Reconnect</button><button id="start-local-esphome" class="secondary" type="button" hidden data-i18n="start_device_builder">Start Device Builder</button></div>
+      <pre id="esphome-connection-result" class="generated-config" hidden></pre>
+      <details class="advanced-settings">
+        <summary data-i18n="external_device_builder">Advanced configuration → External Device Builder</summary>
+        <p class="hint" data-i18n="external_device_builder_hint">Use this only when Device Builder runs on another host. Passwords are used once to obtain a token and are never saved.</p>
+        <div class="config-grid">
+          <div><label for="esphome-base-url" data-i18n="device_builder_url">Device Builder URL</label><input id="esphome-base-url" type="url" placeholder="https://builder.example"></div>
+          <div><label for="esphome-username" data-i18n="device_builder_username">Username</label><input id="esphome-username" autocomplete="username"></div>
+          <div><label for="esphome-password" data-i18n="device_builder_password">Password</label><input id="esphome-password" type="password" autocomplete="current-password"></div>
+          <div><label for="esphome-token" data-i18n="device_builder_token">Existing token (expert)</label><input id="esphome-token" type="password" autocomplete="off"></div>
+        </div>
+        <div class="actions"><button id="save-esphome-connection" type="button" data-i18n="connect_external">Connect external Device Builder</button><button id="test-esphome-connection" class="secondary" type="button" data-i18n="test_connection">Test connection</button><button id="delete-esphome-connection" class="danger" type="button" data-i18n="disconnect">Use local automatic connection</button></div>
+      </details>
+    </section>
+    <section class="card infrastructure">
+      <div class="section-head"><h2 data-i18n="esphome_configurator">ESPHome reader configurator</h2><span id="esphome-firmware-version" class="status">v…</span></div>
+      <p class="hint" data-i18n="esphome_direct_hint">Create and compile a managed configuration directly in ESPHome. Secret values remain only in ESPHome.</p>
+      <section class="config-section" aria-labelledby="esphome-environment-defaults-title">
+        <h3 id="esphome-environment-defaults-title" data-i18n="environment_defaults">Common environment values</h3>
+        <p class="hint" data-i18n="environment_defaults_hint">These secret-key names can be reused by every reader. Saving them here is optional and never stores the secret values.</p>
+        <div class="config-grid">
+        <div><label for="esphome-wifi-ssid-secret" data-i18n="wifi_ssid_secret">Wi-Fi SSID secret key</label><input id="esphome-wifi-ssid-secret" value="wifi_ssid" maxlength="64" autocomplete="off"></div>
+        <div><label for="esphome-wifi-password-secret" data-i18n="wifi_password_secret">Wi-Fi password secret key</label><input id="esphome-wifi-password-secret" value="wifi_password" maxlength="64" autocomplete="off"></div>
+        <div><label for="esphome-api-key-secret" data-i18n="api_encryption_key_secret">API encryption secret key</label><input id="esphome-api-key-secret" value="api_encryption_key" maxlength="64" autocomplete="off"></div>
+        <div><label for="esphome-ota-password-secret" data-i18n="ota_password_secret">OTA password secret key</label><input id="esphome-ota-password-secret" value="ota_password" maxlength="64" autocomplete="off"></div>
+        </div>
+        <div class="actions"><button id="save-esphome-environment-defaults" class="secondary" type="button" data-i18n="save_environment_defaults">Save for this environment</button></div>
+      </section>
+      <section class="config-section" aria-labelledby="esphome-reader-settings-title">
+        <h3 id="esphome-reader-settings-title" data-i18n="reader_configuration">Reader configuration</h3>
+        <p class="hint" data-i18n="reader_configuration_hint">These values belong to the selected reader and its exact Device Builder YAML.</p>
+        <div class="config-grid">
+        <div><label for="esphome-install-mode" data-i18n="installation_mode">Installation</label><select id="esphome-install-mode"><option value="new" data-i18n="new_device">New device</option><option value="existing" data-i18n="existing_device">Update existing device</option></select></div>
+        <div><label for="esphome-profile" data-i18n="hardware_profile">Hardware profile</label><select id="esphome-profile"><option value="reader_only" data-i18n="reader_only">Fingerprint reader only</option><option value="display" data-i18n="reader_display">Waveshare reader and display</option></select></div>
+        <div><label for="esphome-reader-link" data-i18n="linked_reader">Linked reader</label><select id="esphome-reader-link"><option value="" data-i18n="none">None</option></select></div>
+        <div><label for="esphome-configuration" data-i18n="configuration_file">Configuration file</label><input id="esphome-configuration" value="fingerprint-access-reader.yaml" readonly aria-readonly="true"></div>
+        <div><label for="esphome-device-name" data-i18n="device_name">Device name</label><input id="esphome-device-name" value="fingerprint-access-reader" maxlength="32"></div>
+        <div><label for="esphome-friendly-name" data-i18n="friendly_name">Friendly name</label><input id="esphome-friendly-name" value="Fingerprint Access Reader" maxlength="50"></div>
+        <div class="display-option"><label for="esphome-display-language" data-i18n="display_language">Display language</label><select id="esphome-display-language"><option value="English">English</option><option value="Español">Español</option></select></div>
+        <div class="reader-only-option"><label for="esphome-board" data-i18n="esp32_board">ESP32 board ID</label><input id="esphome-board" value="esp32dev" list="esp32-boards"><datalist id="esp32-boards"><option value="esp32dev"><option value="esp32-c3-devkitm-1"><option value="esp32-s3-devkitc-1"><option value="esp32-c6-devkitc-1"></datalist></div>
+        <div class="reader-only-option"><label for="esphome-tx-pin" data-i18n="uart_tx_pin">Reader UART TX pin</label><input id="esphome-tx-pin" value="GPIO17"></div>
+        <div class="reader-only-option"><label for="esphome-rx-pin" data-i18n="uart_rx_pin">Reader UART RX pin</label><input id="esphome-rx-pin" value="GPIO16"></div>
+        </div>
+      </section>
+      <div id="esphome-setup-guide" class="warning-box"></div>
+      <div class="actions"><button id="build-esphome" type="button" data-i18n="build_in_esphome">Create and compile in ESPHome</button><button id="generate-esphome" class="secondary" type="button" data-i18n="generate_config">Preview configuration</button><button id="copy-esphome" class="secondary" type="button" disabled data-i18n="copy">Copy</button><button id="download-esphome" class="secondary" type="button" disabled data-i18n="download_yaml">Download YAML</button></div>
+      <textarea id="generated-esphome" class="generated-config" readonly hidden aria-label="Generated ESPHome YAML"></textarea>
+      <pre id="esphome-job-status" class="generated-config" hidden></pre>
+    </section>
   </section>
 
   <section id="tab-keypads" class="tab-panel" role="tabpanel">
@@ -424,48 +522,6 @@
         <div><h3 data-i18n="privacy_mode">Privacy mode</h3><p id="privacy-description" class="hint"></p></div>
         <button id="privacy-toggle" class="secondary" type="button"></button>
       </div>
-    </section>
-    <section class="card infrastructure">
-      <div class="section-head"><h2 data-i18n="device_builder_connection">ESPHome Device Builder</h2><span id="esphome-connection-status" class="status">—</span></div>
-      <p class="hint" data-i18n="device_builder_connection_hint">Access Manager automatically uses the ESPHome Device Builder installed in this Home Assistant system. It never includes an ESPHome compiler.</p>
-      <div id="esphome-local-detail" class="entity"></div>
-      <div class="actions"><button id="reconnect-local-esphome" type="button" data-i18n="reconnect">Reconnect</button><button id="start-local-esphome" class="secondary" type="button" hidden data-i18n="start_device_builder">Start Device Builder</button></div>
-      <pre id="esphome-connection-result" class="generated-config" hidden></pre>
-      <details class="advanced-settings">
-        <summary data-i18n="external_device_builder">Advanced configuration → External Device Builder</summary>
-        <p class="hint" data-i18n="external_device_builder_hint">Use this only when Device Builder runs on another host. Passwords are used once to obtain a token and are never saved.</p>
-        <div class="config-grid">
-          <div><label for="esphome-base-url" data-i18n="device_builder_url">Device Builder URL</label><input id="esphome-base-url" type="url" placeholder="https://builder.example"></div>
-          <div><label for="esphome-username" data-i18n="device_builder_username">Username</label><input id="esphome-username" autocomplete="username"></div>
-          <div><label for="esphome-password" data-i18n="device_builder_password">Password</label><input id="esphome-password" type="password" autocomplete="current-password"></div>
-          <div><label for="esphome-token" data-i18n="device_builder_token">Existing token (expert)</label><input id="esphome-token" type="password" autocomplete="off"></div>
-        </div>
-        <div class="actions"><button id="save-esphome-connection" type="button" data-i18n="connect_external">Connect external Device Builder</button><button id="test-esphome-connection" class="secondary" type="button" data-i18n="test_connection">Test connection</button><button id="delete-esphome-connection" class="danger" type="button" data-i18n="disconnect">Use local automatic connection</button></div>
-      </details>
-    </section>
-    <section class="card infrastructure">
-      <div class="section-head"><h2 data-i18n="esphome_configurator">ESPHome reader configurator</h2><span id="esphome-firmware-version" class="status">v…</span></div>
-      <p class="hint" data-i18n="esphome_direct_hint">Create and compile a managed configuration directly in ESPHome. Secret values remain only in ESPHome.</p>
-      <div class="config-grid">
-        <div><label for="esphome-install-mode" data-i18n="installation_mode">Installation</label><select id="esphome-install-mode"><option value="new" data-i18n="new_device">New device</option><option value="existing" data-i18n="existing_device">Update existing device</option></select></div>
-        <div><label for="esphome-profile" data-i18n="hardware_profile">Hardware profile</label><select id="esphome-profile"><option value="reader_only" data-i18n="reader_only">Fingerprint reader only</option><option value="display" data-i18n="reader_display">Waveshare reader and display</option></select></div>
-        <div><label for="esphome-device-name" data-i18n="device_name">Device name</label><input id="esphome-device-name" value="fingerprint-access-reader" maxlength="32"></div>
-        <div><label for="esphome-friendly-name" data-i18n="friendly_name">Friendly name</label><input id="esphome-friendly-name" value="Fingerprint Access Reader" maxlength="50"></div>
-        <div><label for="esphome-wifi-ssid-secret" data-i18n="wifi_ssid_secret">Wi-Fi SSID secret key</label><input id="esphome-wifi-ssid-secret" value="wifi_ssid" maxlength="64" autocomplete="off"></div>
-        <div><label for="esphome-wifi-password-secret" data-i18n="wifi_password_secret">Wi-Fi password secret key</label><input id="esphome-wifi-password-secret" value="wifi_password" maxlength="64" autocomplete="off"></div>
-        <div><label for="esphome-api-key-secret" data-i18n="api_encryption_key_secret">API encryption secret key</label><input id="esphome-api-key-secret" value="api_encryption_key" maxlength="64" autocomplete="off"></div>
-        <div><label for="esphome-ota-password-secret" data-i18n="ota_password_secret">OTA password secret key</label><input id="esphome-ota-password-secret" value="ota_password" maxlength="64" autocomplete="off"></div>
-        <div><label for="esphome-configuration" data-i18n="configuration_file">Configuration file</label><input id="esphome-configuration" value="fingerprint-access-reader.yaml" list="esphome-configurations"><datalist id="esphome-configurations"></datalist></div>
-        <div><label for="esphome-reader-link" data-i18n="linked_reader">Linked reader</label><select id="esphome-reader-link"><option value="" data-i18n="none">None</option></select></div>
-        <div class="display-option"><label for="esphome-display-language" data-i18n="display_language">Display language</label><select id="esphome-display-language"><option value="English">English</option><option value="Español">Español</option></select></div>
-        <div class="reader-only-option"><label for="esphome-board" data-i18n="esp32_board">ESP32 board ID</label><input id="esphome-board" value="esp32dev" list="esp32-boards"><datalist id="esp32-boards"><option value="esp32dev"><option value="esp32-c3-devkitm-1"><option value="esp32-s3-devkitc-1"><option value="esp32-c6-devkitc-1"></datalist></div>
-        <div class="reader-only-option"><label for="esphome-tx-pin" data-i18n="uart_tx_pin">Reader UART TX pin</label><input id="esphome-tx-pin" value="GPIO17"></div>
-        <div class="reader-only-option"><label for="esphome-rx-pin" data-i18n="uart_rx_pin">Reader UART RX pin</label><input id="esphome-rx-pin" value="GPIO16"></div>
-      </div>
-      <div id="esphome-setup-guide" class="warning-box"></div>
-      <div class="actions"><button id="build-esphome" type="button" data-i18n="build_in_esphome">Create and compile in ESPHome</button><button id="generate-esphome" class="secondary" type="button" data-i18n="generate_config">Preview configuration</button><button id="copy-esphome" class="secondary" type="button" disabled data-i18n="copy">Copy</button><button id="download-esphome" class="secondary" type="button" disabled data-i18n="download_yaml">Download YAML</button></div>
-      <textarea id="generated-esphome" class="generated-config" readonly hidden aria-label="Generated ESPHome YAML"></textarea>
-      <pre id="esphome-job-status" class="generated-config" hidden></pre>
     </section>
   </section>
 
@@ -654,7 +710,7 @@
 <script>
 (() => {
   const $ = selector => document.querySelector(selector);
-  const PANEL_BUILD_VERSION = "0.15.0";
+  const PANEL_BUILD_VERSION = "0.15.1";
   let data = null;
   let busy = false;
   let refreshPromise = null;
@@ -674,7 +730,7 @@
 
   const messages = {
     en: {
-      app_title:"Access Manager", app_subtitle:"Users · credentials · readers · doors", language:"Language", installed_version:"Installed version",
+      app_title:"Access Manager", app_subtitle:"Users · credentials · readers · doors", repository_documentation:"Repository documentation", language:"Language", installed_version:"Installed version",
       connecting:"Connecting…", connected:"Home Assistant connected", disconnected:"Home Assistant disconnected", panel_updating:"Loading the updated Access Manager panel…", panel_update_failed:"The updated panel could not be loaded. Close and reopen Access Manager, then try again.",
       tab_people:"Users & credentials", tab_fingerprints:"Fingerprint readers", tab_keypads:"Keypads", tab_doors:"Doors", tab_automations:"Automations", tab_settings:"Settings", tab_logs:"Log",
       section:"Section", link_state_linked:"Linked", link_state_missing:"Person missing in Home Assistant", link_state_unknown:"Link not verified", link_state_unlinked:"Not linked",
@@ -683,7 +739,7 @@
       delete_person:"Delete identity", delete_person_title:"Delete Access Manager identity?", delete_person_intro:"Review everything that will be revoked. Fingerprints must be confirmed as deleted by every reader before the identity can be archived.", fingerprints_count:"Fingerprints", keypad_count:"Keypad credentials", mobile_nfc_count:"Mobile NFC permissions", offline_readers:"Offline readers", deletion_pending_person:"Deletion pending", deletion_progress:"{done} of {total} fingerprints deleted", deletion_blocked:"Waiting for: {readers}", deletion_waiting:"Waiting for reader confirmation.", view_deletion:"View deletion", confirm_delete_person:"DELETE IDENTITY",
       nfc_permission_active:"Active", nfc_permission_suspended:"Suspended", nfc_suspended_reason:"The Home Assistant link must be repaired before this permission can be reactivated.", repair_person_link:"Repair person link", confirm_nfc_permission:"Confirm access", no_linked_people:"No active linked people are available.", credential_link_required:"Choose an active identity linked to Home Assistant.", person_unlinked:"Person unlinked", person_relinked:"Person relinked", person_deletion_requested:"Person deletion requested",
       people:"People", credentials:"Credentials", readers:"Readers", doors:"Doors", automations:"Automations", settings:"Settings", users_credentials:"Users and credentials",
-      add_user:"Add user", user:"User", linked_credentials:"Linked credentials", fingerprint_readers:"Fingerprint readers",
+      add_user:"Add user", user:"User", linked_credentials:"Linked credentials", fingerprint_readers:"Fingerprint readers", manage_user:"Manage",
       add_fingerprint_reader:"Add fingerprint reader", reader:"Reader", name:"Name", door:"Door", availability:"Availability",
       sensor_id:"Sensor ID", person_name:"Person name", enroll_new:"Enroll new", link_existing:"Link existing ID", cancel:"Cancel",
       fingerprint_hint:"The person and finger are stored in the panel and in the selected ESP. Linking an existing ID does not change its biometric template.",
@@ -737,7 +793,7 @@
       confirm:"Confirm", important_warning:"Important warning", test_warning:"This sends a real command to {door}. Check the selected action before confirming.",
       confirm_action:"CONFIRM {action}", edit_keypad:"Edit keypad", edit_fingerprint_reader:"Edit fingerprint reader", add_person_title:"Add user", edit_person_title:"Edit user",
       link_person:"Home Assistant person", create_new_person:"Create a new Home Assistant Person", reader_settings:"Reader settings", entity_settings:"Home Assistant entities", firmware:"Firmware", firmware_current:"Up to date", firmware_update:"Update available", firmware_unknown:"Not reported", firmware_not_configured:"Not configured", firmware_newer_than_supported:"Newer than this Access Manager release", firmware_custom_ref:"Custom firmware ref", firmware_recompile:"Recompile firmware", firmware_prepare_warning:"Only the managed package reference will change. The device YAML, board, secrets, and custom settings are preserved.", firmware_changed_lines:"Planned change", firmware_waiting:"Waiting for reader reconnection", firmware_version_not_confirmed:"OTA completed; version not confirmed", firmware_device_did_not_reconnect:"OTA completed; reader did not reconnect in time",
-      esphome_configurator:"ESPHome reader configurator", esphome_config_hint:"This creates a small package wrapper. ESPHome downloads the complete pinned firmware, compiles it, and installs it; Access Manager never compiles firmware or receives credentials.", installation_mode:"Installation", new_device:"New device", existing_device:"Update existing device", hardware_profile:"Hardware profile", reader_only:"Fingerprint reader only", reader_display:"Waveshare reader and display", device_name:"Device name", friendly_name:"Friendly name", wifi_ssid_secret:"Wi-Fi SSID secret key", wifi_password_secret:"Wi-Fi password secret key", api_encryption_key_secret:"API encryption secret key", ota_password_secret:"OTA password secret key", esp32_board:"ESP32 board ID", uart_tx_pin:"Reader UART TX pin", uart_rx_pin:"Reader UART RX pin", generate_config:"Generate configuration", copy:"Copy", download_yaml:"Download YAML", copied:"Configuration copied", setup_new_title:"New device setup", setup_new_1:"Download the generated YAML and choose Import from File in ESPHome Device Builder.", setup_new_2:"Confirm that the secret key names above exist in ESPHome secrets.yaml, then validate the configuration.", setup_new_3:"Use Install. The first flash normally needs USB; later updates can use OTA.", setup_existing_title:"Existing device update", setup_existing_1:"Back up the current YAML and use exactly the same device name.", setup_existing_2:"Enter the existing Wi-Fi, API-encryption, and OTA secret key names without changing their values.", setup_existing_3:"Replace the YAML with the generated wrapper, validate it, and install wirelessly only after validation succeeds.", setup_credentials:"Only secret key names are configured here. Their values stay exclusively in ESPHome.", source_access_manager:"Access Manager", source_external:"External / Home Assistant", transition:"Transition",
+      esphome_configurator:"ESPHome reader configurator", esphome_config_hint:"This creates a small package wrapper. ESPHome downloads the complete pinned firmware, compiles it, and installs it; Access Manager never compiles firmware or receives credentials.", environment_defaults:"Common environment values", environment_defaults_hint:"These secret-key names can be reused by every reader. Saving them here is optional and never stores the secret values.", save_environment_defaults:"Save for this environment", environment_defaults_saved:"Common values saved", reader_configuration:"Reader configuration", reader_configuration_hint:"These values belong to the selected reader and its exact Device Builder YAML.", installation_mode:"Installation", new_device:"New device", existing_device:"Update existing device", hardware_profile:"Hardware profile", reader_only:"Fingerprint reader only", reader_display:"Waveshare reader and display", device_name:"Device name", friendly_name:"Friendly name", wifi_ssid_secret:"Wi-Fi SSID secret key", wifi_password_secret:"Wi-Fi password secret key", api_encryption_key_secret:"API encryption secret key", ota_password_secret:"OTA password secret key", esp32_board:"ESP32 board ID", uart_tx_pin:"Reader UART TX pin", uart_rx_pin:"Reader UART RX pin", generate_config:"Generate configuration", copy:"Copy", download_yaml:"Download YAML", copied:"Configuration copied", setup_new_title:"New device setup", setup_new_1:"Download the generated YAML and choose Import from File in ESPHome Device Builder.", setup_new_2:"Confirm that the secret key names above exist in ESPHome secrets.yaml, then validate the configuration.", setup_new_3:"Use Install. The first flash normally needs USB; later updates can use OTA.", setup_existing_title:"Existing device update", setup_existing_1:"Back up the current YAML and use exactly the same device name.", setup_existing_2:"Enter the existing Wi-Fi, API-encryption, and OTA secret key names without changing their values.", setup_existing_3:"Replace the YAML with the generated wrapper, validate it, and install wirelessly only after validation succeeds.", setup_credentials:"Only secret key names are configured here. Their values stay exclusively in ESPHome.", source_access_manager:"Access Manager", source_external:"External / Home Assistant", transition:"Transition",
       reader_type:"Reader type", reader_display_type:"Display + sensor", reader_sensor_type:"Sensor only", display_language:"Display language",
       prompt_display_language_entity:"Display language select entity (display readers):", reader_display_language_changed:"Display language changed",
       build_in_esphome:"Create and compile in ESPHome", update_firmware:"Update firmware", update_firmware_title:"Update reader firmware?", update_firmware_warning:"ESPHome will compile the canonical device YAML and install it over Wi-Fi. Do not disconnect power during installation.", reconnect:"Reconnect", start_device_builder:"Start Device Builder", external_device_builder:"Advanced configuration → External Device Builder", external_device_builder_hint:"Use this only when Device Builder runs on another host. Passwords are used once to obtain a token and are never saved.", device_builder_username:"Username", device_builder_password:"Password", connect_external:"Connect external Device Builder", detecting:"Detecting", not_installed:"Not installed", stopped:"Stopped", starting:"Starting", ingress_unavailable:"Ingress unavailable", incompatible:"Incompatible", connection_error:"Error",
@@ -748,7 +804,7 @@
       left_hand:"LEFT HAND", right_hand:"RIGHT HAND"
     },
     es: {
-      app_title:"Gestor de accesos", app_subtitle:"Usuarios · credenciales · lectores · puertas", language:"Idioma", installed_version:"Versión instalada",
+      app_title:"Gestor de accesos", app_subtitle:"Usuarios · credenciales · lectores · puertas", repository_documentation:"Documentación del repositorio", language:"Idioma", installed_version:"Versión instalada",
       connecting:"Conectando…", connected:"Home Assistant conectado", disconnected:"Home Assistant desconectado", panel_updating:"Cargando el panel actualizado de Access Manager…", panel_update_failed:"No se pudo cargar el panel actualizado. Cierra y vuelve a abrir Access Manager e inténtalo de nuevo.",
       tab_people:"Usuarios y credenciales", tab_fingerprints:"Lectores de huellas", tab_keypads:"Keypads", tab_doors:"Puertas", tab_automations:"Automatizaciones", tab_settings:"Ajustes", tab_logs:"Registro",
       section:"Sección", link_state_linked:"Vinculada", link_state_missing:"Persona ausente en Home Assistant", link_state_unknown:"Vínculo sin verificar", link_state_unlinked:"Sin vincular",
@@ -757,7 +813,7 @@
       delete_person:"Eliminar identidad", delete_person_title:"¿Eliminar la identidad de Access Manager?", delete_person_intro:"Revisa todo lo que se revocará. Cada lector debe confirmar la eliminación de sus huellas antes de archivar la identidad.", fingerprints_count:"Huellas", keypad_count:"Credenciales de keypad", mobile_nfc_count:"Permisos NFC móvil", offline_readers:"Lectores sin conexión", deletion_pending_person:"Eliminación pendiente", deletion_progress:"{done} de {total} huellas eliminadas", deletion_blocked:"Esperando a: {readers}", deletion_waiting:"Esperando confirmación de los lectores.", view_deletion:"Ver eliminación", confirm_delete_person:"ELIMINAR IDENTIDAD",
       nfc_permission_active:"Activo", nfc_permission_suspended:"Suspendido", nfc_suspended_reason:"Hay que reparar el vínculo con Home Assistant antes de reactivar este permiso.", repair_person_link:"Reparar vínculo de persona", confirm_nfc_permission:"Confirmar acceso", no_linked_people:"No hay personas vinculadas y activas disponibles.", credential_link_required:"Selecciona una identidad activa vinculada con Home Assistant.", person_unlinked:"Persona desvinculada", person_relinked:"Persona revinculada", person_deletion_requested:"Eliminación de persona solicitada",
       people:"Personas", credentials:"Credenciales", readers:"Lectores", doors:"Puertas", automations:"Automatizaciones", settings:"Ajustes", users_credentials:"Usuarios y credenciales",
-      add_user:"Añadir usuario", user:"Usuario", linked_credentials:"Credenciales asociadas", fingerprint_readers:"Lectores de huellas",
+      add_user:"Añadir usuario", user:"Usuario", linked_credentials:"Credenciales asociadas", fingerprint_readers:"Lectores de huellas", manage_user:"Gestionar",
       add_fingerprint_reader:"Añadir lector de huellas", reader:"Lector", name:"Nombre", door:"Puerta", availability:"Disponibilidad",
       sensor_id:"ID del sensor", person_name:"Nombre de la persona", enroll_new:"Registrar nueva", link_existing:"Vincular ID existente", cancel:"Cancelar",
       fingerprint_hint:"La persona y el dedo se guardan en el panel y en el ESP seleccionado. Vincular un ID existente no modifica su plantilla biométrica.",
@@ -811,7 +867,7 @@
       confirm:"Confirmar", important_warning:"Aviso importante", test_warning:"Esto enviará una orden real a {door}. Comprueba la acción seleccionada antes de confirmar.",
       confirm_action:"CONFIRMAR {action}", edit_keypad:"Editar keypad", edit_fingerprint_reader:"Editar lector de huellas", add_person_title:"Añadir usuario", edit_person_title:"Editar usuario",
       link_person:"Persona de Home Assistant", create_new_person:"Crear una nueva persona en Home Assistant", reader_settings:"Configuración del lector", entity_settings:"Entidades de Home Assistant", firmware:"Firmware", firmware_current:"Actualizado", firmware_update:"Actualización disponible", firmware_unknown:"Sin informar", firmware_not_configured:"Sin configurar", firmware_newer_than_supported:"Más reciente que esta versión de Access Manager", firmware_custom_ref:"Referencia de firmware personalizada", firmware_recompile:"Recompilar firmware", firmware_prepare_warning:"Solo cambiará la referencia del paquete gestionado. Se conservan el YAML, placa, secretos y ajustes personalizados.", firmware_changed_lines:"Cambio previsto", firmware_waiting:"Esperando la reconexión del lector", firmware_version_not_confirmed:"OTA completada; versión sin confirmar", firmware_device_did_not_reconnect:"OTA completada; el lector no se reconectó a tiempo",
-      esphome_configurator:"Configurador de lector ESPHome", esphome_config_hint:"Esto crea un pequeño envoltorio de paquete. ESPHome descarga el firmware completo fijado, lo compila y lo instala; Access Manager nunca compila firmware ni recibe credenciales.", installation_mode:"Instalación", new_device:"Dispositivo nuevo", existing_device:"Actualizar dispositivo existente", hardware_profile:"Perfil de hardware", reader_only:"Solo lector de huellas", reader_display:"Lector y pantalla Waveshare", device_name:"Nombre del dispositivo", friendly_name:"Nombre visible", wifi_ssid_secret:"Clave secreta del SSID Wi-Fi", wifi_password_secret:"Clave secreta de la contraseña Wi-Fi", api_encryption_key_secret:"Clave secreta del cifrado API", ota_password_secret:"Clave secreta de la contraseña OTA", esp32_board:"ID de placa ESP32", uart_tx_pin:"Pin TX UART del lector", uart_rx_pin:"Pin RX UART del lector", generate_config:"Generar configuración", copy:"Copiar", download_yaml:"Descargar YAML", copied:"Configuración copiada", setup_new_title:"Configuración de un dispositivo nuevo", setup_new_1:"Descarga el YAML generado y elige Importar desde archivo en ESPHome Device Builder.", setup_new_2:"Confirma que los nombres de las claves indicados arriba existen en secrets.yaml de ESPHome y valida la configuración.", setup_new_3:"Pulsa Instalar. La primera carga normalmente requiere USB; las posteriores pueden hacerse por OTA.", setup_existing_title:"Actualización de un dispositivo existente", setup_existing_1:"Haz una copia del YAML actual y utiliza exactamente el mismo nombre de dispositivo.", setup_existing_2:"Introduce los nombres existentes de las claves Wi-Fi, cifrado API y OTA sin cambiar sus valores.", setup_existing_3:"Sustituye el YAML por el envoltorio generado, valídalo e instálalo por Wi-Fi únicamente cuando la validación termine correctamente.", setup_credentials:"Aquí solo se configuran nombres de claves secretas. Sus valores permanecen exclusivamente en ESPHome.", source_access_manager:"Access Manager", source_external:"Externo / Home Assistant", transition:"Transición",
+      esphome_configurator:"Configurador de lector ESPHome", esphome_config_hint:"Esto crea un pequeño envoltorio de paquete. ESPHome descarga el firmware completo fijado, lo compila y lo instala; Access Manager nunca compila firmware ni recibe credenciales.", environment_defaults:"Valores comunes del entorno", environment_defaults_hint:"Estos nombres de claves secretas pueden reutilizarse en todos los lectores. Guardarlos aquí es opcional y nunca almacena los valores de los secretos.", save_environment_defaults:"Guardar para este entorno", environment_defaults_saved:"Valores comunes guardados", reader_configuration:"Configuración del lector", reader_configuration_hint:"Estos valores pertenecen al lector seleccionado y a su YAML exacto de Device Builder.", installation_mode:"Instalación", new_device:"Dispositivo nuevo", existing_device:"Actualizar dispositivo existente", hardware_profile:"Perfil de hardware", reader_only:"Solo lector de huellas", reader_display:"Lector y pantalla Waveshare", device_name:"Nombre del dispositivo", friendly_name:"Nombre visible", wifi_ssid_secret:"Clave secreta del SSID Wi-Fi", wifi_password_secret:"Clave secreta de la contraseña Wi-Fi", api_encryption_key_secret:"Clave secreta del cifrado API", ota_password_secret:"Clave secreta de la contraseña OTA", esp32_board:"ID de placa ESP32", uart_tx_pin:"Pin TX UART del lector", uart_rx_pin:"Pin RX UART del lector", generate_config:"Generar configuración", copy:"Copiar", download_yaml:"Descargar YAML", copied:"Configuración copiada", setup_new_title:"Configuración de un dispositivo nuevo", setup_new_1:"Descarga el YAML generado y elige Importar desde archivo en ESPHome Device Builder.", setup_new_2:"Confirma que los nombres de las claves indicados arriba existen en secrets.yaml de ESPHome y valida la configuración.", setup_new_3:"Pulsa Instalar. La primera carga normalmente requiere USB; las posteriores pueden hacerse por OTA.", setup_existing_title:"Actualización de un dispositivo existente", setup_existing_1:"Haz una copia del YAML actual y utiliza exactamente el mismo nombre de dispositivo.", setup_existing_2:"Introduce los nombres existentes de las claves Wi-Fi, cifrado API y OTA sin cambiar sus valores.", setup_existing_3:"Sustituye el YAML por el envoltorio generado, valídalo e instálalo por Wi-Fi únicamente cuando la validación termine correctamente.", setup_credentials:"Aquí solo se configuran nombres de claves secretas. Sus valores permanecen exclusivamente en ESPHome.", source_access_manager:"Access Manager", source_external:"Externo / Home Assistant", transition:"Transición",
       reader_type:"Tipo de lector", reader_display_type:"Pantalla + sensor", reader_sensor_type:"Solo sensor", display_language:"Idioma del display",
       prompt_display_language_entity:"Entidad select del idioma del display (lectores con pantalla):", reader_display_language_changed:"Idioma del display cambiado",
       build_in_esphome:"Crear y compilar en ESPHome", update_firmware:"Actualizar firmware", update_firmware_title:"¿Actualizar el firmware del lector?", update_firmware_warning:"ESPHome compilará el YAML canónico del dispositivo y lo instalará por Wi-Fi. No desconectes la alimentación durante la instalación.", reconnect:"Reconectar", start_device_builder:"Iniciar Device Builder", external_device_builder:"Configuración avanzada → Device Builder externo", external_device_builder_hint:"Úsalo solo si Device Builder está en otro equipo. La contraseña se usa una vez para obtener un token y nunca se guarda.", device_builder_username:"Usuario", device_builder_password:"Contraseña", connect_external:"Conectar Device Builder externo", detecting:"Detectando", not_installed:"No instalado", stopped:"Detenido", starting:"Iniciando", ingress_unavailable:"Ingress no disponible", incompatible:"Incompatible", connection_error:"Error",
@@ -968,6 +1024,12 @@
     const state = personLinkState(person);
     const statusClass = state === "linked" ? "" : state === "missing" ? "pending" : state;
     const entity = person.ha_person_entity_id ? `<span class="entity">${esc(person.ha_person_entity_id)}</span>` : "";
+    const warning = state === "linked" ? "" : `<span class="person-link-warning">${esc(t(`link_help_${state}`))}</span>`;
+    return `<div class="person-lifecycle" title="${esc(t(`link_help_${state}`))}"><span class="status ${statusClass}">${esc(t(`link_state_${state}`))}</span>${entity}${warning}</div>`;
+  }
+
+  function renderPersonLinkActions(person) {
+    const state = personLinkState(person);
     let actions = "";
     if (state === "linked") {
       actions = `<button class="secondary" onclick="openHaPersonLinkEditor(${Number(person.id)})">${esc(t("relink_ha_person"))}</button><button class="danger" onclick="unlinkHaPerson(${Number(person.id)})">${esc(t("unlink_ha_person"))}</button>`;
@@ -976,7 +1038,7 @@
     } else {
       actions = `<button class="secondary" onclick="openHaPersonLinkEditor(${Number(person.id)})">${esc(t("link_ha_person"))}</button><button class="secondary" onclick="createHaPerson(${Number(person.id)})">${esc(t("create_in_ha"))}</button>`;
     }
-    return `<div class="person-lifecycle"><div><span class="status ${statusClass}">${esc(t(`link_state_${state}`))}</span>${entity}</div><span class="muted">${esc(t(`link_help_${state}`))}</span><div class="person-link-actions">${actions}</div></div>`;
+    return actions;
   }
 
   function renderPeople() {
@@ -993,7 +1055,7 @@
       }).join("") : `<span class="muted">${t("no_credentials")}</span>`;
       const actions = deleting
         ? `<button class="secondary" onclick="viewPersonDeletion(${Number(person.id)})">${esc(t("view_deletion"))}</button>`
-        : `<button class="secondary" onclick="prepareFingerprint(${Number(person.id)})" ${canAddCredentials ? "" : "disabled"}>${t("add_fingerprint")}</button><button class="secondary" onclick="openKeypadModal(${Number(person.id)})" ${canAddCredentials ? "" : "disabled"}>${t("add_code")}</button><button class="secondary" onclick="renamePerson(${Number(person.id)})">${t("rename")}</button><button class="danger" onclick="deletePerson(${Number(person.id)})">${t("delete_person")}</button>`;
+        : `<div class="person-row-actions"><div class="person-primary-actions"><button class="secondary" onclick="prepareFingerprint(${Number(person.id)})" ${canAddCredentials ? "" : "disabled"}>${t("add_fingerprint")}</button><button class="secondary" onclick="openKeypadModal(${Number(person.id)})" ${canAddCredentials ? "" : "disabled"}>${t("add_code")}</button></div><details class="person-actions-menu"><summary>${esc(t("manage_user"))}</summary><div class="person-actions-menu-content"><button class="secondary" onclick="renamePerson(${Number(person.id)})">${t("rename")}</button>${renderPersonLinkActions(person)}<button class="danger" onclick="deletePerson(${Number(person.id)})">${t("delete_person")}</button></div></details></div>`;
       return `<tr><td><div class="person-heading"><strong>${esc(person.name)}</strong></div>${renderPersonLifecycle(person)}</td><td><div class="credential-list">${credentials}</div></td><td class="actions-cell">${actions}</td></tr>`;
     }).join("") : `<tr><td colspan="3" class="empty">${t("no_users")}</td></tr>`;
   }
@@ -1049,7 +1111,7 @@
       openConfirm({title:t("update_firmware_title"),subtitle:`${reader.name} · ${prepared.configuration}`,message:`${t("firmware_prepare_warning")}\n\n${t("firmware_changed_lines")}:\n${changes}\n\n${t("update_firmware_warning")}`,confirmLabel:t("update_firmware"),onConfirm:async()=>{
       try{
         const job=await request(`readers/${readerId}/firmware/apply`,{method:"POST",body:JSON.stringify({expected_config_sha256:prepared.config_sha256})});
-        closeConfirm();switchTab("settings");await followFirmwareJob(job);await refresh();
+        closeConfirm();switchTab("fingerprints");await followFirmwareJob(job);await refresh();
       }catch(error){showError(error.message);}
     }});
     }catch(error){showError(error.message);}
@@ -1209,7 +1271,6 @@
     const savedSecretKeys=data.esphome_secret_keys||{};
     [["esphome-wifi-ssid-secret","wifi_ssid_secret","wifi_ssid"],["esphome-wifi-password-secret","wifi_password_secret","wifi_password"],["esphome-api-key-secret","api_encryption_key_secret","api_encryption_key"],["esphome-ota-password-secret","ota_password_secret","ota_password"]].forEach(([id,key,fallback])=>{const input=$("#"+id);if(!input.dataset.edited)input.value=savedSecretKeys[key]||fallback;});
     $("#delete-esphome-connection").disabled=!connection.configured||localMode;
-    $("#esphome-configurations").innerHTML=(data.esphome_devices||[]).map(device=>`<option value="${esc(device.configuration)}">${esc(device.name||device.configuration)}</option>`).join("");
     const currentReader=$("#esphome-reader-link").value;
     $("#esphome-reader-link").innerHTML=`<option value="">${t("none")}</option>${(data.access_readers||[]).filter(reader=>reader.reader_type==="fingerprint").map(reader=>`<option value="${esc(reader.id)}" ${reader.id===currentReader?"selected":""}>${esc(reader.name)} · ${esc(reader.id)}</option>`).join("")}`;
     renderEsphomeProfile();
@@ -1217,33 +1278,33 @@
   }
 
   function renderEsphomeProfile(){
+    syncEsphomeConfiguration();
     document.querySelectorAll(".reader-only-option").forEach(element=>element.hidden=$("#esphome-profile").value!=="reader_only");
     document.querySelectorAll(".display-option").forEach(element=>element.hidden=$("#esphome-profile").value!=="display");
     const existing=$("#esphome-install-mode").value==="existing";
-    const configuration=$("#esphome-configuration");
-    if(existing){
-      const devices=data?.esphome_devices||[];
-      if(devices.length&&!devices.some(device=>device.configuration===configuration.value))configuration.value=devices[0].configuration;
-    }else if(!configuration.dataset.edited){
-      configuration.value=`${$("#esphome-device-name").value.trim()||"fingerprint-access-reader"}.yaml`;
-    }
     const prefix=existing?"setup_existing":"setup_new";
     $("#esphome-setup-guide").innerHTML=`<strong>${t(`${prefix}_title`)}</strong><ol><li>${t(`${prefix}_1`)}</li><li>${t(`${prefix}_2`)}</li><li>${t(`${prefix}_3`)}</li></ol><p>${t("setup_credentials")}</p>`;
   }
 
+  function syncEsphomeConfiguration(){
+    const deviceName=$("#esphome-device-name").value.trim().toLocaleLowerCase();
+    $("#esphome-configuration").value=deviceName?`${deviceName}.yaml`:"";
+  }
+
   function loadLinkedEsphomeProfile(){
     const reader=(data?.access_readers||[]).find(item=>item.id===$("#esphome-reader-link").value),profile=reader?.config?.firmware_profile;
-    if(!profile)return;
+    if(!reader){syncEsphomeConfiguration();renderEsphomeProfile();return;}
+    const readerConfig=reader.config||{},hardware=profile?.hardware||readerConfig.firmware_config||{};
     $("#esphome-install-mode").value="existing";
-    $("#esphome-profile").value=profile.hardware_profile||"reader_only";
-    $("#esphome-device-name").value=profile.device_name||"";
-    $("#esphome-friendly-name").value=profile.friendly_name||reader.name||"";
-    $("#esphome-configuration").value=profile.configuration||"";
-    $("#esphome-configuration").dataset.edited="1";
-    if(profile.display_language)$("#esphome-display-language").value=profile.display_language;
-    if(profile.hardware){$("#esphome-board").value=profile.hardware.board||"";$("#esphome-tx-pin").value=profile.hardware.fingerprint_tx_pin||"";$("#esphome-rx-pin").value=profile.hardware.fingerprint_rx_pin||"";}
-    const keys=profile.secret_keys||{};
+    $("#esphome-profile").value=profile?.hardware_profile||readerConfig.hardware_profile||"reader_only";
+    $("#esphome-device-name").value=profile?.device_name||readerConfig.device_name||"";
+    $("#esphome-friendly-name").value=profile?.friendly_name||reader.name||"";
+    const displayLanguage=profile?.display_language||readerConfig.display_language;
+    if(displayLanguage)$("#esphome-display-language").value=displayLanguage;
+    if(Object.keys(hardware).length){$("#esphome-board").value=hardware.board||"";$("#esphome-tx-pin").value=hardware.fingerprint_tx_pin||"";$("#esphome-rx-pin").value=hardware.fingerprint_rx_pin||"";}
+    const keys=profile?.secret_keys||readerConfig.firmware_secret_keys||{};
     [["esphome-wifi-ssid-secret","wifi_ssid_secret"],["esphome-wifi-password-secret","wifi_password_secret"],["esphome-api-key-secret","api_encryption_key_secret"],["esphome-ota-password-secret","ota_password_secret"]].forEach(([id,key])=>{if(keys[key]){$("#"+id).value=keys[key];$("#"+id).dataset.edited="1";}});
+    syncEsphomeConfiguration();
     renderEsphomeProfile();
   }
 
@@ -1253,6 +1314,18 @@
     if(profile==="display")payload.display_language=$("#esphome-display-language").value;
     else Object.assign(payload,{board:$("#esphome-board").value.trim(),fingerprint_tx_pin:$("#esphome-tx-pin").value.trim(),fingerprint_rx_pin:$("#esphome-rx-pin").value.trim()});
     return payload;
+  }
+
+  async function saveEsphomeEnvironmentDefaults(){
+    const button=$("#save-esphome-environment-defaults");button.disabled=true;
+    try{
+      const payload=esphomePayload(),result=await request("settings/esphome-defaults",{method:"PUT",body:JSON.stringify(payload)});
+      data.esphome_secret_keys=result.secret_keys;
+      ["#esphome-wifi-ssid-secret","#esphome-wifi-password-secret","#esphome-api-key-secret","#esphome-ota-password-secret"].forEach(id=>$(id).dataset.edited="");
+      button.textContent=t("environment_defaults_saved");showError();
+      setTimeout(()=>button.textContent=t("save_environment_defaults"),1800);
+    }catch(error){showError(error.message);}
+    finally{button.disabled=false;}
   }
 
   async function followFirmwareJob(job){
@@ -1324,7 +1397,7 @@
     const payload=esphomePayload();
     try{
       const result=await request("esphome/config",{method:"POST",body:JSON.stringify(payload)}),output=$("#generated-esphome");
-      output.value=result.yaml;output.hidden=false;$("#copy-esphome").disabled=false;$("#download-esphome").disabled=false;data.esphome_secret_keys=result.secret_keys||data.esphome_secret_keys;if(result.firmware_profile){const reader=(data.access_readers||[]).find(item=>item.id===result.firmware_profile.reader_id);if(reader){reader.config=reader.config||{};reader.config.firmware_profile=result.firmware_profile;}}showError();
+      output.value=result.yaml;output.hidden=false;$("#copy-esphome").disabled=false;$("#download-esphome").disabled=false;if(result.firmware_profile){const reader=(data.access_readers||[]).find(item=>item.id===result.firmware_profile.reader_id);if(reader){reader.config=reader.config||{};reader.config.firmware_profile=result.firmware_profile;}}showError();
     }catch(error){showError(error.message);}
   }
 
@@ -1701,11 +1774,11 @@
   $("#esphome-profile").addEventListener("change",renderEsphomeProfile);
   $("#esphome-install-mode").addEventListener("change",renderEsphomeProfile);
   $("#esphome-reader-link").addEventListener("change",loadLinkedEsphomeProfile);
-  $("#esphome-device-name").addEventListener("input",()=>{if($("#esphome-install-mode").value==="new"&&!$("#esphome-configuration").dataset.edited)$("#esphome-configuration").value=`${$("#esphome-device-name").value.trim()}.yaml`;});
-  $("#esphome-configuration").addEventListener("input",()=>$("#esphome-configuration").dataset.edited="1");
+  $("#esphome-device-name").addEventListener("input",syncEsphomeConfiguration);
   $("#esphome-base-url").addEventListener("input",()=>$("#esphome-base-url").dataset.edited="1");
   $("#esphome-username").addEventListener("input",()=>$("#esphome-username").dataset.edited="1");
   ["#esphome-wifi-ssid-secret","#esphome-wifi-password-secret","#esphome-api-key-secret","#esphome-ota-password-secret"].forEach(id=>$(id).addEventListener("input",event=>event.currentTarget.dataset.edited="1"));
+  $("#save-esphome-environment-defaults").addEventListener("click",saveEsphomeEnvironmentDefaults);
   $("#test-esphome-connection").addEventListener("click",testEsphomeConnection);
   $("#save-esphome-connection").addEventListener("click",saveEsphomeConnection);
   $("#delete-esphome-connection").addEventListener("click",deleteEsphomeConnection);

@@ -1,5 +1,5 @@
 name: "Access Manager"
-version: "0.15.0"
+version: "0.15.1"
 slug: "fingerprint_admin"
 description: "Local management of users, doors, readers and credentials"
 url: "https://github.com/kytos22/home-assistant-access-manager"

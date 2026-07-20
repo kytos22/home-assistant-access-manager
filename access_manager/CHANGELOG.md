@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.15.1
+
+- Restores the official multiplexed `/ws` protocol for the current ESPHome Device Builder, fixing `405 Method Not Allowed` when creating or updating a YAML, while retaining the HTTP/process API as an automatic fallback for legacy Dashboard installations.
+- Recommends reader firmware 0.6.2, which explicitly publishes its diagnostic version entity during every boot so managed OTA verification no longer remains `unknown`.
+- Detects the firmware-version and display-language entities for each configured ESPHome device when the match is unambiguous, so the reader editor no longer leaves the language field empty or cross-links multiple readers.
+- Separates reusable ESPHome secret-key names from reader-specific settings, saves those environment defaults only on explicit request, and fixes every Device Builder YAML name to `<device_name>.yaml` in both the read-only panel field and server validation.
+- Moves Device Builder and the ESPHome reader configurator beneath the fingerprint-reader controls, keeps Settings focused on general options, and adds a prominent link to the repository documentation.
+- Compacts the users-and-credentials list with denser credential badges, concise status rows, two visible credential shortcuts, and an on-demand management menu for less frequent identity actions.
+
 ## 0.15.0
 
 - Replaces the obsolete local Ingress WebSocket protocol with the current ESPHome Device Builder API: device and YAML operations use its Ingress HTTP endpoints, while validation, compilation and OTA use its native process WebSockets.
