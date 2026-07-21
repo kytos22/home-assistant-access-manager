@@ -102,7 +102,7 @@ for (const marker of [
   'recoverPanelBuild',
   'firmware_version_entity',
   'firmware_not_configured',
-  'PANEL_BUILD_VERSION = "0.15.2"',
+  'PANEL_BUILD_VERSION = "0.15.3"',
   'door_sensor_hint',
   'visibilitychange',
   'REFRESH_INTERVAL_MS = 10000',
@@ -112,6 +112,23 @@ for (const marker of [
 
 for (const forbidden of ['prompt(', 'confirm(']) {
   if (html.includes(forbidden)) throw new Error(`Native dialog is forbidden: ${forbidden}`);
+}
+const fingerZones = [...html.matchAll(/class="hand-finger" data-finger="([^"]+)"/g)].map(match => match[1]);
+const expectedFingers = [
+  "left_pinky", "left_ring", "left_middle", "left_index", "left_thumb",
+  "right_thumb", "right_index", "right_middle", "right_ring", "right_pinky",
+];
+if (fingerZones.join(",") !== expectedFingers.join(",")) {
+  throw new Error(`Unexpected anatomical finger zones: ${fingerZones.join(",")}`);
+}
+for (const marker of ["real-hands-photo", "finger-shape", "finger-check-halo", "hand-label-badge"]) {
+  if (!html.includes(`class="${marker}"`)) throw new Error(`Missing hand illustration detail: ${marker}`);
+}
+if (!html.includes('id="real-hands-mask"')) {
+  throw new Error("Finger overlays must be clipped to the photographic hand silhouette");
+}
+if (!html.includes('href="assets/real-hands.png"')) {
+  throw new Error("Missing real photographic hand asset");
 }
 if (!html.includes('id="esphome-configuration" value="fingerprint-access-reader.yaml" readonly')) {
   throw new Error("The ESPHome configuration file must be derived and read-only");

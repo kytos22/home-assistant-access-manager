@@ -46,6 +46,7 @@ READER_FIRMWARE_FILES = {
 }
 OPTIONS_PATH = DATA_DIR / "options.json"
 INDEX_PATH = Path(__file__).with_name("index.html")
+ASSETS_PATH = Path(__file__).with_name("assets")
 
 LOG_LEVELS = {
     "debug": logging.DEBUG,
@@ -7302,6 +7303,7 @@ class FingerprintAdmin:
     def application(self):
         app = web.Application(client_max_size=32 * 1024)
         app.router.add_get("/", self.index)
+        app.router.add_static("/assets/", ASSETS_PATH, show_index=False)
         app.router.add_get("/health", self.health)
         app.router.add_get("/api/state", self.state)
         app.router.add_post("/api/users/enroll", self.enroll)

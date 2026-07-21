@@ -134,7 +134,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.15.2"', html)
+        self.assertIn('const PANEL_BUILD_VERSION = "0.15.3"', html)
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 

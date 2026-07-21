@@ -146,23 +146,20 @@
     .modal-head h2 { margin: 0 0 5px; font-size: 1.3rem; }
     .modal-head p { margin: 0; }
     .icon-button { width: 36px; height: 36px; padding: 0; border-radius: 50%; background: #253648; color: var(--text); font-size: 1.25rem; }
-    .hand-stage { margin: 8px 18px; padding: 10px; border: 1px solid rgba(61,83,105,.65); border-radius: 16px; background: radial-gradient(circle at 50% 45%, rgba(65,105,140,.16), transparent 58%), #09121b; }
-    .hand-stage svg { display: block; width: 100%; height: auto; max-height: 410px; }
-    .palm { fill: url(#palm-fill); stroke: #40566b; stroke-width: 3; }
-    .palm-detail { fill: none; stroke: #2f485d; stroke-width: 3; stroke-linecap: round; opacity: .9; }
-    .wrist-detail { fill: none; stroke: #253b4e; stroke-width: 2; stroke-linecap: round; opacity: .8; }
+    .hand-stage { position: relative; overflow: hidden; margin: 8px 18px; padding: 10px; border: 1px solid rgba(61,83,105,.65); border-radius: 16px; background: radial-gradient(ellipse at 25% 44%, rgba(75,122,157,.16), transparent 38%), radial-gradient(ellipse at 75% 44%, rgba(75,122,157,.16), transparent 38%), linear-gradient(180deg,#0b1722,#071018); }
+    .hand-stage svg { display: block; width: 100%; height: auto; max-height: 440px; }
+    .real-hands-photo { pointer-events: none; }
     .hand-finger { cursor: pointer; outline: none; }
-    .hand-finger .finger-shape { fill: #1b3042; stroke: #4a6277; stroke-width: 3; transition: fill .15s, stroke .15s, filter .15s; }
-    .hand-finger:hover .finger-shape, .hand-finger:focus .finger-shape { fill: #24445b; stroke: var(--accent-2); filter: drop-shadow(0 0 8px rgba(114,167,255,.35)); }
-    .hand-finger.selected .finger-shape { fill: #24558a; stroke: #8abbff; filter: drop-shadow(0 0 10px rgba(114,167,255,.5)); }
+    .hand-finger .finger-shape { fill: transparent; stroke: none; mask: url(#real-hands-mask); transition: fill .15s, filter .15s; }
+    .hand-finger:hover .finger-shape, .hand-finger:focus .finger-shape, .hand-finger:focus-visible .finger-shape { fill: rgba(42,103,151,.5); filter: drop-shadow(0 0 7px rgba(114,167,255,.65)); }
+    .hand-finger.selected .finger-shape { fill: rgba(37,108,196,.58); filter: drop-shadow(0 0 9px rgba(114,167,255,.72)); }
     .hand-finger.registered { cursor: not-allowed; }
-    .hand-finger.registered .finger-shape { fill: #17483c; stroke: #55d5af; filter: none; }
-    .finger-ridge { fill: none; stroke: #638097; stroke-width: 2; stroke-linecap: round; opacity: .58; pointer-events: none; transition: stroke .15s, opacity .15s; }
-    .hand-finger:hover .finger-ridge, .hand-finger:focus .finger-ridge, .hand-finger.selected .finger-ridge { stroke: #b9d7ff; opacity: .9; }
-    .hand-finger.registered .finger-ridge { stroke: #8de7cc; opacity: .82; }
-    .finger-check { display: none; fill: #9af0d6; font: 700 25px system-ui; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
-    .hand-finger.registered .finger-check { display: block; }
-    .hand-label { fill: #91a8ba; font: 600 17px system-ui; text-anchor: middle; letter-spacing: .08em; }
+    .hand-finger.registered .finger-shape { fill: rgba(17,116,87,.56); filter: drop-shadow(0 0 5px rgba(85,213,175,.45)); }
+    .finger-check-halo { display: none; fill: #123b32; stroke: #8de7cc; stroke-width: 1.5; pointer-events: none; }
+    .finger-check { display: none; fill: #b9f8e5; font: 700 21px system-ui; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
+    .hand-finger.registered :is(.finger-check-halo,.finger-check) { display: block; }
+    .hand-label-badge rect { fill: rgba(5,14,22,.9); stroke: rgba(145,168,186,.48); stroke-width: 1.5; }
+    .hand-label { fill: #eef6fb; font: 700 15px system-ui; text-anchor: middle; letter-spacing: .09em; }
     .finger-summary { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 14px 22px 4px; }
     .finger-summary > div { min-height: 65px; padding: 12px 14px; border-radius: 12px; background: rgba(8,15,22,.5); border: 1px solid rgba(61,83,105,.5); }
     .finger-summary span { display: block; color: var(--muted); font-size: .76rem; text-transform: uppercase; letter-spacing: .08em; margin-bottom: 6px; }
@@ -266,9 +263,10 @@
       .person-actions-menu summary { min-height: 40px; margin: 5px 0 0; }
       .person-actions-menu-content { justify-content: flex-start; }
       .person-actions-menu-content button { flex: 1 1 130px !important; }
-      .modal { place-items: end center; padding: 0; }
-      .modal-card { width: 100%; max-height: calc(100dvh - 10px); overflow-x: hidden; overscroll-behavior: contain; border-radius: 20px 20px 0 0; }
-      .modal-head { position: sticky; top: 0; z-index: 3; padding: 15px 16px 10px; background: rgba(18,31,44,.98); }
+      .modal { width: 100vw; max-width: 100vw; place-items: end center; overflow-x: hidden; padding: 0; }
+      .modal-card { width: 100%; max-width: 100vw; min-width: 0; max-height: calc(100dvh - 10px); overflow-x: hidden; overscroll-behavior: contain; border-radius: 20px 20px 0 0; }
+      .modal-head { position: sticky; top: 0; z-index: 3; min-width: 0; padding: 15px 16px 10px; background: rgba(18,31,44,.98); }
+      .modal-head > div { min-width: 0; }
       .modal-actions { position: sticky; bottom: 0; z-index: 3; flex-wrap: wrap; padding: 13px 16px max(13px, env(safe-area-inset-bottom)); background: rgba(12,21,30,.98); border-top: 1px solid var(--line); }
       .modal-actions button { flex: 1 1 130px; }
       .form-body, .capture-box { margin-inline: 0; padding-inline: 16px; }
@@ -552,83 +550,74 @@
       <button id="finger-close" class="icon-button" type="button" aria-label="Close">×</button>
     </div>
     <div class="hand-stage">
-      <svg viewBox="0 0 900 430" role="img" aria-label="Finger selector for both hands">
+      <svg viewBox="0 0 900 500" role="img" aria-label="Finger selector for both hands">
         <defs>
-          <linearGradient id="palm-fill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stop-color="#1d3447"/>
-            <stop offset="1" stop-color="#132433"/>
-          </linearGradient>
+          <mask id="real-hands-mask" x="0" y="0" width="900" height="500" maskUnits="userSpaceOnUse" style="mask-type:alpha">
+            <image href="assets/real-hands.png" x="0" y="0" width="900" height="507" preserveAspectRatio="xMidYMid meet"/>
+          </mask>
         </defs>
-
-        <path class="palm" d="M121 194 C111 218 111 251 116 282 C121 318 139 344 171 358 L171 398 L294 398 L294 356 C324 337 340 308 342 274 L344 218 C345 193 327 177 307 177 C286 177 270 187 254 198 C229 181 201 178 176 187 C154 180 131 182 121 194Z"/>
-        <path class="palm" d="M779 194 C789 218 789 251 784 282 C779 318 761 344 729 358 L729 398 L606 398 L606 356 C576 337 560 308 558 274 L556 218 C555 193 573 177 593 177 C614 177 630 187 646 198 C671 181 699 178 724 187 C746 180 769 182 779 194Z"/>
-        <path class="palm-detail" d="M151 267 C184 229 240 218 301 249 M180 302 C212 279 259 279 291 300 M749 267 C716 229 660 218 599 249 M720 302 C688 279 641 279 609 300"/>
-        <path class="wrist-detail" d="M185 369 C217 358 251 358 281 369 M615 369 C647 358 681 358 715 369"/>
+        <image class="real-hands-photo" href="assets/real-hands.png" x="0" y="0" width="900" height="507" preserveAspectRatio="xMidYMid meet"/>
 
         <g class="hand-finger" data-finger="left_pinky" role="button" tabindex="0">
           <title>Left little finger</title>
-          <path class="finger-shape" d="M118 226 L99 128 C96 110 105 96 120 93 C136 90 148 101 150 118 L160 213 C161 226 151 237 138 239 C128 240 120 235 118 226Z"/>
-          <path class="finger-ridge" d="M107 123 C115 112 134 110 143 120 M109 132 C118 122 133 121 143 130 M112 141 C121 133 133 133 142 139"/>
-          <text class="finger-check" x="123" y="119">✓</text>
+          <path class="finger-shape" d="M168 112 H214 V230 C214 252 207 270 196 282 C184 270 176 252 168 230Z"/>
+          <circle class="finger-check-halo" cx="190" cy="145" r="15"/><text class="finger-check" x="190" y="146">✓</text>
         </g>
         <g class="hand-finger" data-finger="left_ring" role="button" tabindex="0">
           <title>Left ring finger</title>
-          <path class="finger-shape" d="M157 205 L149 77 C148 58 160 44 176 43 C194 42 206 56 206 75 L205 202 C205 217 195 226 181 227 C167 228 158 219 157 205Z"/>
-          <path class="finger-ridge" d="M157 73 C164 59 190 57 198 72 M158 83 C168 70 188 70 198 81 M160 93 C169 82 188 82 197 92"/>
-          <text class="finger-check" x="177" y="69">✓</text>
+          <path class="finger-shape" d="M214 38 H260 V244 C260 259 251 269 239 269 C226 269 214 259 214 244Z"/>
+          <circle class="finger-check-halo" cx="241" cy="76" r="15"/><text class="finger-check" x="241" y="77">✓</text>
         </g>
         <g class="hand-finger" data-finger="left_middle" role="button" tabindex="0">
           <title>Left middle finger</title>
-          <path class="finger-shape" d="M209 199 L210 54 C210 33 223 19 241 19 C260 19 273 34 272 54 L268 201 C267 216 256 226 241 226 C222 225 209 216 209 199Z"/>
-          <path class="finger-ridge" d="M218 50 C226 34 255 34 264 50 M219 61 C229 47 253 47 263 60 M220 72 C231 60 251 60 262 71"/>
-          <text class="finger-check" x="241" y="47">✓</text>
+          <path class="finger-shape" d="M260 12 H309 V246 C309 261 299 271 285 271 C272 271 260 261 260 246Z"/>
+          <circle class="finger-check-halo" cx="284" cy="52" r="15"/><text class="finger-check" x="284" y="53">✓</text>
         </g>
         <g class="hand-finger" data-finger="left_index" role="button" tabindex="0">
           <title>Left index finger</title>
-          <path class="finger-shape" d="M270 204 L279 79 C281 59 294 47 311 48 C329 49 340 64 338 83 L326 211 C324 226 313 234 298 233 C280 231 269 220 270 204Z"/>
-          <path class="finger-ridge" d="M288 78 C296 63 322 65 331 80 M287 89 C297 76 319 78 329 90 M286 100 C297 89 317 91 327 101"/>
-          <text class="finger-check" x="310" y="75">✓</text>
+          <path class="finger-shape" d="M309 42 H365 V244 C365 260 354 271 340 271 C324 271 309 260 309 244Z"/>
+          <circle class="finger-check-halo" cx="339" cy="82" r="15"/><text class="finger-check" x="339" y="83">✓</text>
         </g>
         <g class="hand-finger" data-finger="left_thumb" role="button" tabindex="0">
           <title>Left thumb</title>
-          <path class="finger-shape" d="M314 208 C339 192 359 171 379 153 C394 140 411 141 423 152 C436 164 434 182 421 195 L350 267 C337 280 319 278 309 265 C298 250 298 224 314 208Z"/>
-          <path class="finger-ridge" d="M380 161 C393 153 411 160 416 173 M373 169 C387 162 404 168 410 180 M366 177 C379 172 394 177 402 188"/>
-          <text class="finger-check" x="399" y="169">✓</text>
+          <path class="finger-shape" d="M374 174 H443 V227 C438 248 426 270 414 291 C407 304 404 315 405 326 C388 321 376 308 374 289Z"/>
+          <circle class="finger-check-halo" cx="422" cy="204" r="15"/><text class="finger-check" x="422" y="205">✓</text>
         </g>
 
         <g class="hand-finger" data-finger="right_thumb" role="button" tabindex="0">
           <title>Right thumb</title>
-          <path class="finger-shape" d="M586 208 C561 192 541 171 521 153 C506 140 489 141 477 152 C464 164 466 182 479 195 L550 267 C563 280 581 278 591 265 C602 250 602 224 586 208Z"/>
-          <path class="finger-ridge" d="M520 161 C507 153 489 160 484 173 M527 169 C513 162 496 168 490 180 M534 177 C521 172 506 177 498 188"/>
-          <text class="finger-check" x="501" y="169">✓</text>
+          <path class="finger-shape" d="M526 174 H457 V227 C462 248 474 270 486 291 C493 304 496 315 495 326 C512 321 524 308 526 289Z"/>
+          <circle class="finger-check-halo" cx="478" cy="204" r="15"/><text class="finger-check" x="478" y="205">✓</text>
         </g>
         <g class="hand-finger" data-finger="right_index" role="button" tabindex="0">
           <title>Right index finger</title>
-          <path class="finger-shape" d="M630 204 L621 79 C619 59 606 47 589 48 C571 49 560 64 562 83 L574 211 C576 226 587 234 602 233 C620 231 631 220 630 204Z"/>
-          <path class="finger-ridge" d="M612 78 C604 63 578 65 569 80 M613 89 C603 76 581 78 571 90 M614 100 C603 89 583 91 573 101"/>
-          <text class="finger-check" x="590" y="75">✓</text>
+          <path class="finger-shape" d="M591 42 H535 V244 C535 260 546 271 560 271 C576 271 591 260 591 244Z"/>
+          <circle class="finger-check-halo" cx="561" cy="82" r="15"/><text class="finger-check" x="561" y="83">✓</text>
         </g>
         <g class="hand-finger" data-finger="right_middle" role="button" tabindex="0">
           <title>Right middle finger</title>
-          <path class="finger-shape" d="M691 199 L690 54 C690 33 677 19 659 19 C640 19 627 34 628 54 L632 201 C633 216 644 226 659 226 C678 225 691 216 691 199Z"/>
-          <path class="finger-ridge" d="M682 50 C674 34 645 34 636 50 M681 61 C671 47 647 47 637 60 M680 72 C669 60 649 60 638 71"/>
-          <text class="finger-check" x="659" y="47">✓</text>
+          <path class="finger-shape" d="M640 12 H591 V246 C591 261 601 271 615 271 C628 271 640 261 640 246Z"/>
+          <circle class="finger-check-halo" cx="616" cy="52" r="15"/><text class="finger-check" x="616" y="53">✓</text>
         </g>
         <g class="hand-finger" data-finger="right_ring" role="button" tabindex="0">
           <title>Right ring finger</title>
-          <path class="finger-shape" d="M743 205 L751 77 C752 58 740 44 724 43 C706 42 694 56 694 75 L695 202 C695 217 705 226 719 227 C733 228 742 219 743 205Z"/>
-          <path class="finger-ridge" d="M743 73 C736 59 710 57 702 72 M742 83 C732 70 712 70 702 81 M740 93 C731 82 712 82 703 92"/>
-          <text class="finger-check" x="723" y="69">✓</text>
+          <path class="finger-shape" d="M686 38 H640 V244 C640 259 649 269 661 269 C674 269 686 259 686 244Z"/>
+          <circle class="finger-check-halo" cx="659" cy="76" r="15"/><text class="finger-check" x="659" y="77">✓</text>
         </g>
         <g class="hand-finger" data-finger="right_pinky" role="button" tabindex="0">
           <title>Right little finger</title>
-          <path class="finger-shape" d="M782 226 L801 128 C804 110 795 96 780 93 C764 90 752 101 750 118 L740 213 C739 226 749 237 762 239 C772 240 780 235 782 226Z"/>
-          <path class="finger-ridge" d="M793 123 C785 112 766 110 757 120 M791 132 C782 122 767 121 757 130 M788 141 C779 133 767 133 758 139"/>
-          <text class="finger-check" x="777" y="119">✓</text>
+          <path class="finger-shape" d="M732 112 H686 V230 C686 252 693 270 704 282 C716 270 724 252 732 230Z"/>
+          <circle class="finger-check-halo" cx="710" cy="145" r="15"/><text class="finger-check" x="710" y="146">✓</text>
         </g>
 
-        <text class="hand-label" x="231" y="422">LEFT HAND</text>
-        <text class="hand-label" x="669" y="422">RIGHT HAND</text>
+        <g class="hand-label-badge">
+          <rect x="225" y="459" width="150" height="34" rx="17"/>
+          <text class="hand-label" x="300" y="481">LEFT HAND</text>
+        </g>
+        <g class="hand-label-badge">
+          <rect x="525" y="459" width="150" height="34" rx="17"/>
+          <text class="hand-label" x="600" y="481">RIGHT HAND</text>
+        </g>
       </svg>
     </div>
     <div class="finger-summary">
@@ -710,7 +699,7 @@
 <script>
 (() => {
   const $ = selector => document.querySelector(selector);
-  const PANEL_BUILD_VERSION = "0.15.2";
+  const PANEL_BUILD_VERSION = "0.15.3";
   let data = null;
   let busy = false;
   let refreshPromise = null;
@@ -955,7 +944,9 @@
       $("#finger-confirm").textContent = t(fingerModal.mode === "enroll" ? "start_enrollment" : "save_link");
     }
     document.querySelectorAll(".hand-finger").forEach(el => {
-      const title = el.querySelector("title"); if (title) title.textContent = t(el.dataset.finger);
+      const label = t(el.dataset.finger), title = el.querySelector("title");
+      if (title) title.textContent = label;
+      el.setAttribute("aria-label", label);
     });
     const handLabels = document.querySelectorAll(".hand-label");
     if (handLabels[0]) handLabels[0].textContent = t("left_hand");
@@ -1463,7 +1454,11 @@
     if (!fingerModal) return;
     const registered = registeredFor(fingerModal.name, fingerModal.reader_id, fingerModal.mode === "assign" ? fingerModal.slot : null);
     const codes = new Set(registered.map(user => user.finger));
-    document.querySelectorAll(".hand-finger").forEach(el => { const code=el.dataset.finger; el.classList.toggle("registered",codes.has(code)); el.classList.toggle("selected",selectedFinger===code); el.setAttribute("aria-disabled",codes.has(code)); });
+    document.querySelectorAll(".hand-finger").forEach(el => {
+      const code=el.dataset.finger, registered=codes.has(code), selected=selectedFinger===code;
+      el.classList.toggle("registered",registered); el.classList.toggle("selected",selected);
+      el.setAttribute("aria-disabled",registered); el.setAttribute("aria-pressed",selected);
+    });
     $("#finger-selected").textContent = selectedFinger ? fingerLabel(selectedFinger) : t("none");
     $("#finger-registered").textContent = registered.length ? registered.map(user => `${fingerLabel(user.finger)} (ID ${user.slot})`).join(" · ") : t("none");
     $("#finger-confirm").disabled = !selectedFinger || busy;

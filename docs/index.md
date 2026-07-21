@@ -140,7 +140,7 @@ The firmware column compares the version reported by Home Assistant with the imm
 
 #### Physical fingerprint IDs
 
-Select a reader to inspect only that device's physical slots. Enroll, link, assign a finger, or request deletion from this reader-specific view.
+Select a reader to inspect only that device's physical slots. Enroll, link, assign a finger, or request deletion from this reader-specific view. The photographic two-hand selector keeps every finger as an independent keyboard-accessible control and marks positions already registered for that person.
 
 #### ESPHome Device Builder
 
