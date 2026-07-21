@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.15.3
+
+- Replaces the drawn finger selector with a photographic pair of real hands while retaining ten keyboard-accessible hit areas; selected and registered overlays are alpha-masked to the exact photographic silhouette of each finger.
+
 ## 0.15.2
 
 - Recommends reader firmware 0.6.3, which translates all ten stored finger positions according to the live English/Spanish display selection.
