@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.0
+
+- Improves panel layout, search, filtering, accessibility, and mobile usability.
+- Strengthens administrator access and Home Assistant identity checks.
+- Improves reader detection and firmware-operation reliability.
+- Adds tested recovery and pre-release validation tools.
+
 ## 0.15.3
 
 - Replaces the drawn finger selector with a photographic pair of real hands while retaining ten keyboard-accessible hit areas; selected and registered overlays are alpha-masked to the exact photographic silhouette of each finger.

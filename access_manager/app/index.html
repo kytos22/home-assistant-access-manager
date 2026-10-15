@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate, max-age=0">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <meta name="theme-color" content="#0b1118">
+  <meta name="theme-color" content="#0c1420">
   <title>Access Manager</title>
   <style>
     :root {
@@ -288,6 +288,102 @@
       table.responsive-table td { grid-template-columns: 1fr; gap: 5px; }
       .form-body { padding-inline: 13px; }
     }
+    /* Compact workspace, with controls that remain usable inside HA Ingress. */
+    [hidden] { display: none !important; }
+    body { background: radial-gradient(ellipse at 0 0, #172c40, transparent 48rem), #0b121c; }
+    main { width: min(1320px, calc(100% - 48px)); padding-top: 24px; }
+    header { margin-bottom: 18px; }
+    .brand { display: grid; grid-template-columns: auto auto; gap: 3px 20px; align-items: center; }
+    .brand h1 { font-size: clamp(1.4rem, 3vw, 1.9rem); letter-spacing: -.035em; }
+    .brand p { grid-column: 1; margin: 0; font-size: .8rem; }
+    .repository-docs { grid-column: 2; grid-row: 1 / 3; margin: 0; padding: 9px 10px; font-size: .78rem; box-shadow: none; }
+    .header-actions { justify-content: flex-end; gap: 8px; }
+    .header-actions > label[for="language"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .badge { padding: 7px 10px; font-size: .78rem; }
+    .language-select { min-width: 112px; font-size: .8rem; }
+    .tabs { position: sticky; top: 0; z-index: 20; border-radius: 12px; padding: 5px; backdrop-filter: blur(16px); background: rgba(12,21,32,.95); }
+    .tab-button { padding: 11px 15px; font-size: .84rem; border-radius: 8px; }
+    .tab-button.active { background: #1c3b43; color: #99f0d7; box-shadow: inset 0 -2px var(--accent); }
+    .card { padding: 18px; border-radius: 15px; background: linear-gradient(145deg, #142131, #101a27); box-shadow: 0 6px 22px rgba(0,0,0,.12); }
+    .stats { padding: 0; gap: 1px; overflow: hidden; background: var(--line); }
+    .stat { min-height: 78px; border: 0; border-radius: 0; background: #111f2e; padding: 14px 20px; }
+    .stat span { font-size: .7rem; letter-spacing: .07em; }
+    .stat strong { margin-top: 5px; font-size: 1.45rem; font-variant-numeric: tabular-nums; }
+    button, summary, input, select { transition: background .15s, border-color .15s, box-shadow .15s; }
+    button:hover:not(:disabled) { filter: brightness(1.12); }
+    button:focus-visible, summary:focus-visible, a:focus-visible, .hand-finger:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; }
+    button.secondary { background: #263c52; }
+    button:disabled { opacity: .55; }
+    .sync-strip { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -4px 2px 12px; color: var(--muted); font-size: .75rem; }
+    .sync-strip button { padding: 5px 9px; min-height: 30px; font-size: .75rem; }
+    .list-toolbar { display: grid; grid-template-columns: minmax(180px,1fr) minmax(160px,.46fr); gap: 12px; align-items: end; margin: 14px 0; }
+    .list-toolbar label { margin: 0; font-size: .76rem; }
+    .list-toolbar input, .list-toolbar select { margin-top: 6px; padding: 10px 12px; font-size: .85rem; }
+    .list-footer { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-top: 12px; color: var(--muted); font-size: .75rem; }
+    .pager { display: flex; gap: 6px; align-items: center; }
+    .pager button { padding: 6px 10px; font-size: .76rem; min-height: 32px; }
+    .pager select { width: auto; padding: 6px 8px; font-size: .76rem; }
+    .people-table th:first-child { width: 27%; }
+    .people-table th:nth-child(2) { width: 46%; }
+    .people-table th:last-child { width: 27%; }
+    .people-table td { padding-block: 10px; }
+    .people-table .credential { padding: 3px 7px; line-height: 1.4; }
+    .credential button { min-width: 24px; min-height: 24px; }
+    .person-lifecycle .entity { display: none; }
+    .credential-toggle { display: none; }
+    .person-link-warning { font-size: .72rem; max-width: 28em; }
+    .person-link-warning:empty { display: none; }
+    .person-primary-actions { display: grid; gap: 6px; }
+    .person-actions-menu summary { border: 1px solid #38516a; color: #d6e5f3; background: #1b2d40; }
+    .person-actions-menu[open] { flex-basis: auto; }
+    .person-actions-menu-content { position: fixed; z-index: 40; min-width: 225px; max-height: calc(100dvh - 24px); overflow-y: auto; padding: 10px; display: grid; background: #142435; border: 1px solid #38516a; border-radius: 12px; box-shadow: 0 12px 32px #0007; }
+    .person-actions-menu { position: relative; }
+    .person-actions-menu-content button { width: 100%; text-align: left; }
+    table:has(td.empty) thead { display: none; }
+    .empty { padding: 18px 8px; font-size: .85rem; }
+    .notice { position: sticky; top: 65px; z-index: 25; white-space: pre-wrap; overflow-wrap: anywhere; }
+    .modal-head { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+    .form-body { padding-top: 14px; }
+    .form-error { margin: 12px 22px; }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; } }
+    @media (max-width: 1100px) { header { align-items: flex-start; flex-direction: column; gap: 14px; } .header-actions { justify-content: flex-start; } }
+    @media (max-width: 840px) {
+      main { width: calc(100% - 24px); padding-top: 16px; }
+      .brand { width: 100%; grid-template-columns: minmax(0,1fr) auto; gap: 4px 10px; }
+      .repository-docs { font-size: .74rem; }
+      .repository-docs .external-arrow { display: none; }
+      .header-actions { flex-wrap: nowrap; width: 100%; }
+      .header-actions .language-select { width: 115px; min-width: 100px; }
+      .header-actions #connection { margin-left: auto; white-space: normal; font-size: .72rem; }
+      #app-version { font-size: .7rem; }
+      .mobile-tabs { border-radius: 11px; margin-bottom: 10px; }
+      .stat { min-height: 68px; padding: 11px 14px; }
+      .card { padding: 14px; }
+      .stats { padding: 0; }
+      .list-toolbar { grid-template-columns: 1fr; gap: 10px; }
+      .list-toolbar input, .list-toolbar select { font-size: 16px; }
+      .sync-strip { margin-bottom: 10px; }
+      .sync-strip button { min-height: 36px; }
+      .people-table td { padding-block: 4px; }
+      .people-table .person-heading { font-size: .92rem; }
+      .people-table .person-heading { justify-content: space-between; gap: 8px; }
+      .people-table .credential-toggle { display: inline-flex; align-items: center; min-height: 32px; padding: 5px 8px; font-size: .7rem; border: 1px solid #38516a; color: var(--muted); background: #15283a; }
+      .people-table .credentials-cell { display: none; }
+      .people-table .credentials-expanded .credentials-cell { display: block; }
+      .people-table .person-lifecycle { margin-top: 4px; }
+      .people-table .credential { font-size: .7rem; }
+      .person-row-actions { flex-wrap: nowrap; justify-content: flex-end; }
+      .person-actions-menu { width: auto; }
+      .person-actions-menu summary { min-height: 36px; margin: 0; padding: 7px 10px; }
+      .person-actions-menu-content { position: static; min-width: 0; }
+      .person-actions-menu[open] { width: 100%; }
+      .person-primary-actions { display: grid; width: 100%; }
+      .person-primary-actions button { min-height: 40px; }
+      .list-footer { align-items: flex-start; flex-direction: column; gap: 10px; }
+      .pager { width: 100%; justify-content: flex-end; }
+      .pager button, .pager select { min-height: 40px; }
+      .notice { top: 70px; }
+    }
   </style>
 </head>
 <body>
@@ -314,7 +410,7 @@
     </div>
   </header>
 
-  <div id="notice" class="notice"></div>
+  <div id="notice" class="notice" role="alert"></div>
 
   <nav class="tabs" role="tablist" aria-label="Access Manager sections">
     <button class="tab-button active" data-tab="people" data-i18n="tab_people">Users & credentials</button>
@@ -339,6 +435,8 @@
     </select>
   </div>
 
+  <div class="sync-strip"><span id="sync-status" role="status" data-i18n="sync_connecting">Loading your environment…</span><button id="refresh-panel" class="secondary" type="button" data-i18n="refresh_panel">Refresh</button></div>
+
   <section id="tab-people" class="tab-panel active" role="tabpanel">
     <section class="card stats">
       <div class="stat"><span data-i18n="people">People</span><strong id="person-count">—</strong></div>
@@ -351,12 +449,17 @@
         <h2 data-i18n="users_credentials">Users and credentials</h2>
         <button id="add-person" class="secondary" data-i18n="add_user">Add user</button>
       </div>
+      <div class="list-toolbar">
+        <label for="people-search"><span data-i18n="search_people">Find a person or credential</span><input id="people-search" type="search" autocomplete="off" data-placeholder="search_people_placeholder" placeholder="Name, reader or credential…"></label>
+        <label for="people-filter"><span data-i18n="filter_people">Show</span><select id="people-filter"><option value="all" data-i18n="all_people">All people</option><option value="linked" data-i18n="linked_people">Linked people</option><option value="attention" data-i18n="needs_attention">Needs attention</option></select></label>
+      </div>
       <div class="table-wrap">
         <table class="people-table">
           <thead><tr><th data-i18n="user">User</th><th data-i18n="linked_credentials">Linked credentials</th><th></th></tr></thead>
           <tbody id="people-body"></tbody>
         </table>
       </div>
+      <div class="list-footer"><span id="people-results" role="status"></span><div class="pager"><select id="people-page-size" aria-label="People per page"><option value="10">10</option><option value="25">25</option><option value="50">50</option></select><button id="people-previous" class="secondary" type="button" data-i18n="previous_page">Previous</button><button id="people-next" class="secondary" type="button" data-i18n="next_page">Next</button></div></div>
     </section>
     <section class="card infrastructure">
       <div class="section-head"><h2 data-i18n="shared_credentials">Shared keypad credentials</h2><button id="add-shared-keypad" class="secondary" data-i18n="add_shared_credential">Add shared code or tag</button></div>
@@ -530,12 +633,14 @@
         <div class="retention-control"><label for="log-retention" data-i18n="retention">Retention</label><select id="log-retention"></select></div>
       </div>
       <p class="hint" data-i18n="retention_hint">Expired entries are deleted automatically. A hard safety limit of 10,000 entries also applies.</p>
+      <div class="list-toolbar"><label for="log-search"><span data-i18n="search_activity">Search recent activity</span><input id="log-search" type="search" autocomplete="off" data-placeholder="search_activity_placeholder" placeholder="Person, door, event or detail…"></label><label for="log-event-filter"><span data-i18n="event">Event</span><select id="log-event-filter"><option value="" data-i18n="all_events">All events</option></select></label></div>
       <div class="table-wrap">
         <table>
           <thead><tr><th data-i18n="date">Date</th><th data-i18n="event">Event</th><th>ID</th><th data-i18n="confidence">Confidence</th><th data-i18n="detail">Detail</th></tr></thead>
           <tbody id="events-body"></tbody>
         </table>
       </div>
+      <div class="list-footer"><span id="log-results" role="status"></span></div>
     </section>
   </section>
 </main>
@@ -699,11 +804,13 @@
 <script>
 (() => {
   const $ = selector => document.querySelector(selector);
-  const PANEL_BUILD_VERSION = "0.15.3";
+  const PANEL_BUILD_VERSION = "0.16.0";
   let data = null;
   let busy = false;
   let refreshPromise = null;
-  let language = localStorage.getItem("access-manager-language") || "en";
+  const stored = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch { return fallback; } };
+  const remember = (key, value) => { try { localStorage.setItem(key, value); } catch {} };
+  let language = ["en", "es"].includes(stored("access-manager-language", "en")) ? stored("access-manager-language", "en") : "en";
   const REFRESH_INTERVAL_MS = 10000;
   let activeTab = "people";
   let selectedReader = "";
@@ -715,6 +822,12 @@
   let confirmSubmit = null;
   let learningReaderId = null;
   let buildRecoveryPromise = null;
+  let peoplePage = 1;
+  let lastSynced = null;
+  let transportFailed = false;
+  let activeModal = null;
+  let connectionError = "";
+  const expandedPeople = new Set();
   const revealedCredentials = new Map();
 
   const messages = {
@@ -868,6 +981,13 @@
     }
   };
 
+  Object.assign(messages.en, { repository_documentation:"Documentation", search_people:"Find a person or credential", search_people_placeholder:"Name, reader or credential…", filter_people:"Show", all_people:"All people", linked_people:"Linked people", needs_attention:"Needs attention", previous_page:"Previous", next_page:"Next", people_per_page:"People per page", people_results:"{start}–{end} of {total} people", no_matches:"No matching results. Try another search or filter.", add_credential:"Add credential", search_activity:"Search recent activity", search_activity_placeholder:"Person, door, event or detail…", all_events:"All events", activity_results:"{count} of {total} recent entries", sync_connecting:"Loading your environment…", sync_updated:"Updated {time}", sync_failed:"Connection lost · showing the last received data", refresh_panel:"Refresh", request_timeout:"The request timed out. Check the connection and try again.", invalid_response:"The server returned an unexpected response.", loading:"Loading…" });
+  Object.assign(messages.es, { repository_documentation:"Documentación", search_people:"Buscar persona o credencial", search_people_placeholder:"Nombre, lector o credencial…", filter_people:"Mostrar", all_people:"Todas las personas", linked_people:"Personas vinculadas", needs_attention:"Requieren atención", previous_page:"Anterior", next_page:"Siguiente", people_per_page:"Personas por página", people_results:"{start}–{end} de {total} personas", no_matches:"No hay coincidencias. Prueba otra búsqueda o filtro.", add_credential:"Añadir credencial", search_activity:"Buscar en la actividad reciente", search_activity_placeholder:"Persona, puerta, evento o detalle…", all_events:"Todos los eventos", activity_results:"{count} de {total} eventos recientes", sync_connecting:"Cargando tu entorno…", sync_updated:"Actualizado a las {time}", sync_failed:"Conexión perdida · se muestran los últimos datos recibidos", refresh_panel:"Actualizar", request_timeout:"La solicitud ha tardado demasiado. Comprueba la conexión e inténtalo de nuevo.", invalid_response:"El servidor ha devuelto una respuesta inesperada.", loading:"Cargando…" });
+
+  messages.en.credential_count = "{count} credentials";
+  messages.es.credential_count = "{count} credenciales";
+  Object.assign(messages.en, { link_help_missing:"Home Assistant could not resolve this Person link. Existing physical credentials remain active; review the association to restore mobile NFC access." });
+  Object.assign(messages.es, { tab_keypads:"Teclados", keypads:"Teclados", keypad:"Teclado", add_keypad:"Añadir teclado", edit_keypad:"Editar teclado", link_state_missing:"Vínculo no encontrado", link_help_missing:"Home Assistant no ha podido resolver este vínculo. Las credenciales físicas siguen activas; revisa la asociación para restaurar el acceso NFC móvil." });
   const t = (key, vars = {}) => {
     let value = messages[language][key] ?? messages.en[key] ?? key;
     Object.entries(vars).forEach(([name, replacement]) => value = value.replace(`{${name}}`, replacement));
@@ -881,9 +1001,23 @@
   const apiUrl = path => new URL(`api/${path}`, panelBaseUrl).toString();
 
   async function request(path, options = {}) {
-    const response = await fetch(apiUrl(path), { cache:"no-store", ...options, headers: {"Content-Type":"application/json", "X-Fingerprint-Admin":"1", "Accept-Language":language, ...(options.headers || {})} });
-    if (!response.ok) throw new Error((await response.text()) || `Error ${response.status}`);
-    return response.json();
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    options.signal?.addEventListener("abort", abort, {once:true});
+    if (options.signal?.aborted) abort();
+    const timeout = setTimeout(abort, 30000);
+    try {
+      const response = await fetch(apiUrl(path), { cache:"no-store", ...options, signal:controller.signal, headers: {"Content-Type":"application/json", "X-Fingerprint-Admin":"1", "Accept-Language":language, ...(options.headers || {})} });
+      const text = await response.text();
+      let result;
+      try { result = text ? JSON.parse(text) : {}; } catch { if (response.ok) throw new Error(t("invalid_response")); }
+      if (response.ok && (!result || typeof result !== "object" || Array.isArray(result))) throw new Error(t("invalid_response"));
+      if (!response.ok || result?.ok === false) throw new Error(result?.error || result?.message || text || `Error ${response.status}`);
+      return result;
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error(t("request_timeout"));
+      throw error;
+    } finally { clearTimeout(timeout); options.signal?.removeEventListener("abort", abort); }
   }
   function recoverPanelBuild(version) {
     if (buildRecoveryPromise) return buildRecoveryPromise;
@@ -898,7 +1032,7 @@
       if (!response.ok || servedVersion !== version || !html.includes(`const PANEL_BUILD_VERSION = "${version}"`)) {
         throw new Error(t("panel_update_failed"));
       }
-      sessionStorage.setItem("access-manager-loaded-build", version);
+      try { sessionStorage.setItem("access-manager-loaded-build", version); } catch {}
       document.open("text/html", "replace");
       document.write(html);
       document.close();
@@ -912,9 +1046,12 @@
   async function mutate(path, method, payload, options = {}) {
     if (busy) return false;
     busy = true;
+    const controls = [...document.querySelectorAll(".modal.open button:not(:disabled)")];
+    controls.forEach(button => { button.disabled = true; });
+    document.querySelectorAll(".modal.open [role=dialog]").forEach(dialog => dialog.setAttribute("aria-busy", "true"));
     try { await request(path, {method, body: payload === undefined ? undefined : JSON.stringify(payload)}); await refresh(); showError(); return true; }
     catch (error) { if (options.inline) throw error; showError(error.message); return false; }
-    finally { busy = false; }
+    finally { busy = false; controls.forEach(button => { if (button.isConnected) button.disabled = false; }); document.querySelectorAll(".modal [role=dialog]").forEach(dialog => dialog.removeAttribute("aria-busy")); if (data) renderFingerprintReaders(); }
   }
 
   function applyLanguage() {
@@ -922,6 +1059,8 @@
     document.title = t("app_title");
     $("#language").value = language;
     document.querySelectorAll("[data-i18n]").forEach(el => el.textContent = t(el.dataset.i18n));
+    document.querySelectorAll("[data-placeholder]").forEach(el => el.placeholder = t(el.dataset.placeholder));
+    $("#people-page-size").setAttribute("aria-label", t("people_per_page"));
     const mobileTabSelect = $("#mobile-tab-select");
     mobileTabSelect.value = activeTab;
     mobileTabSelect.setAttribute("aria-label", t("section"));
@@ -952,14 +1091,17 @@
     if (handLabels[0]) handLabels[0].textContent = t("left_hand");
     if (handLabels[1]) handLabels[1].textContent = t("right_hand");
     $(".hand-stage svg").setAttribute("aria-label", `${t("left_hand")} / ${t("right_hand")}`);
-    localStorage.setItem("access-manager-language", language);
+    remember("access-manager-language", language);
     if (data) render();
   }
 
   function switchTab(tab) {
+    if (!document.getElementById(`tab-${tab}`)) tab = "people";
+    if (activeTab !== tab) document.querySelectorAll(".person-actions-menu[open]").forEach(menu => menu.open = false);
     activeTab = tab;
-    document.querySelectorAll(".tab-button").forEach(button => button.classList.toggle("active", button.dataset.tab === tab));
-    document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.toggle("active", panel.id === `tab-${tab}`));
+    remember("access-manager-tab", tab);
+    document.querySelectorAll(".tab-button").forEach(button => { const selected = button.dataset.tab === tab; button.classList.toggle("active", selected); button.setAttribute("role", "tab"); button.id = `nav-${button.dataset.tab}`; button.setAttribute("aria-controls", `tab-${button.dataset.tab}`); button.setAttribute("aria-selected", String(selected)); button.tabIndex = selected ? 0 : -1; });
+    document.querySelectorAll(".tab-panel").forEach(panel => { const selected = panel.id === `tab-${tab}`; panel.classList.toggle("active", selected); panel.setAttribute("aria-labelledby", `nav-${panel.id.slice(4)}`); });
     const mobileTabSelect = $("#mobile-tab-select");
     if (mobileTabSelect) mobileTabSelect.value = tab;
   }
@@ -1034,7 +1176,19 @@
 
   function renderPeople() {
     const body = $("#people-body");
-    body.innerHTML = (data.people || []).length ? data.people.map(person => {
+    const query = normalize($("#people-search").value);
+    const filter = $("#people-filter").value;
+    const people = (data.people || []).filter(person => {
+      if (filter === "linked" && (personLinkState(person) !== "linked" || personIsDeleting(person))) return false;
+      if (filter === "attention" && personLinkState(person) === "linked" && !personIsDeleting(person)) return false;
+      const searchable = [person.name, person.ha_person_entity_id, ...(person.credentials || []).flatMap(c => [c.code_hint, c.label, fingerLabel(c.finger), readerName(c.reader_id)])].join(" ");
+      return !query || normalize(searchable).includes(query);
+    });
+    const pageSize = Number($("#people-page-size").value) || 10;
+    const pages = Math.max(1, Math.ceil(people.length / pageSize));
+    peoplePage = Math.min(pages, Math.max(1, peoplePage));
+    const start = (peoplePage - 1) * pageSize;
+    const rows = people.length ? people.slice(start, start + pageSize).map(person => {
       const deleting = personIsDeleting(person);
       const canAddCredentials = personCanReceiveCredentials(person);
       const credentials = (person.credentials || []).length ? person.credentials.map(credential => {
@@ -1046,9 +1200,17 @@
       }).join("") : `<span class="muted">${t("no_credentials")}</span>`;
       const actions = deleting
         ? `<button class="secondary" onclick="viewPersonDeletion(${Number(person.id)})">${esc(t("view_deletion"))}</button>`
-        : `<div class="person-row-actions"><div class="person-primary-actions"><button class="secondary" onclick="prepareFingerprint(${Number(person.id)})" ${canAddCredentials ? "" : "disabled"}>${t("add_fingerprint")}</button><button class="secondary" onclick="openKeypadModal(${Number(person.id)})" ${canAddCredentials ? "" : "disabled"}>${t("add_code")}</button></div><details class="person-actions-menu"><summary>${esc(t("manage_user"))}</summary><div class="person-actions-menu-content"><button class="secondary" onclick="renamePerson(${Number(person.id)})">${t("rename")}</button>${renderPersonLinkActions(person)}<button class="danger" onclick="deletePerson(${Number(person.id)})">${t("delete_person")}</button></div></details></div>`;
-      return `<tr><td><div class="person-heading"><strong>${esc(person.name)}</strong></div>${renderPersonLifecycle(person)}</td><td><div class="credential-list">${credentials}</div></td><td class="actions-cell">${actions}</td></tr>`;
-    }).join("") : `<tr><td colspan="3" class="empty">${t("no_users")}</td></tr>`;
+        : `<div class="person-row-actions"><details class="person-actions-menu" data-menu="credentials"><summary>${esc(t("add_credential"))}</summary><div class="person-actions-menu-content"><div class="person-primary-actions"><button class="secondary" onclick="prepareFingerprint(${Number(person.id)})" ${canAddCredentials ? "" : "disabled"}>${t("add_fingerprint")}</button><button class="secondary" onclick="openKeypadModal(${Number(person.id)})" ${canAddCredentials ? "" : "disabled"}>${t("add_code")}</button></div></div></details><details class="person-actions-menu" data-menu="manage"><summary>${esc(t("manage_user"))}</summary><div class="person-actions-menu-content"><button class="secondary" onclick="renamePerson(${Number(person.id)})">${t("rename")}</button>${renderPersonLinkActions(person)}<button class="danger" onclick="deletePerson(${Number(person.id)})">${t("delete_person")}</button></div></details></div>`;
+      return `<tr data-person-id="${Number(person.id)}" class="${expandedPeople.has(person.id) ? "credentials-expanded" : ""}"><td><div class="person-heading"><strong>${esc(person.name)}</strong><button type="button" class="credential-toggle" aria-expanded="${expandedPeople.has(person.id)}" aria-controls="person-credentials-${Number(person.id)}" onclick="togglePersonCredentials(${Number(person.id)})">${esc(t("credential_count", {count:(person.credentials || []).length}))}</button></div>${renderPersonLifecycle(person)}</td><td class="credentials-cell" id="person-credentials-${Number(person.id)}"><div class="credential-list">${credentials}</div></td><td class="actions-cell">${actions}</td></tr>`;
+    }).join("") : `<tr><td colspan="3" class="empty">${t(query || filter !== "all" ? "no_matches" : "no_users")}</td></tr>`;
+    if (body.dataset.rendered !== rows) {
+      const open = [...body.querySelectorAll("details[open]")].map(el => [el.closest("tr").dataset.personId, el.dataset.menu]);
+      body.innerHTML = rows; body.dataset.rendered = rows;
+      open.forEach(([id, menu]) => { const el = body.querySelector(`[data-person-id="${id}"] details[data-menu="${menu}"]`); if (el) el.open = true; });
+    }
+    $("#people-results").textContent = t("people_results", {start:people.length ? start + 1 : 0, end:Math.min(start + pageSize, people.length), total:people.length});
+    $("#people-previous").disabled = peoplePage <= 1;
+    $("#people-next").disabled = peoplePage >= pages;
   }
 
   function renderSharedKeypadCredentials() {
@@ -1113,7 +1275,9 @@
   function renderFingerprints() {
     const users = (data.users || []).filter(user => user.reader_id === selectedReader);
     const occupied = new Set(users.map(user => Number(user.slot)));
-    if (!occupied.has(Number($("#slot").value))) $("#slot").value = Array.from({length:50},(_,i)=>i+1).find(id => !occupied.has(id)) || "";
+    const requestedSlot = Number($("#slot").value);
+    const freeSlot = Array.from({length:50},(_,i)=>i+1).find(id => !occupied.has(id));
+    if (!Number.isInteger(requestedSlot) || requestedSlot < 1 || requestedSlot > 50 || occupied.has(requestedSlot)) $("#slot").value = freeSlot || "";
     $("#users-body").innerHTML = users.length ? users.map(user => {
       const deleting = user.status === "deleting";
       const status = deleting ? (user.deletion?.state === "sent" ? "delete_pending" : "deleting") : user.status === "pending" ? "pending" : "active";
@@ -1121,7 +1285,8 @@
     }).join("") : `<tr><td colspan="6" class="empty">${t("no_records")}</td></tr>`;
     const selected = (data.access_readers || []).find(reader => reader.id === selectedReader);
     const disabled = busy || !selected?.ready || !selected?.available;
-    ["#enroll","#import","#cancel"].forEach(id => $(id).disabled = disabled);
+    ["#enroll","#import"].forEach(id => $(id).disabled = disabled || freeSlot === undefined);
+    $("#cancel").disabled = disabled;
   }
 
   function renderKeypads() {
@@ -1232,7 +1397,14 @@
 
   function renderLogs() {
     $("#log-retention").innerHTML = (data.log_retention_options || []).map(days => `<option value="${days}" ${days === data.log_retention_days ? "selected" : ""}>${days === 1 ? t("one_day") : t("days",{count:days})}</option>`).join("");
-    $("#events-body").innerHTML = (data.events || []).length ? data.events.map(event => {
+    const eventFilter = $("#log-event-filter"), selectedEvent = eventFilter.value;
+    const types = [...new Set((data.events || []).map(event => event.event_type))].sort();
+    const options = `<option value="">${esc(t("all_events"))}</option>${types.map(type => `<option value="${esc(type)}" ${type === selectedEvent ? "selected" : ""}>${esc(t(type))}</option>`).join("")}`;
+    if (eventFilter.innerHTML !== options) eventFilter.innerHTML = options;
+    const query = normalize($("#log-search").value);
+    const events = (data.events || []).filter(event => (!eventFilter.value || event.event_type === eventFilter.value) && (!query || normalize([event.detail, event.door_id, event.entity_id, event.event_type, t(event.event_type), event.source, (data.doors || []).find(door => door.id === event.door_id)?.name].join(" ")).includes(query)));
+    $("#log-results").textContent = t("activity_results", {count:events.length, total:(data.events || []).length});
+    $("#events-body").innerHTML = events.length ? events.map(event => {
       const door=(data.doors||[]).find(item=>item.id===event.door_id), parts=[];
       if(door||event.door_id)parts.push(`<span>${esc(t("door"))}: ${esc(door?.name||event.door_id)}</span>`);
       if(event.entity_id)parts.push(`<span>${esc(event.entity_id)}</span>`);
@@ -1428,8 +1600,9 @@
     $("#app-version").textContent = `v${version}`;
     $("#app-version").title = t("installed_version");
     $("#app-version").setAttribute("aria-label", `${t("installed_version")}: ${version}`);
-    connection.classList.toggle("online", Boolean(data.connected));
-    connection.querySelector("span:last-child").textContent = data.connected ? t("connected") : t("disconnected");
+    connection.classList.toggle("online", Boolean(data.connected) && !transportFailed);
+    connection.querySelector("span:last-child").textContent = data.connected && !transportFailed ? t("connected") : t("disconnected");
+    $("#sync-status").textContent = transportFailed ? t("sync_failed") : lastSynced ? t("sync_updated", {time:lastSynced.toLocaleTimeString(language, {hour:"2-digit",minute:"2-digit",second:"2-digit"})}) : t("sync_connecting");
     const credentials = (data.people || []).reduce((sum, person) => sum + person.credentials.length, 0)
       + (data.shared_keypad_credentials || []).length;
     $("#person-count").textContent = data.people?.length ?? 0; $("#credential-count").textContent = credentials;
@@ -1441,8 +1614,10 @@
   function refresh() {
     if (refreshPromise) return refreshPromise;
     refreshPromise = (async () => {
-      try { data = await request("state"); render(); showError(); }
-      catch (error) { showError(error.message); }
+      $("#refresh-panel").disabled = true;
+      try { data = await request("state"); lastSynced = new Date(); transportFailed = false; if (connectionError && $("#notice").textContent === connectionError) showError(); connectionError = ""; render(); }
+      catch (error) { transportFailed = true; connectionError = error.message; revealedCredentials.clear(); if (data) render(); else { $("#sync-status").textContent = t("sync_failed"); $("#connection").classList.remove("online"); $("#connection span:last-child").textContent = t("disconnected"); } showError(error.message); }
+      finally { $("#refresh-panel").disabled = false; }
     })().finally(() => { refreshPromise = null; });
     return refreshPromise;
   }
@@ -1739,6 +1914,56 @@
   window.deleteAutomation = id => openConfirm({title:t("delete"),message:t("confirm_delete_automation"),onConfirm:async()=>{if(await mutate(`automations/${id}`,"DELETE"))closeConfirm();}});
   window.editReader = id => openReaderEditor(id);
 
+  $("#refresh-panel").addEventListener("click", refresh);
+  window.togglePersonCredentials = id => { expandedPeople.has(id) ? expandedPeople.delete(id) : expandedPeople.add(id); renderPeople(); document.querySelector(`[data-person-id="${id}"] .credential-toggle`)?.focus(); };
+  for (const id of ["people-search", "people-filter", "people-page-size"]) $("#" + id).addEventListener(id === "people-search" ? "input" : "change", () => { peoplePage = 1; renderPeople(); enhanceResponsiveTables(); });
+  $("#people-previous").addEventListener("click", () => { peoplePage--; renderPeople(); enhanceResponsiveTables(); });
+  $("#people-next").addEventListener("click", () => { peoplePage++; renderPeople(); enhanceResponsiveTables(); });
+  $("#log-search").addEventListener("input", () => { renderLogs(); enhanceResponsiveTables(); });
+  $("#log-event-filter").addEventListener("change", () => { renderLogs(); enhanceResponsiveTables(); });
+  document.addEventListener("toggle", event => {
+    if (event.target.matches?.(".person-actions-menu[open]")) {
+      document.querySelectorAll(".person-actions-menu[open]").forEach(menu => { if (menu !== event.target) menu.open = false; });
+      if (innerWidth > 840) {
+        const panel = event.target.querySelector(".person-actions-menu-content"), rect = event.target.getBoundingClientRect();
+        panel.style.left = `${Math.max(12, Math.min(innerWidth - panel.offsetWidth - 12, rect.right - panel.offsetWidth))}px`;
+        panel.style.top = `${Math.max(12, rect.bottom + panel.offsetHeight + 8 < innerHeight ? rect.bottom + 6 : rect.top - panel.offsetHeight - 6)}px`;
+      }
+    }
+  }, true);
+  document.addEventListener("click", event => { document.querySelectorAll(".person-actions-menu[open]").forEach(menu => { if (!menu.contains(event.target)) menu.open = false; }); });
+  document.querySelector(".tabs").addEventListener("keydown", event => {
+    const tabs = [...document.querySelectorAll(".tab-button")], index = tabs.indexOf(document.activeElement);
+    if (index < 0 || !["ArrowRight", "ArrowLeft", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : (index + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+    switchTab(tabs[next].dataset.tab); tabs[next].focus();
+  });
+  const modalFocus = new Map();
+  const modalObserver = new MutationObserver(records => {
+    for (const {target:modal} of records) {
+      const isOpen = modal.classList.contains("open");
+      if (isOpen && !modalFocus.has(modal)) {
+        modalFocus.set(modal, document.activeElement);
+        activeModal = modal;
+        requestAnimationFrame(() => { if (modal.classList.contains("open")) (modal.querySelector("[autofocus], input:not([disabled]):not([type=hidden]), select:not([disabled]), button:not([disabled])") || modal.querySelector("[role=dialog]")).focus(); });
+      } else if (!isOpen && modalFocus.has(modal)) {
+        const previous = modalFocus.get(modal); modalFocus.delete(modal);
+        activeModal = [...document.querySelectorAll(".modal.open")].at(-1) || null;
+        if (!activeModal && previous?.isConnected) { document.querySelector("main").inert = false; previous.focus(); }
+      }
+    }
+    document.querySelector("main").inert = Boolean(activeModal);
+  });
+  document.querySelectorAll(".modal").forEach(modal => modalObserver.observe(modal, {attributes:true, attributeFilter:["class"]}));
+  document.addEventListener("keydown", event => {
+    if (event.key !== "Tab" || !activeModal) return;
+    const focusable = [...activeModal.querySelectorAll('button, [href], input, select, textarea, [tabindex="0"]')].filter(el => !el.disabled && el.getClientRects().length && !el.closest("[hidden]"));
+    const first = focusable[0], last = focusable.at(-1);
+    if (!first) { event.preventDefault(); return; }
+    if (!activeModal.contains(document.activeElement) || event.shiftKey && document.activeElement === first) { event.preventDefault(); (event.shiftKey ? last : first).focus(); }
+    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+  });
   $("#language").addEventListener("change",event=>{language=event.target.value;applyLanguage();});
   document.querySelectorAll(".tab-button").forEach(button=>button.addEventListener("click",()=>switchTab(button.dataset.tab)));
   $("#mobile-tab-select").addEventListener("change",event=>switchTab(event.target.value));
@@ -1783,7 +2008,7 @@
   $("#build-esphome").addEventListener("click",buildEsphomeFirmware);
   $("#copy-esphome").addEventListener("click",copyEsphomeConfig);
   $("#download-esphome").addEventListener("click",downloadEsphomeConfig);
-  document.addEventListener("keydown",event=>{if(event.key!=="Escape")return;if(fingerModal)closeFingerModal();else if(keypadPerson)closeKeypadModal();else if($("#editor-modal").classList.contains("open"))closeEditor();else if($("#confirm-modal").classList.contains("open"))closeConfirm();});
+  document.addEventListener("keydown",event=>{if(event.key!=="Escape"||busy)return;if(activeModal?.id==="confirm-modal")closeConfirm();else if(activeModal?.id==="editor-modal")closeEditor();else if(activeModal?.id==="keypad-modal")closeKeypadModal();else if(activeModal?.id==="finger-modal")closeFingerModal();else document.querySelectorAll(".person-actions-menu[open]").forEach(menu=>menu.open=false);});
 
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
@@ -1792,6 +2017,7 @@
     } else refresh();
   });
   applyLanguage();
+  switchTab(stored("access-manager-tab", "people"));
   renderEsphomeProfile();
   refresh();
   setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_INTERVAL_MS);

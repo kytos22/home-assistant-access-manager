@@ -134,7 +134,8 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("BUILD_FROM", dockerfile)
         self.assertFalse((root / "access_manager" / "build.yaml").exists())
         self.assertIn('id="app-version"', html)
-        self.assertIn('const PANEL_BUILD_VERSION = "0.15.3"', html)
+        manifest_version = APP.YAML(typ="safe").load(app_config)["version"]
+        self.assertEqual(re.findall(r'^\s*const PANEL_BUILD_VERSION = "([^"]+)";\s*$', html, re.MULTILINE), [manifest_version])
         self.assertIn('cache:"no-store"', html)
         self.assertTrue(APP.APP_VERSION)
 
@@ -636,13 +637,14 @@ class RegistryTests(unittest.TestCase):
             "devices/validate", {"configuration": "front-reader.yaml"},
             on_event=lambda name, data: events.append((name, data)),
         ))
-        install = asyncio.run(client.command(
-            "firmware/install", {"configuration": "front-reader.yaml"}
-        ))
-        follow = asyncio.run(client.command(
-            "firmware/follow_job", {"job_id": install["job_id"]},
-            on_event=lambda name, data: events.append((name, data)),
-        ))
+        async def install_and_follow():
+            install = await client.command("firmware/install", {"configuration": "front-reader.yaml"})
+            follow = await client.command(
+                "firmware/follow_job", {"job_id": install["job_id"]},
+                on_event=lambda name, data: events.append((name, data)),
+            )
+            return install, follow
+        install, follow = asyncio.run(install_and_follow())
 
         self.assertTrue(validate["success"])
         self.assertTrue(follow["install_completed"])
@@ -678,7 +680,7 @@ class RegistryTests(unittest.TestCase):
             ("output", "ESPHome Dashboard process output\\n"),
             ("output", "ESPHome Dashboard process output\\n"),
         ])
-        self.assertEqual(install["job_id"], "dashboard:run:front-reader.yaml")
+        self.assertRegex(install["job_id"], r"^dashboard:run:[A-Za-z0-9_-]{16}:front-reader\.yaml$")
 
     def test_local_ingress_prefers_device_builder_websocket_api(self):
         transport = APP.HomeAssistantIngressTransport(object())
@@ -1013,8 +1015,16 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
                 "entity_id": "lock.front_door",
                 "state": "locked",
                 "attributes": {"supported_features": APP.LOCK_OPEN_FEATURE},
-            }
+            },
+            "person.example_person": {
+                "state": "home", "attributes": {"id": "example_person"},
+            },
+            "person.replacement_person": {
+                "state": "home", "attributes": {"id": "replacement_person"},
+            },
         }
+        self.ha.people_api_ready = True
+        self.registry.link_ha_person(self.person_id, "person.example_person")
         self.service_calls = []
         self.events = []
 
@@ -1127,11 +1137,7 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
             self.registry.mobile_nfc_allowed(self.person_id, "front_door")
         )
 
-        self.registry.connection.execute(
-            "UPDATE people SET ha_person_entity_id = NULL WHERE id = ?",
-            (self.person_id,),
-        )
-        self.registry.connection.commit()
+        self.registry.unlink_ha_person(self.person_id)
         revoked = await admin.set_mobile_nfc_permission(Request({
             "person_id": self.person_id,
             "door_id": "front_door",

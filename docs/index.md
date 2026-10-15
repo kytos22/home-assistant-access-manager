@@ -66,6 +66,8 @@ No separate Home Assistant automation is required to open a configured door.
 
 Supported architectures are `amd64`, `aarch64`, and `armv7`.
 
+Open the panel through Home Assistant Ingress using an active administrator or owner account. Direct connections to port 8099 are rejected, including from other apps. Access Manager validates the Ingress user and current Home Assistant administrator rights; if authorization is unavailable, it fails closed until Home Assistant recovers. No installation-specific IP address, separate password, or additional Supervisor role is required. See [Panel authorization](../SECURITY.md#panel-authorization).
+
 ### App-level configuration
 
 The Home Assistant app configuration page exposes `warning`, `info`, and `debug` log levels. Restart the app after changing the level. This setting controls the Home Assistant app log; activity-history retention is configured independently in the Access Manager panel.
@@ -93,11 +95,13 @@ This section owns Access Manager identities and the credentials assigned to them
 
 - **Linked** identities reference an existing Home Assistant `person.*` entity and can receive credentials and mobile NFC permissions.
 - **Not linked** identities exist only in Access Manager. Link them before granting access.
-- **Person missing** means the former Home Assistant Person no longer exists. Existing physical credentials remain visible and active, while mobile NFC access is suspended until the link is repaired.
+- **Person missing** means the saved Home Assistant Person identity cannot be resolved to an unambiguous current entity. Existing physical credentials remain visible and active, while mobile NFC access is denied until the link is repaired.
 - **Link not verified** means Home Assistant could not confirm the relationship. The same safe suspension applies to mobile NFC permissions.
 - **Deletion pending** keeps the identity visible until every fingerprint reader confirms template removal.
 
-The compact user row keeps **Add fingerprint** and **Add code/tag** visible. Rename, link/relink, unlink, and deletion actions are grouped under **Manage**.
+Use the search field to find a person by name, linked entity, reader, or credential hint. The status filter separates linked identities from those that need attention. The list shows 10, 25, or 50 people per page and keeps open action menus intact during automatic updates.
+
+**Add credential** groups fingerprint and keypad enrollment. **Manage** contains rename, link/relink, unlink, and deletion actions. On mobile, tap a person's credential count to expand their credentials; desktop keeps them visible. The approved photographic hand selector and individual finger controls are unchanged.
 
 #### Fingerprint credentials
 
@@ -242,6 +246,8 @@ Decrypted values are never written to application or activity logs.
 
 The activity log records credential attempts, enrollment and deletion progress, door actions, automation changes, mobile NFC decisions, firmware operations, and door state transitions.
 
+Search and event-type filters apply to the recent entries received by the panel (currently up to 200), not the complete retained database. The result counter makes that scope explicit. Retention continues to apply to the backend's full activity history.
+
 Retention is configurable. A hard 10,000-entry safety limit always applies. Door records distinguish lock state from physical contact state and identify whether a correlated change came from Access Manager or an external source.
 
 ## Fingerprint-reader firmware
@@ -283,6 +289,10 @@ Never expose Device Builder with `leave_front_door_open`, and do not publish `se
 ### People
 
 Access Manager stores an explicit relationship to `person.*`. It does not silently recreate or transfer identities when a Home Assistant Person disappears.
+
+The relationship also stores Home Assistant's stable Person ID. Renaming the entity ID keeps the same local person, physical credentials, and existing NFC permissions; it does not reactivate revoked or suspended permissions. A new Person reusing the old entity ID is a different identity and cannot inherit access. Changing the link to a different Person requires reconfirming its enabled NFC permissions.
+
+On upgrade, a verified existing link learns its stable ID automatically. If the entity was already renamed or is no longer available before that first verification, choose the correct Person under **Manage → Link/relink** and review its NFC permissions. Access Manager does not guess an entity ID from the Person's name or storage ID.
 
 ### Normalized credential event
 
@@ -330,24 +340,43 @@ Deleting app data removes local identity and credential records but does not era
 | Device Builder is incompatible | Confirm the official ESPHome Device Builder is installed and current, then reconnect from **Fingerprint readers**. |
 | Firmware version is `unknown` | Map the reader's firmware-version sensor and install firmware 0.6.2 or newer, which explicitly publishes it at boot. |
 | Display language control is missing | Confirm the reader uses the display profile and map its `select.*display_language` entity. |
+| A reader has no detected version or language entity | Set the correct device name or map the entity explicitly. Autodetection requires one exact device-name-and-role match; it never borrows the only available entity from another reader, including for legacy readers. |
 | Language changes but a finger stays in English | Install firmware 0.6.3 or newer; standardized finger positions are translated at render time. |
 | Existing YAML is not selected | Link the Access Manager reader and ensure its device name matches the canonical `<device_name>.yaml`. |
 | OTA update is refused | Review custom/newer refs, configuration ownership, version history, secret-key metadata, and the preflight SHA-256 result. |
 | Reader is offline during identity deletion | The identity remains deletion-pending until the physical reader confirms removal. |
 | Mobile NFC is suspended | Repair the Home Assistant Person link, then explicitly confirm the permission. |
 | Door receives duplicate commands | Disable older automations that also act on the same credential event. |
+| Panel returns HTTP 403 | Open it through Home Assistant Ingress with an active administrator/owner account. A direct URL or a missing Ingress user identity is intentionally rejected. |
+| Panel returns HTTP 503 during authorization | Check Home Assistant availability and retry. Administrator authorization must succeed before panel access is restored; do not bypass the check. |
 
 ## Development and releases
 
 Local validation:
 
 ```bash
-python -m pip install aiohttp==3.14.1 cryptography==49.0.0 pyyaml
+python -m pip install aiohttp==3.14.1 cryptography==49.0.0 ruamel.yaml==0.19.1 pyyaml
 python -m unittest discover -s tests -v
 node tests/check_ui.mjs
 ```
 
+Browser interaction checks use development-only dependencies; the Home Assistant app image does not include Node.js or Playwright:
+
+```sh
+npm ci --ignore-scripts
+npx playwright install chromium
+npm run test:browser
+```
+
+The browser suite intercepts every request and uses synthetic people, readers, events, and credentials. It checks all seven sections at desktop/mobile widths, searching/filtering/pagination, keyboard navigation, dialog focus, form preservation during polling, connection failure/recovery, free fingerprint slots, the hand selector, and English/Spanish. Pass `--screenshots` to `node tests/check_panel.cjs` to write screenshots into a new temporary directory. `ACCESS_MANAGER_BROWSER_CHANNEL=msedge` can use an already installed Edge browser for local checks.
+
+The status strip shows when data last arrived and allows a manual refresh. A failed request visibly marks the connection as lost while retaining the last received data. API requests time out after 30 seconds; malformed or failed JSON responses surface a readable error. Home Assistant WebSocket request/response operations have a 20-second backend deadline; long-running firmware streams are followed separately.
+
 Access Manager uses `vX.Y.Z` release tags. Reader firmware uses independent immutable `firmware-vX.Y.Z` tags. The full process is documented in [RELEASING.md](../RELEASING.md).
+
+The local HTTP tests simulate trusted Ingress peers and Home Assistant responses; they do not establish compatibility with a live Supervisor or perform an OTA. Before publishing the authorization/identity changes, test real Ingress access as administrator and non-administrator, upgrade a backed-up test registry, rename a test Person, and check two separately configured readers. Pending work and deployment gates are tracked in [TODO.md](../TODO.md).
+
+Use [Pre-release validation](validation.md) for the offline release-to-candidate migration/restore rehearsal, read-only installation preflight, and the approval-gated Ingress test when only one Home Assistant installation is available.
 
 Additional technical references:
 

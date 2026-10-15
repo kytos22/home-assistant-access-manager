@@ -1,6 +1,9 @@
 import { readFile } from "node:fs/promises";
 
 const html = await readFile(new URL("../access_manager/app/index.html", import.meta.url), "utf8");
+const manifest = await readFile(new URL("../access_manager/config.yaml", import.meta.url), "utf8");
+const appVersion = manifest.match(/^version:\s*["']?(\d+\.\d+\.\d+)["']?\s*$/m)?.[1];
+if (!appVersion) throw new Error("Missing application manifest version");
 const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
 
 if (scripts.length !== 1) {
@@ -102,7 +105,7 @@ for (const marker of [
   'recoverPanelBuild',
   'firmware_version_entity',
   'firmware_not_configured',
-  'PANEL_BUILD_VERSION = "0.15.3"',
+  `PANEL_BUILD_VERSION = "${appVersion}"`,
   'door_sensor_hint',
   'visibilitychange',
   'REFRESH_INTERVAL_MS = 10000',

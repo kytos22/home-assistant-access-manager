@@ -235,6 +235,8 @@ class LifecycleRegistryTests(unittest.TestCase):
         self.registry = APP.Registry(self.path)
         person = self.registry.person(1)
         self.assertEqual(person["ha_link_status"], "unknown")
+        self.assertIsNone(person["ha_person_id"])
+        self.assertEqual(person["ha_person_entity_id"], "person.legacy")
         self.assertEqual(person["deletion_total"], 0)
         permission = self.registry.mobile_nfc_permissions(
             include_inactive=True
@@ -284,6 +286,11 @@ class FreshnessTests(unittest.IsolatedAsyncioTestCase):
             self.person_id, "person.example"
         )
         self.ha = APP.HomeAssistant(self.registry)
+        self.ha.states = {
+            "person.example": {
+                "state": "home", "attributes": {"id": "example"}
+            }
+        }
 
     async def asyncTearDown(self):
         self.registry.connection.close()

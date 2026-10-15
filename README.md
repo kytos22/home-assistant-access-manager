@@ -8,6 +8,7 @@ It links Home Assistant People to physical credentials, authorizes each attempt,
 
 ## Highlights
 
+- Compact English/Spanish panel with searchable people and recent activity, link-status filters, pagination, keyboard navigation, and mobile credential expansion.
 - Explicit Home Assistant `person.*` relationships and safe missing-person lifecycle handling.
 - Multiple display or reader-only fingerprint terminals with independent physical slot spaces.
 - Runtime English/Spanish display switching without reflashing.
@@ -20,6 +21,7 @@ It links Home Assistant People to physical credentials, authorizes each attempt,
 - Managed, release-pinned firmware creation and OTA with exact YAML ownership and hash checks.
 - Encrypted recoverable keypad values, keyed HMAC matching, privacy controls, and bounded activity retention.
 - Persistent SQLite data in the app's private `/data` directory.
+- Guarded firmware submissions and observable legacy Dashboard jobs that cannot restart an upload when a follower reconnects.
 
 Fresh installations start empty. The repository contains no users, entity IDs, network addresses, access codes, or device credentials.
 

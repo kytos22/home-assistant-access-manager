@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import os
@@ -27,6 +28,8 @@ from ruamel.yaml import YAML
 
 
 PORT = 8099
+# Supervisor's documented Ingress proxy, not a site-specific reader/host IP.
+INGRESS_PROXY = ipaddress.ip_address("172.30.32.2")
 DATA_DIR = Path("/data")
 DB_PATH = DATA_DIR / "fingerprint_admin.db"
 HA_API = "http://supervisor/core/api"
@@ -105,19 +108,19 @@ def configured_log_level(path=OPTIONS_PATH):
 LOG_LEVEL = configured_log_level()
 
 LABELS = {
-    "slot": ("ID huella a registrar",),
-    "enroll": ("Registrar huella",),
-    "cancel": ("Cancelar registro",),
-    "delete": ("Borrar huella seleccionada",),
-    "access_event": ("Evento huella",),
-    "management_event": ("Evento gestion huella", "Evento gestión huella"),
-    "name_registry": ("Gestion nombres huella", "Gestión nombres huella"),
-    "fingerprint_count": ("Huellas guardadas",),
-    "reader_status": ("Estado lector",),
-    "reader_capacity": ("Capacidad lector",),
-    "last_finger_id": ("Ultimo ID huella", "Último ID huella"),
-    "last_confidence": ("Ultima confianza", "Última confianza"),
-    "device_status": ("Estado conexion", "Estado conexión"),
+    "slot": ("Fingerprint ID", "ID huella a registrar"),
+    "enroll": ("Enroll fingerprint", "Registrar huella"),
+    "cancel": ("Cancel fingerprint enrollment", "Cancelar registro"),
+    "delete": ("Delete selected fingerprint", "Borrar huella seleccionada"),
+    "access_event": ("Fingerprint access event", "Evento huella"),
+    "management_event": ("Fingerprint management event", "Evento gestion huella", "Evento gestión huella"),
+    "name_registry": ("Fingerprint name registry", "Gestion nombres huella", "Gestión nombres huella"),
+    "fingerprint_count": ("Stored fingerprints", "Huellas guardadas"),
+    "reader_status": ("Reader status", "Estado lector"),
+    "reader_capacity": ("Reader capacity", "Capacidad lector"),
+    "last_finger_id": ("Last fingerprint ID", "Ultimo ID huella", "Último ID huella"),
+    "last_confidence": ("Last confidence", "Ultima confianza", "Última confianza"),
+    "device_status": ("Reader connection", "Estado conexion", "Estado conexión"),
     "assigned_door": ("Access Manager door ID",),
     "display_event": ("Access Manager display event",),
     "firmware_version": ("Fingerprint reader firmware version",),
@@ -163,6 +166,11 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger("fingerprint_admin")
 DELETE_RETRY_SECONDS = 30
+FIRMWARE_TERMINAL_STATUSES = (
+    "completed", "completed_verified", "version_not_confirmed",
+    "device_did_not_reconnect", "compile_failed", "upload_failed",
+    "validation_failed", "failed", "cancelled",
+)
 DOOR_ACTIONS = {
     "lock": ("open", "unlock", "lock"),
     "switch": ("turn_on",),
@@ -194,6 +202,21 @@ def now_iso():
 def normalized(value):
     text = unicodedata.normalize("NFKD", str(value or ""))
     return "".join(char for char in text if not unicodedata.combining(char)).lower().strip()
+
+
+def request_from_ingress(request):
+    """Trust the TCP peer, never client-supplied forwarding headers."""
+    transport = request.transport
+    peer = transport.get_extra_info("peername") if transport else None
+    if not isinstance(peer, tuple) or not peer:
+        return False
+    try:
+        address = ipaddress.ip_address(peer[0])
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address):
+        address = address.ipv4_mapped or address
+    return address == INGRESS_PROXY
 
 
 def esphome_secret_keys(payload):
@@ -629,6 +652,8 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
         self.home_assistant = home_assistant
         self.server_info = {}
         self.status = {"mode": "local_ingress", "status": "detecting"}
+        # Jobs belong to the HA client lifetime, not a transient transport/follower.
+        self.dashboard_jobs = getattr(home_assistant, "dashboard_jobs", {})
 
     @staticmethod
     def _unwrap(response):
@@ -913,7 +938,10 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
                             if asyncio.iscoroutine(callback_result):
                                 await callback_result
                         if event.get("event") == "exit":
-                            code = int(event.get("code") or 0)
+                            raw_code = event.get("code")
+                            if isinstance(raw_code, bool) or not isinstance(raw_code, (int, str)) or not re.fullmatch(r"-?[0-9]+", str(raw_code)):
+                                raise DeviceBuilderError("Dashboard did not report a valid process exit code", "incompatible_api")
+                            code = int(raw_code)
                             return {
                                 "success": code == 0,
                                 "status": "completed" if code == 0 else "failed",
@@ -930,14 +958,68 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
 
     @staticmethod
     def _dashboard_job_id(endpoint, configuration):
-        return f"dashboard:{endpoint}:{validate_esphome_configuration(configuration)}"
+        return f"dashboard:{endpoint}:{secrets.token_urlsafe(12)}:{validate_esphome_configuration(configuration)}"
 
     @staticmethod
     def _dashboard_job(job_id):
-        match = re.fullmatch(r"dashboard:(compile|run):(.+)", str(job_id or ""))
+        match = re.fullmatch(r"dashboard:(compile|run):(?:[A-Za-z0-9_-]{16}:)?(.+)", str(job_id or ""))
         if not match:
             raise DeviceBuilderError("Unknown local ESPHome Dashboard job", "incompatible_api")
         return match.group(1), validate_esphome_configuration(match.group(2))
+
+    async def _run_dashboard_job(self, job):
+        async def publish(name, data):
+            job["sequence"] += 1
+            job["events"].append((job["sequence"], name, data))
+            job["events"] = job["events"][-80:]
+            job["changed"].set()
+
+        try:
+            args = {"configuration": job["configuration"]}
+            if job["endpoint"] == "run":
+                args["port"] = "OTA"
+            job["result"] = await self._dashboard_process(job["endpoint"], args, publish)
+        except asyncio.CancelledError:
+            job["error"] = DeviceBuilderError(
+                "Dashboard operation was interrupted; verify the device before starting another operation",
+                "job_interrupted",
+            )
+        except DeviceBuilderError as error:
+            job["error"] = DeviceBuilderError(str(error), "job_interrupted") if error.code == "unavailable" else error
+        except Exception:
+            job["error"] = DeviceBuilderError("Dashboard operation failed", "job_failed")
+        finally:
+            job["done"] = True
+            job["changed"].set()
+
+    async def _follow_dashboard_job(self, job_id, on_event=None):
+        self._dashboard_job(job_id)
+        job = self.dashboard_jobs.get(str(job_id))
+        if job is None:
+            # After a restart there is no supported way to reattach a legacy
+            # spawn socket. Replaying a spawn here could flash a device twice.
+            raise DeviceBuilderError(
+                "The legacy Dashboard job cannot be resumed after restart; verify its result before retrying",
+                "job_not_found",
+            )
+        sequence = 0
+        while True:
+            for number, name, data in tuple(job["events"]):
+                if number <= sequence:
+                    continue
+                sequence = number
+                if on_event:
+                    result = on_event(name, data)
+                    if asyncio.iscoroutine(result):
+                        await result
+            if job["done"]:
+                if job.get("error"):
+                    raise job["error"]
+                return job["result"]
+            job["changed"].clear()
+            if job["sequence"] != sequence or job["done"]:
+                continue
+            await job["changed"].wait()
 
     async def _legacy_dashboard_command(
         self, command, args=None, on_event=None, streaming=False
@@ -949,7 +1031,12 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
         if command == "config/get_preferences":
             return {"transport": "dashboard_http"}
         if command == "firmware/get_jobs":
-            return []
+            return [
+                {"job_id": job_id, "configuration": job["configuration"],
+                 "status": "running" if not job["done"] else "completed" if not job.get("error") and (job.get("result") or {}).get("success") is True else "failed"}
+                for job_id, job in self.dashboard_jobs.items()
+                if not configuration or job["configuration"] == configuration
+            ]
         if command == "config/get_secrets":
             return await self._dashboard_request("GET", "secret_keys")
         if command == "devices/get_config":
@@ -988,16 +1075,28 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
         if command in {"firmware/compile", "firmware/install"}:
             configuration = validate_esphome_configuration(configuration)
             endpoint = "run" if command == "firmware/install" else "compile"
-            return {"job_id": self._dashboard_job_id(endpoint, configuration)}
+            if any(not job["done"] and job["configuration"] == configuration for job in self.dashboard_jobs.values()):
+                raise DeviceBuilderError("An operation is already running for this configuration", "job_busy")
+            if len(self.dashboard_jobs) >= 128:
+                for job_id in list(self.dashboard_jobs):
+                    if self.dashboard_jobs[job_id]["done"]:
+                        del self.dashboard_jobs[job_id]
+                        break
+                else:
+                    raise DeviceBuilderError("Too many active Dashboard operations", "job_busy")
+            job_id = self._dashboard_job_id(endpoint, configuration)
+            job = {"endpoint": endpoint, "configuration": configuration, "sequence": 0,
+                   "events": [], "changed": asyncio.Event(), "done": False, "result": None, "error": None}
+            self.dashboard_jobs[job_id] = job
+            job["task"] = asyncio.create_task(self._run_dashboard_job(job))
+            return {"job_id": job_id}
         if command == "firmware/follow_job":
-            endpoint, configuration = self._dashboard_job(args.get("job_id"))
-            spawn_args = {"configuration": configuration}
-            if endpoint == "run":
-                spawn_args["port"] = "OTA"
-            return await self._dashboard_process(endpoint, spawn_args, on_event)
+            return await self._follow_dashboard_job(args.get("job_id"), on_event)
         raise DeviceBuilderError("Unsupported local ESPHome Dashboard command", "incompatible_api")
 
     async def command(self, command, args=None, on_event=None, streaming=False):
+        if command == "firmware/follow_job" and str((args or {}).get("job_id", "")).startswith("dashboard:"):
+            return await self._legacy_dashboard_command(command, args, on_event, streaming)
         try:
             return await self._websocket_command(
                 command, args, on_event=on_event, streaming=streaming
@@ -1339,6 +1438,7 @@ class Registry:
             row[1] for row in self.connection.execute("PRAGMA table_info(people)").fetchall()
         }
         people_migrations = {
+            "ha_person_id": "TEXT",
             "ha_link_status": "TEXT NOT NULL DEFAULT 'unlinked'",
             "ha_auto_link_disabled": "INTEGER NOT NULL DEFAULT 0",
             "deletion_requested_at": "TEXT",
@@ -1351,6 +1451,10 @@ class Registry:
                 self.connection.execute(
                     f"ALTER TABLE people ADD COLUMN {column} {definition}"
                 )
+        self.connection.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_people_ha_person_id "
+            "ON people(ha_person_id)"
+        )
         self.connection.execute(
             """
             UPDATE people SET ha_link_status = CASE
@@ -1871,7 +1975,22 @@ class Registry:
             raise ValueError("A person with that name already exists")
         return self.ensure_person(name)
 
-    def link_ha_person(self, person_id, entity_id):
+    def create_linked_person(self, name, entity_id, ha_person_id):
+        if not normalized(name) or not str(entity_id).startswith("person.") or not ha_person_id:
+            raise ValueError("A name and verified Home Assistant Person are required")
+        timestamp = now_iso()
+        try:
+            with self.connection:
+                cursor = self.connection.execute(
+                    "INSERT INTO people(name, normalized_name, ha_person_entity_id, ha_person_id, "
+                    "ha_link_status, created_at, updated_at) VALUES (?, ?, ?, ?, 'linked', ?, ?)",
+                    (str(name).strip(), normalized(name), entity_id, str(ha_person_id), timestamp, timestamp),
+                )
+        except sqlite3.IntegrityError as error:
+            raise ValueError("That name or Home Assistant Person is already linked") from error
+        return cursor.lastrowid
+
+    def link_ha_person(self, person_id, entity_id, ha_person_id=None):
         person = self.person(person_id)
         if not person:
             raise ValueError("Person not found")
@@ -1881,10 +2000,17 @@ class Registry:
         if not entity_id.startswith("person."):
             raise ValueError("Invalid Home Assistant Person entity")
         previous = person.get("ha_person_entity_id")
+        stable_id = str(ha_person_id or "").strip() or None
+        if stable_id is None and previous == entity_id:
+            stable_id = person.get("ha_person_id")
+        identity_changed = (
+            person.get("ha_person_id") is not None
+            and person["ha_person_id"] != stable_id
+        )
         suspended = 0
         try:
             with self.connection:
-                if previous != entity_id:
+                if previous != entity_id or identity_changed:
                     cursor = self.connection.execute(
                         """
                         UPDATE mobile_nfc_permissions
@@ -1897,11 +2023,11 @@ class Registry:
                     suspended = cursor.rowcount
                 self.connection.execute(
                     """
-                    UPDATE people SET ha_person_entity_id = ?,
+                    UPDATE people SET ha_person_entity_id = ?, ha_person_id = ?,
                         ha_link_status = 'linked', ha_auto_link_disabled = 0,
                         updated_at = ? WHERE id = ?
                     """,
-                    (entity_id, now_iso(), person_id),
+                    (entity_id, stable_id, now_iso(), person_id),
                 )
         except sqlite3.IntegrityError as error:
             raise ValueError(
@@ -1932,7 +2058,7 @@ class Registry:
             )
             self.connection.execute(
                 """
-                UPDATE people SET ha_person_entity_id = NULL,
+                UPDATE people SET ha_person_entity_id = NULL, ha_person_id = NULL,
                     ha_link_status = 'unlinked', ha_auto_link_disabled = 1,
                     updated_at = ? WHERE id = ?
                 """,
@@ -1950,18 +2076,27 @@ class Registry:
             if not isinstance(item, dict):
                 continue
             entity_id = str(item.get("entity_id") or "").strip()
-            if not entity_id and item.get("id"):
-                entity_id = f"person.{item['id']}"
             if not entity_id.startswith("person."):
                 continue
             result.append({
                 "entity_id": entity_id,
+                "ha_person_id": str(item.get("ha_person_id") or item.get("id") or "").strip() or None,
                 "name": str(item.get("name") or entity_id.split(".", 1)[1]),
             })
-        return result
+        entity_counts = {}
+        id_counts = {}
+        for item in result:
+            entity_counts[item["entity_id"]] = entity_counts.get(item["entity_id"], 0) + 1
+            if item["ha_person_id"]:
+                id_counts[item["ha_person_id"]] = id_counts.get(item["ha_person_id"], 0) + 1
+        return [
+            item for item in result
+            if entity_counts[item["entity_id"]] == 1
+            and (not item["ha_person_id"] or id_counts[item["ha_person_id"]] == 1)
+        ]
 
     def reconcile_ha_people(self, ha_people, api_ready):
-        """Reconcile only against a validated, fresh person/list response."""
+        """Match HA's immutable Person ID, allowing verified entity renames."""
         rows = self.connection.execute(
             "SELECT * FROM people WHERE status != 'archived'"
         ).fetchall()
@@ -1971,20 +2106,25 @@ class Registry:
                     state = (
                         "unknown" if row["ha_person_entity_id"] else "unlinked"
                     )
-                    self.connection.execute(
-                        "UPDATE people SET ha_link_status = ? WHERE id = ?",
-                        (state, row["id"]),
-                    )
+                    if state != row["ha_link_status"]:
+                        self.connection.execute(
+                            "UPDATE people SET ha_link_status = ? WHERE id = ?",
+                            (state, row["id"]),
+                        )
             return
         items = self.normalized_ha_people(ha_people)
         available = {item["entity_id"]: item for item in items}
+        by_id = {item["ha_person_id"]: item for item in items if item["ha_person_id"]}
         exact = {}
-        for entity_id, item in available.items():
-            exact.setdefault(normalized(item["name"]), []).append(entity_id)
+        for item in items:
+            exact.setdefault(normalized(item["name"]), []).append(item)
         timestamp = now_iso()
         with self.connection:
             for row in rows:
                 entity_id = row["ha_person_entity_id"]
+                stable_id = row["ha_person_id"]
+                # Never adopt a new identity merely because it reuses an entity ID.
+                item = by_id.get(stable_id) if stable_id else available.get(entity_id)
                 if (
                     row["status"] == "active"
                     and not entity_id
@@ -1992,26 +2132,42 @@ class Registry:
                 ):
                     candidates = exact.get(normalized(row["name"]), [])
                     if len(candidates) == 1:
-                        entity_id = candidates[0]
-                        try:
+                        item = candidates[0]
+                state = "missing" if entity_id else "unlinked"
+                if item:
+                    try:
+                        self.connection.execute(
+                            """
+                            UPDATE people SET ha_person_entity_id = ?, ha_person_id = ?,
+                                updated_at = ? WHERE id = ?
+                                AND (ha_person_entity_id IS NOT ? OR ha_person_id IS NOT ?)
+                            """,
+                            (
+                                item["entity_id"], item["ha_person_id"], timestamp, row["id"],
+                                item["entity_id"], item["ha_person_id"],
+                            ),
+                        )
+                    except sqlite3.IntegrityError:
+                        # Another local identity already owns this binding.
+                        pass
+                    else:
+                        state = "linked"
+                        if stable_id and entity_id != item["entity_id"]:
+                            # Only a verified rename carries existing NFC grants.
+                            # Suspended/revoked grants remain suspended/revoked.
                             self.connection.execute(
                                 """
-                                UPDATE people SET ha_person_entity_id = ?,
-                                    updated_at = ? WHERE id = ?
+                                UPDATE mobile_nfc_permissions
+                                SET ha_person_entity_id = ?, updated_at = ?
+                                WHERE person_id = ? AND ha_person_entity_id = ?
                                 """,
-                                (entity_id, timestamp, row["id"]),
+                                (item["entity_id"], timestamp, row["id"], entity_id),
                             )
-                        except sqlite3.IntegrityError:
-                            entity_id = None
-                state = (
-                    "unlinked" if not entity_id
-                    else "linked" if entity_id in available
-                    else "missing"
-                )
-                self.connection.execute(
-                    "UPDATE people SET ha_link_status = ? WHERE id = ?",
-                    (state, row["id"]),
-                )
+                if state != row["ha_link_status"]:
+                    self.connection.execute(
+                        "UPDATE people SET ha_link_status = ? WHERE id = ?",
+                        (state, row["id"]),
+                    )
 
     def auto_link_ha_people(self, ha_people):
         self.reconcile_ha_people(ha_people, True)
@@ -2234,7 +2390,7 @@ class Registry:
                 """
                 UPDATE people SET status = 'archived', archived_at = ?,
                     deletion_completed = deletion_total,
-                    ha_person_entity_id = NULL,
+                    ha_person_entity_id = NULL, ha_person_id = NULL,
                     ha_link_status = 'unlinked',
                     ha_auto_link_disabled = 1, updated_at = ?
                 WHERE id = ? AND status = 'deletion_pending'
@@ -3124,19 +3280,23 @@ class Registry:
         return self.public_firmware_operation(row) if row else None
 
     def firmware_operations(self, pending_only=False, limit=50):
-        where = (
-            "WHERE status NOT IN ("
-            "'completed', 'completed_verified', 'version_not_confirmed', "
-            "'device_did_not_reconnect', 'compile_failed', 'upload_failed', "
-            "'validation_failed', 'failed', 'cancelled')"
-            if pending_only else ""
-        )
+        placeholders = ",".join("?" for _ in FIRMWARE_TERMINAL_STATUSES)
+        where = f"WHERE status NOT IN ({placeholders})" if pending_only else ""
+        parameters = (*FIRMWARE_TERMINAL_STATUSES, limit) if pending_only else (limit,)
         rows = self.connection.execute(
             f"SELECT * FROM firmware_operations {where} "
             "ORDER BY created_at DESC LIMIT ?",
-            (limit,),
+            parameters,
         ).fetchall()
         return [self.public_firmware_operation(row) for row in rows]
+
+    def has_active_firmware_operation(self, configuration):
+        placeholders = ",".join("?" for _ in FIRMWARE_TERMINAL_STATUSES)
+        return self.connection.execute(
+            f"SELECT 1 FROM firmware_operations WHERE configuration = ? "
+            f"AND status NOT IN ({placeholders}) LIMIT 1",
+            (configuration, *FIRMWARE_TERMINAL_STATUSES),
+        ).fetchone() is not None
 
 
 class HomeAssistant:
@@ -3163,6 +3323,7 @@ class HomeAssistant:
         self.tag_refresh_task = None
         self.tag_scan_tasks = set()
         self.recent_door_commands = {}
+        self.dashboard_jobs = {}
 
     async def start(self):
         if not TOKEN:
@@ -3189,6 +3350,12 @@ class HomeAssistant:
             LOGGER.warning("Home Assistant is not available yet: %s", error)
 
     async def close(self):
+        dashboard_tasks = [job["task"] for job in self.dashboard_jobs.values() if not job["done"]]
+        for task in dashboard_tasks:
+            task.cancel()
+        if dashboard_tasks:
+            await asyncio.gather(*dashboard_tasks, return_exceptions=True)
+        self.dashboard_jobs.clear()
         if self.people_refresh_task:
             self.people_refresh_task.cancel()
             await asyncio.gather(
@@ -3284,18 +3451,19 @@ class HomeAssistant:
             or (profile.get("device_name") if isinstance(profile, Mapping) else "")
             or ""
         ).strip()
-        if device_name:
-            marker = normalized(device_name.replace("-", " "))
-            matching = []
-            for entity_id in candidates:
-                state = self.states.get(entity_id, {})
-                friendly = normalized(state.get("attributes", {}).get("friendly_name"))
-                object_id = normalized(entity_id.split(".", 1)[1].replace("_", " "))
-                if marker and (marker in object_id or marker in friendly):
-                    matching.append(entity_id)
-            if len(matching) == 1:
-                return matching[0]
-        return candidates[0] if len(candidates) == 1 else None
+        if not device_name:
+            return None
+        marker = normalized(device_name.replace("-", " ").replace("_", " "))
+        expected = {f"{marker} {normalized(label)}" for label in LABELS.get(key, ())}
+        matching = []
+        for entity_id in candidates:
+            state = self.states.get(entity_id, {})
+            friendly = normalized(state.get("attributes", {}).get("friendly_name"))
+            object_id = normalized(entity_id.split(".", 1)[1].replace("_", " "))
+            if object_id in expected or friendly in expected:
+                matching.append(entity_id)
+        # A single global candidate is not evidence that it belongs to this reader.
+        return matching[0] if len(matching) == 1 else None
 
     async def call_service(self, domain, service, payload):
         return await self.request("POST", f"/services/{domain}/{service}", payload)
@@ -3435,6 +3603,10 @@ class HomeAssistant:
         return await self.request("POST", f"/events/{event_type}", payload)
 
     async def websocket_command(self, command):
+        async with asyncio.timeout(20):
+            return await self._websocket_command_once(command)
+
+    async def _websocket_command_once(self, command):
         async with self.session.ws_connect(HA_WS, heartbeat=30) as socket:
             message = await socket.receive_json()
             if message.get("type") != "auth_required":
@@ -3452,6 +3624,30 @@ class HomeAssistant:
                     error = message.get("error", {}).get("message", "Error WebSocket")
                     raise RuntimeError(error)
                 return message.get("result")
+
+    async def ingress_user_is_admin(self, user_id):
+        """Resolve current HA privileges; do not retain grants after revocation."""
+        users = await asyncio.wait_for(
+            self.websocket_command({"type": "config/auth/list"}), timeout=10
+        )
+        if not isinstance(users, list):
+            raise RuntimeError("Invalid Home Assistant authorization response")
+        matches = [
+            user for user in users
+            if isinstance(user, dict) and user.get("id") == user_id
+        ]
+        if len(matches) != 1:
+            return False
+        user = matches[0]
+        groups = user.get("group_ids")
+        return (
+            user.get("is_active") is True
+            and user.get("system_generated") is False
+            and (
+                user.get("is_owner") is True
+                or (isinstance(groups, list) and "system-admin" in groups)
+            )
+        )
 
     async def supervisor_api(self, method, endpoint, data=None):
         """Call Supervisor through Home Assistant's supported WebSocket proxy."""
@@ -3475,6 +3671,7 @@ class HomeAssistant:
             people.append(
                 {
                     "entity_id": entity_id,
+                    "ha_person_id": state.get("attributes", {}).get("id"),
                     "name": state.get("attributes", {}).get("friendly_name")
                     or entity_id.split(".", 1)[1],
                     "state": state.get("state"),
@@ -3574,16 +3771,39 @@ class HomeAssistant:
         self.people_api_ready = True
         return self.people_storage
 
+    def person_entity_id(self, person_id):
+        """Resolve the HA Person's stable ID without constructing an entity ID."""
+        matches = [
+            entity_id for entity_id, state in self.states.items()
+            if entity_id.startswith("person.")
+            and str(state.get("attributes", {}).get("id") or "") == str(person_id)
+        ]
+        return matches[0] if person_id and len(matches) == 1 else None
+
+    def person_storage_id(self, entity_id):
+        matches = [
+            item["ha_person_id"] for item in self.storage_people()
+            if item["entity_id"] == entity_id
+        ]
+        if len(matches) != 1:
+            raise RuntimeError("The Home Assistant Person identity cannot be verified")
+        return matches[0]
+
     def storage_people(self):
         result = []
+        id_counts = {}
         for item in self.people_storage:
-            person_id = str(item.get("id", "")).strip()
-            if not person_id:
+            person_id = str(item.get("id") or "").strip()
+            id_counts[person_id] = id_counts.get(person_id, 0) + 1
+        for item in self.people_storage:
+            person_id = str(item.get("id") or "").strip()
+            entity_id = self.person_entity_id(person_id)
+            if not entity_id or id_counts[person_id] != 1:
                 continue
-            entity_id = f"person.{person_id}"
             state = self.states.get(entity_id, {})
             result.append({
                 "entity_id": entity_id,
+                "ha_person_id": person_id,
                 "name": str(
                     item.get("name")
                     or state.get("attributes", {}).get("friendly_name")
@@ -3632,6 +3852,7 @@ class HomeAssistant:
             and self.people_storage_refreshed_at
             and now - self.people_storage_refreshed_at < max_age
         ):
+            self.registry.reconcile_ha_people(self.storage_people(), True)
             return True
         if self.people_refresh_task:
             return await asyncio.shield(self.people_refresh_task)
@@ -3650,25 +3871,23 @@ class HomeAssistant:
         user_id = str(user_id or "").strip()
         if not user_id:
             return None
-        now = asyncio.get_running_loop().time()
-        item = next(
-            (candidate for candidate in self.people_storage if candidate.get("user_id") == user_id),
-            None,
-        )
-        refresh_after = 60
-        if now - self.people_storage_refreshed_at >= refresh_after:
-            await self.refresh_people_storage_safely()
-            item = next(
-                (candidate for candidate in self.people_storage if candidate.get("user_id") == user_id),
-                None,
-            )
-        if not item or not item.get("id"):
+        if not await self.ensure_people_storage_fresh():
             return None
-        entity_id = f"person.{item['id']}"
+        matches = [
+            candidate for candidate in self.people_storage
+            if candidate.get("user_id") == user_id
+        ]
+        if len(matches) != 1 or not matches[0].get("id"):
+            return None
+        stable_id = str(matches[0]["id"])
+        entity_id = self.person_entity_id(stable_id)
+        if not entity_id:
+            return None
         person = next(
             (
                 person for person in self.registry.people()
-                if person.get("ha_person_entity_id") == entity_id
+                if person.get("ha_person_id") == stable_id
+                and person.get("ha_person_entity_id") == entity_id
             ),
             None,
         )
@@ -3786,11 +4005,15 @@ class HomeAssistant:
         if not person_id:
             raise RuntimeError("Home Assistant did not return the Person ID")
         await self.refresh_states()
-        await self.refresh_people_storage_safely()
-        return f"person.{person_id}"
+        if not await self.refresh_people_storage_safely():
+            raise RuntimeError("Person created, but its Home Assistant identity cannot be verified")
+        entity_id = self.person_entity_id(person_id)
+        if not entity_id:
+            raise RuntimeError("Person created, but its Home Assistant entity is not available yet")
+        return entity_id
 
     async def update_ha_person(self, entity_id, name):
-        person_id = str(entity_id).split(".", 1)[-1]
+        person_id = self.person_storage_id(entity_id)
         result = await self.websocket_command({"type": "person/list"})
         items = result.get("storage", []) if isinstance(result, dict) else []
         item = next((candidate for candidate in items if candidate.get("id") == person_id), None)
@@ -3891,8 +4114,15 @@ class HomeAssistant:
             if required:
                 raise RuntimeError("Fingerprint reader not found")
             return None
-        if reader.get("config", {}).get("legacy_autodiscovery"):
-            entity_id = self.entities.get(key)
+        config = dict(reader.get("config", {}))
+        if config.get("legacy_autodiscovery"):
+            profile = config.get("firmware_profile") or {}
+            profile = profile if isinstance(profile, Mapping) else {}
+            if not config.get("device_name") and not profile.get("device_name"):
+                config["device_name"] = reader_id
+            entity_id = self.optional_reader_entity(config, key)
+        elif key in {"firmware_version", "display_language"}:
+            entity_id = self.optional_reader_entity(config, key)
         else:
             config_key = {
                 "slot": "slot_entity",
@@ -4112,9 +4342,11 @@ class HomeAssistant:
                         entity_id = data.get("entity_id")
                         old_state = data.get("old_state")
                         state = data.get("new_state")
-                        if not entity_id or not state:
+                        if not entity_id:
                             continue
-                        self.states[entity_id] = state
+                        self.update_cached_state(entity_id, state)
+                        if state is None:
+                            continue
                         if entity_id not in self.entities.values():
                             self.resolve_entities()
                         for reader in self.registry.readers():
@@ -4142,6 +4374,15 @@ class HomeAssistant:
                 self.connected = False
                 LOGGER.warning("Home Assistant connection interrupted: %s", error)
                 await asyncio.sleep(5)
+
+    def update_cached_state(self, entity_id, state):
+        if state is None:
+            self.states.pop(entity_id, None)
+            self.resolve_entities()
+        else:
+            self.states[entity_id] = state
+        if entity_id.startswith("person.") and self.people_api_ready:
+            self.registry.reconcile_ha_people(self.storage_people(), True)
 
     @staticmethod
     def parse_event(raw):
@@ -4399,11 +4640,7 @@ class FingerprintAdmin:
             self.firmware_tasks.add(task)
             task.add_done_callback(self.firmware_tasks.discard)
         for operation in self.registry.firmware_operations(pending_only=True):
-            task = asyncio.create_task(
-                self.follow_device_builder_operation(operation["id"])
-            )
-            self.firmware_tasks.add(task)
-            task.add_done_callback(self.firmware_tasks.discard)
+            self.start_firmware_follow(operation["id"])
 
     async def cleanup(self, _app):
         tasks = [task for task in (self.websocket_task, self.deletion_task) if task]
@@ -4855,8 +5092,49 @@ class FingerprintAdmin:
 
     @staticmethod
     def require_admin_request(request):
+        # Same-origin request marker only. Authentication is enforced centrally
+        # by ingress_authentication, including on read-only and static routes.
         if request.headers.get("X-Fingerprint-Admin") != "1":
             raise web.HTTPForbidden(text="Unauthorized request")
+
+    @web.middleware
+    async def ingress_authentication(self, request, handler):
+        if not request_from_ingress(request):
+            raise web.HTTPForbidden(text="Open Access Manager through Home Assistant Ingress")
+        identities = request.headers.getall("X-Remote-User-Id", [])
+        if len(identities) != 1 or not identities[0].strip():
+            raise web.HTTPForbidden(text="Home Assistant user identity is required")
+        try:
+            is_admin = await self.ha.ingress_user_is_admin(identities[0].strip())
+        except Exception:
+            # Fail closed without disclosing credentials or upstream error text.
+            raise web.HTTPServiceUnavailable(
+                text="Home Assistant authorization is unavailable; try again later"
+            ) from None
+        if not is_admin:
+            raise web.HTTPForbidden(text="Home Assistant administrator access is required")
+        for field in ("person_id", "slot", "credential_id"):
+            if field in request.match_info:
+                value = request.match_info[field]
+                if not re.fullmatch(r"[0-9]{1,19}", value) or not 0 < int(value) <= 2**63 - 1:
+                    raise web.HTTPBadRequest(text=f"Invalid {field.replace('_', ' ')}")
+        if request.method not in {"GET", "HEAD", "OPTIONS"}:
+            self.require_admin_request(request)
+            if request.can_read_body:
+                try:
+                    payload = await request.json()
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    raise web.HTTPBadRequest(text="Send a valid JSON object") from None
+                if not isinstance(payload, dict):
+                    raise web.HTTPBadRequest(text="Send a JSON object, not a list or scalar")
+                for field in ("enabled", "install", "confirm_overwrite", "acknowledge"):
+                    if field in payload and not isinstance(payload[field], bool):
+                        raise web.HTTPBadRequest(text=f"{field} must be a JSON boolean")
+                if isinstance(payload.get("person_id"), bool):
+                    raise web.HTTPBadRequest(text="Invalid person ID")
+        response = await handler(request)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     async def index(self, _request):
         # Build a fresh response instead of FileResponse so ingress/WebViews
@@ -4900,7 +5178,7 @@ class FingerprintAdmin:
             "device_status",
             "management_event",
         ):
-            entity_id = self.ha.entities.get(key)
+            entity_id = self.ha.reader_entity("display1", key, required=False)
             state = self.ha.states.get(entity_id, {}) if entity_id else {}
             reader[key] = {
                 "entity_id": entity_id,
@@ -4939,17 +5217,15 @@ class FingerprintAdmin:
                     "available" if access_reader["available"] else "unavailable"
                 )
                 config = access_reader.get("config", {})
-                legacy = bool(config.get("legacy_autodiscovery"))
-                display_entity = config.get("display_event_entity") or (
-                    self.ha.entities.get("display_event") if legacy else None
+                display_entity = self.ha.reader_entity(
+                    access_reader["id"], "display_event", required=False
                 )
                 access_reader["hardware_profile"] = config.get(
                     "hardware_profile",
                     "display" if display_entity else "reader_only",
                 )
-                language_id = (
-                    self.ha.entities.get("display_language") if legacy
-                    else self.ha.optional_reader_entity(config, "display_language")
+                language_id = self.ha.reader_entity(
+                    access_reader["id"], "display_language", required=False
                 )
                 if language_id and not config.get("display_language_entity"):
                     config["display_language_entity"] = language_id
@@ -4959,9 +5235,8 @@ class FingerprintAdmin:
                     if language_state.get("state") not in {None, "unknown", "unavailable"}
                     else None
                 )
-                version_id = (
-                    self.ha.entities.get("firmware_version") if legacy
-                    else self.ha.optional_reader_entity(config, "firmware_version")
+                version_id = self.ha.reader_entity(
+                    access_reader["id"], "firmware_version", required=False
                 )
                 if version_id and not config.get("firmware_version_entity"):
                     config["firmware_version_entity"] = version_id
@@ -5039,16 +5314,13 @@ class FingerprintAdmin:
                 "privacy_mode": self.registry.privacy_mode(),
                 "connected": self.ha.connected,
                 "reader_online": self.ha.device_online("display1"),
-                "ready": all(
-                    key in self.ha.entities
-                    for key in ("slot", "enroll", "cancel", "delete", "name_registry")
-                ),
+                "ready": self.ha.reader_ready("display1"),
                 "missing": [
                     key for key in (
                         "slot", "enroll", "cancel", "delete", "name_registry",
                         "access_event", "management_event"
                     )
-                    if key not in self.ha.entities
+                    if not self.ha.reader_entity("display1", key, required=False)
                 ],
                 "reader": reader,
                 "users": users,
@@ -5117,6 +5389,7 @@ class FingerprintAdmin:
             not person
             or person.get("status") != "active"
             or not person.get("ha_person_entity_id")
+            or person.get("ha_link_status") != "linked"
         ):
             raise web.HTTPConflict(
                 text="Create or link the user to a Home Assistant Person first"
@@ -5165,6 +5438,7 @@ class FingerprintAdmin:
             not person
             or person.get("status") != "active"
             or not person.get("ha_person_entity_id")
+            or person.get("ha_link_status") != "linked"
         ):
             raise web.HTTPConflict(
                 text="Create or link the user to a Home Assistant Person first"
@@ -5268,9 +5542,9 @@ class FingerprintAdmin:
             except RuntimeError as error:
                 raise web.HTTPBadGateway(text=str(error))
         try:
-            person_id = self.registry.create_person(name)
-            self.registry.link_ha_person(person_id, ha_entity_id)
-        except ValueError as error:
+            stable_id = self.ha.person_storage_id(ha_entity_id)
+            person_id = self.registry.create_linked_person(name, ha_entity_id, stable_id)
+        except (ValueError, RuntimeError) as error:
             raise web.HTTPConflict(text=str(error))
         self.registry.add_event("person_created", detail=name)
         return web.json_response({"ok": True, "person_id": person_id, "name": name})
@@ -5287,7 +5561,9 @@ class FingerprintAdmin:
             raise web.HTTPConflict(text="This identity is already linked to Home Assistant")
         try:
             entity_id = await self.ha.create_ha_person(person["name"])
-            self.registry.link_ha_person(person_id, entity_id)
+            self.registry.link_ha_person(
+                person_id, entity_id, self.ha.person_storage_id(entity_id)
+            )
         except (ValueError, RuntimeError) as error:
             raise web.HTTPBadGateway(text=str(error))
         self.registry.add_event(
@@ -5334,8 +5610,10 @@ class FingerprintAdmin:
         if entity_id not in available:
             raise web.HTTPBadRequest(text="Home Assistant Person does not exist")
         try:
-            result = self.registry.link_ha_person(person_id, entity_id)
-        except ValueError as error:
+            result = self.registry.link_ha_person(
+                person_id, entity_id, self.ha.person_storage_id(entity_id)
+            )
+        except (ValueError, RuntimeError) as error:
             raise web.HTTPConflict(text=str(error))
         person = self.registry.person(person_id)
         event_type = (
@@ -5444,6 +5722,8 @@ class FingerprintAdmin:
             raise web.HTTPNotFound(text="Person not found")
         if person.get("status") != "active":
             raise web.HTTPConflict(text="Identity is not active")
+        if not person.get("ha_person_entity_id") or person.get("ha_link_status") != "linked":
+            raise web.HTTPConflict(text="Link the user to a confirmed Home Assistant Person first")
         if not reader or reader["reader_type"] != "keypad" or not reader["enabled"]:
             raise web.HTTPBadRequest(text="Select an enabled keypad")
         self.capture_sessions[reader_id] = {
@@ -5489,6 +5769,8 @@ class FingerprintAdmin:
         reader = self.registry.reader(reader_id)
         if not person:
             raise web.HTTPNotFound(text="Person not found")
+        if not person.get("ha_person_entity_id") or person.get("ha_link_status") != "linked":
+            raise web.HTTPConflict(text="Link the user to a confirmed Home Assistant Person first")
         if not reader or reader["reader_type"] != "keypad" or not reader["enabled"]:
             raise web.HTTPBadRequest(text="Select an enabled keypad")
         try:
@@ -5831,6 +6113,11 @@ class FingerprintAdmin:
                 configuration = f"{name}.yaml"
             if not configuration:
                 continue
+            runtime = item.get("runtime_state")
+            runtime = runtime if isinstance(runtime, Mapping) else {}
+            state = runtime.get("state") or item.get("state") or item.get("status") or ""
+            if not isinstance(state, (str, int, bool)):
+                state = ""
             public.append(
                 {
                     "configuration": configuration,
@@ -5839,7 +6126,7 @@ class FingerprintAdmin:
                         item.get("friendly_name") or item.get("comment") or ""
                     ).strip()[:80],
                     "address": str(item.get("address") or "").strip()[:120],
-                    "state": str(item.get("state") or item.get("status") or "").strip()[:40],
+                    "state": str(state).strip()[:40],
                 }
             )
         return sorted(public, key=lambda item: item["configuration"].lower())
@@ -6181,6 +6468,9 @@ class FingerprintAdmin:
         logs = list(operation.get("logs") or [])
         rollback = getattr(self, "firmware_original_configs", {}).get(operation_id)
         upload_started = bool(operation.get("remote_tail_job_id"))
+        if operation.get("install") and str(operation.get("remote_job_id", "")).startswith("dashboard:run:"):
+            # A lost legacy socket cannot prove whether the upload took place.
+            upload_started = True
 
         async def record_event(event_name, data):
             nonlocal logs
@@ -6372,7 +6662,6 @@ class FingerprintAdmin:
             return "version_not_confirmed"
         reader = self.registry.reader(reader_id) or {}
         config = reader.get("config", {})
-        version_entity = self.ha.optional_reader_entity(config, "firmware_version")
         device_entity = config.get("device_status_entity")
         deadline = asyncio.get_running_loop().time() + timeout_seconds
         saw_reconnect = False
@@ -6380,7 +6669,11 @@ class FingerprintAdmin:
             try:
                 await self.ha.refresh_states()
             except Exception:
-                pass
+                await asyncio.sleep(2)
+                continue
+            version_entity = self.ha.reader_entity(
+                reader_id, "firmware_version", required=False
+            )
             if device_entity:
                 device_state = self.ha.states.get(device_entity, {}).get("state")
                 saw_reconnect = saw_reconnect or device_state in {"on", "available"}
@@ -6394,11 +6687,23 @@ class FingerprintAdmin:
         return "version_not_confirmed" if saw_reconnect else "device_did_not_reconnect"
 
     def start_firmware_follow(self, operation_id):
+        followers = getattr(self, "firmware_followers", None)
+        if followers is None:
+            self.firmware_followers = followers = {}
+        current = followers.get(operation_id)
+        if current and not current.done() and current is not asyncio.current_task():
+            return current
         task = asyncio.create_task(
             self.follow_device_builder_operation(operation_id)
         )
+        followers[operation_id] = task
         self.firmware_tasks.add(task)
-        task.add_done_callback(self.firmware_tasks.discard)
+        def finished(completed):
+            self.firmware_tasks.discard(completed)
+            if followers.get(operation_id) is completed:
+                followers.pop(operation_id, None)
+        task.add_done_callback(finished)
+        return task
 
     async def build_esphome_firmware(self, request):
         self.require_admin_request(request)
@@ -6413,6 +6718,19 @@ class FingerprintAdmin:
             raise web.HTTPConflict(text=preview["collision"])
         if preview["exists"] and not payload.get("confirm_overwrite"):
             raise web.HTTPConflict(text="Confirm the exact configuration overwrite first")
+        lock = self.firmware_update_lock(preview["configuration"])
+        if lock.locked():
+            raise web.HTTPConflict(text="A firmware operation is already being submitted for this configuration")
+        async with lock:
+            self.require_firmware_idle(preview["configuration"])
+            reader_id = str(payload.get("reader_id") or "").strip()
+            if reader_id:
+                reader = self.registry.reader(reader_id)
+                if not reader or reader["reader_type"] != "fingerprint":
+                    raise web.HTTPBadRequest(text="Select a valid fingerprint reader")
+            return await self.submit_esphome_build(payload, preview)
+
+    async def submit_esphome_build(self, payload, preview):
         device_name = str(payload.get("device_name", "")).strip().lower()
         configuration = preview["configuration"]
         client = self.device_builder_client()
@@ -6504,7 +6822,7 @@ class FingerprintAdmin:
         if not configuration:
             raise web.HTTPConflict(text="Link this reader to its Device Builder configuration first")
         configuration = validate_esphome_configuration(configuration)
-        version_entity = self.ha.optional_reader_entity(config, "firmware_version")
+        version_entity = self.ha.reader_entity(reader_id, "firmware_version", required=False)
         installed = self.ha.states.get(version_entity, {}).get("state") if version_entity else None
         if installed in {None, "", "unknown", "unavailable"}:
             installed = None
@@ -6584,6 +6902,10 @@ class FingerprintAdmin:
             self.firmware_update_locks[configuration] = lock
         return lock
 
+    def require_firmware_idle(self, configuration):
+        if self.registry.has_active_firmware_operation(configuration):
+            raise web.HTTPConflict(text="A firmware operation is already running for this configuration")
+
     def audit_firmware_event(self, event_type, reader_id, configuration):
         self.registry.add_event(
             event_type, detail=f"reader={reader_id}; configuration={configuration}",
@@ -6635,6 +6957,7 @@ class FingerprintAdmin:
         if lock.locked():
             raise web.HTTPConflict(text="A firmware update is already running for this configuration")
         async with lock:
+            self.require_firmware_idle(initial["configuration"])
             try:
                 preflight = await self.canonical_reader_firmware_preflight(reader_id)
             except (TypeError, ValueError) as error:
@@ -6736,6 +7059,11 @@ class FingerprintAdmin:
         return web.json_response({"ok": True, "reader_id": reader_id})
 
     def validate_reader_config(self, reader_type, config):
+        if not isinstance(config, dict):
+            raise web.HTTPBadRequest(text="Reader configuration must be an object")
+        for key, value in config.items():
+            if key.endswith("_entity") and not isinstance(value, str):
+                raise web.HTTPBadRequest(text=f"{key} must be an entity ID string")
         required = (
             ("transaction_entity", "code_entity", "action_entity")
             if reader_type == "keypad"
@@ -6799,7 +7127,9 @@ class FingerprintAdmin:
         if not reader:
             raise web.HTTPNotFound(text="Reader not found")
         try:
-            new_config = payload.get("config") if isinstance(payload.get("config"), dict) else None
+            new_config = payload.get("config") if "config" in payload else None
+            if "config" in payload and not isinstance(new_config, dict):
+                raise web.HTTPBadRequest(text="Reader configuration must be an object")
             if new_config is not None:
                 self.validate_reader_config(reader["reader_type"], new_config)
             self.registry.update_reader(
@@ -6819,12 +7149,7 @@ class FingerprintAdmin:
         reader = self.registry.reader(reader_id)
         if not reader or reader["reader_type"] != "fingerprint":
             raise web.HTTPNotFound(text="Fingerprint reader not found")
-        config = reader.get("config", {})
-        entity_id = str((
-            self.ha.entities.get("display_language")
-            if config.get("legacy_autodiscovery")
-            else self.ha.optional_reader_entity(config, "display_language")
-        ) or "").strip()
+        entity_id = self.ha.reader_entity(reader_id, "display_language", required=False)
         if not entity_id:
             raise web.HTTPConflict(
                 text="This reader has no display language entity configured"
@@ -7301,7 +7626,9 @@ class FingerprintAdmin:
         )
 
     def application(self):
-        app = web.Application(client_max_size=32 * 1024)
+        app = web.Application(
+            client_max_size=32 * 1024, middlewares=[self.ingress_authentication]
+        )
         app.router.add_get("/", self.index)
         app.router.add_static("/assets/", ASSETS_PATH, show_index=False)
         app.router.add_get("/health", self.health)

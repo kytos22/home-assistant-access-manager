@@ -1,0 +1,11 @@
+{
+  "name": "access-manager-panel-checks",
+  "private": true,
+  "scripts": {
+    "test:ui": "node tests/check_ui.mjs",
+    "test:browser": "node tests/check_panel.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}
