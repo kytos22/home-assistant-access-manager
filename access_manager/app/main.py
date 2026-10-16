@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode, urlparse
 from pathlib import Path
 from collections.abc import Mapping
+from contextvars import ContextVar
 
 from aiohttp import (
     ClientError,
@@ -35,6 +36,9 @@ DB_PATH = DATA_DIR / "fingerprint_admin.db"
 HA_API = "http://supervisor/core/api"
 HA_WS = "ws://supervisor/core/websocket"
 TOKEN = os.environ.get("SUPERVISOR_TOKEN", "")
+# Set only after the existing Ingress/admin gate; never a global session cache.
+DEVICE_BUILDER_INGRESS = ContextVar("device_builder_ingress", default=None)
+DEVICE_BUILDER_METADATA = ContextVar("device_builder_metadata", default=None)
 APP_VERSION = os.environ.get("ACCESS_MANAGER_VERSION") or "development"
 READER_FIRMWARE_VERSION = "0.6.3"
 READER_FIRMWARE_REF = f"firmware-v{READER_FIRMWARE_VERSION}"
@@ -644,12 +648,14 @@ class ExternalDeviceBuilderTransport(DeviceBuilderTransport):
 
 
 class HomeAssistantIngressTransport(DeviceBuilderTransport):
-    """Ephemeral local Ingress transport; it never stores a URL, cookie or token."""
+    """Request-scoped browser capability, kept in memory only for its jobs."""
 
     KNOWN_SLUGS = {"a0d7b954_esphome", "esphome", "esphome_beta", "esphome_dev"}
 
     def __init__(self, home_assistant):
         self.home_assistant = home_assistant
+        self.ingress_context = DEVICE_BUILDER_INGRESS.get()
+        self.addon_info = DEVICE_BUILDER_METADATA.get()
         self.server_info = {}
         self.status = {"mode": "local_ingress", "status": "detecting"}
         # Jobs belong to the HA client lifetime, not a transient transport/follower.
@@ -661,40 +667,44 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
             return response.get("data")
         return response
 
+    @property
+    def status(self):
+        return self._status
+
+    @status.setter
+    def status(self, value):
+        self._status = dict(value)
+        if hasattr(self.home_assistant, "__dict__"):
+            # Public metadata only: never retain the transport/capability here.
+            self.home_assistant.local_device_builder_status = dict(value)
+
     async def _discover(self):
         self.status = {"mode": "local_ingress", "status": "detecting"}
-        result = self._unwrap(await self.home_assistant.supervisor_api("GET", "/addons"))
-        addons = result.get("addons", []) if isinstance(result, Mapping) else []
-        candidates = []
-        for addon in addons if isinstance(addons, list) else []:
-            if not isinstance(addon, Mapping):
-                continue
-            slug = str(addon.get("slug") or "").lower()
-            name = str(addon.get("name") or "").lower()
-            repository = str(addon.get("repository") or "").lower()
-            is_known = slug in self.KNOWN_SLUGS
-            is_named = "esphome" in name or "esphome" in slug
-            if is_known or (is_named and ("device builder" in name or "esphome" in repository)):
-                candidates.append(addon)
-        if not candidates:
-            self.status = {"mode": "local_ingress", "status": "not_installed"}
-            raise DeviceBuilderError("ESPHome Device Builder is not installed", "not_installed")
-        started = [item for item in candidates if str(item.get("state")) == "started"]
-        addon = (started or candidates)[0]
-        if str(addon.get("state")) != "started":
-            self.status = {
-                "mode": "local_ingress", "status": "stopped",
-                "addon": str(addon.get("slug") or ""),
-            }
-            raise DeviceBuilderError("ESPHome Device Builder is stopped", "stopped")
-        slug = str(addon.get("slug") or "").strip()
-        details = self._unwrap(
-            await self.home_assistant.supervisor_api("GET", f"/addons/{slug}/info")
-        )
+        if not self.ingress_context:
+            self.status = {"mode": "local_ingress", "status": "session_required"}
+            raise DeviceBuilderError("Reconnect ESPHome from the Home Assistant panel", "session_required")
+        user, slug, _session = self.ingress_context
+        try:
+            authorized = await self.home_assistant.ingress_user_is_admin(user)
+        except Exception:
+            raise DeviceBuilderError("Home Assistant authorization is unavailable", "unauthorized") from None
+        if not authorized:
+            raise DeviceBuilderError("The Device Builder user is no longer an administrator", "unauthorized")
+        # Supervisor blocks ALL supervisor/* commands on an app's Core proxy,
+        # including metadata reads. The already-authorized browser delegates
+        # only this selected app's metadata; Supervisor validates the bearer.
+        details = self.addon_info
         if not isinstance(details, Mapping):
             self.status = {"mode": "local_ingress", "status": "ingress_unavailable"}
             raise DeviceBuilderError("Could not read ESPHome Device Builder details", "ingress_unavailable")
-        addon = {**dict(addon), **details}
+        addon = {**details, "slug": slug}
+        name = str(addon.get("name") or "").lower()
+        repository = str(addon.get("repository") or "").lower()
+        if not (slug in self.KNOWN_SLUGS or (
+            ("esphome" in slug or "esphome" in name)
+            and ("device builder" in name or "esphome" in repository)
+        )):
+            raise DeviceBuilderError("The selected app is not ESPHome Device Builder", "incompatible")
         if str(addon.get("state")) != "started":
             self.status = {
                 "mode": "local_ingress", "status": "stopped", "addon": slug,
@@ -716,11 +726,9 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
         return token
 
     async def _session(self):
-        response = self._unwrap(await self.home_assistant.supervisor_api("POST", "/ingress/session", {}))
-        session = str(response.get("session") or "") if isinstance(response, Mapping) else ""
-        if not session:
-            raise DeviceBuilderError("Could not create a temporary Ingress session", "ingress_unavailable")
-        return session
+        if not self.ingress_context:
+            raise DeviceBuilderError("Reconnect ESPHome from the Home Assistant panel", "session_required")
+        return self.ingress_context[2]
 
     async def _websocket_command(
         self, command, args=None, on_event=None, streaming=False
@@ -871,11 +879,8 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
             code = "incompatible_api"
         else:
             code = "unavailable"
-        detail = str(body or "").strip().replace("\n", " ")[:240]
         return DeviceBuilderError(
-            f"ESPHome Dashboard request failed ({response_status})"
-            + (f": {detail}" if detail else ""),
-            code,
+            f"ESPHome Dashboard request failed ({response_status})", code,
         )
 
     async def _dashboard_request(self, method, path, text_body=None, json_body=None):
@@ -985,10 +990,15 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
                 "job_interrupted",
             )
         except DeviceBuilderError as error:
-            job["error"] = DeviceBuilderError(str(error), "job_interrupted") if error.code == "unavailable" else error
+            job["error"] = DeviceBuilderError(str(error), "job_interrupted" if error.code == "unavailable" else error.code)
         except Exception:
             job["error"] = DeviceBuilderError("Dashboard operation failed", "job_failed")
         finally:
+            self.ingress_context = None
+            self.addon_info = None
+            DEVICE_BUILDER_INGRESS.set(None)
+            DEVICE_BUILDER_METADATA.set(None)
+            job.pop("task", None)
             job["done"] = True
             job["changed"].set()
 
@@ -1014,7 +1024,7 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
                         await result
             if job["done"]:
                 if job.get("error"):
-                    raise job["error"]
+                    raise DeviceBuilderError(str(job["error"]), job["error"].code) from None
                 return job["result"]
             job["changed"].clear()
             if job["sequence"] != sequence or job["done"]:
@@ -1095,16 +1105,22 @@ class HomeAssistantIngressTransport(DeviceBuilderTransport):
         raise DeviceBuilderError("Unsupported local ESPHome Dashboard command", "incompatible_api")
 
     async def command(self, command, args=None, on_event=None, streaming=False):
-        if command == "firmware/follow_job" and str((args or {}).get("job_id", "")).startswith("dashboard:"):
-            return await self._legacy_dashboard_command(command, args, on_event, streaming)
         try:
-            return await self._websocket_command(
-                command, args, on_event=on_event, streaming=streaming
-            )
-        except _LegacyDashboardRequired:
-            return await self._legacy_dashboard_command(
-                command, args, on_event=on_event, streaming=streaming
-            )
+            if command == "firmware/follow_job" and str((args or {}).get("job_id", "")).startswith("dashboard:"):
+                return await self._legacy_dashboard_command(command, args, on_event, streaming)
+            try:
+                return await self._websocket_command(
+                    command, args, on_event=on_event, streaming=streaming
+                )
+            except _LegacyDashboardRequired:
+                return await self._legacy_dashboard_command(
+                    command, args, on_event=on_event, streaming=streaming
+                )
+        except DeviceBuilderError as error:
+            # Discovery/session failures happen before the socket handlers too.
+            # Do not leave the panel stuck at "detecting" after a rejection.
+            self.status = {**self.status, "status": error.code}
+            raise
 
 
 class DeviceBuilderClient(DeviceBuilderProtocol):
@@ -3650,18 +3666,8 @@ class HomeAssistant:
         )
 
     async def supervisor_api(self, method, endpoint, data=None):
-        """Call Supervisor through Home Assistant's supported WebSocket proxy."""
-        result = await self.websocket_command(
-            {
-                "type": "supervisor/api",
-                "method": str(method).upper(),
-                "endpoint": str(endpoint),
-                **({"data": data} if data is not None else {}),
-            }
-        )
-        if isinstance(result, Mapping) and result.get("result") not in {None, "ok"}:
-            raise DeviceBuilderError("Supervisor rejected the Device Builder request", "supervisor_error")
-        return result
+        """Never send frontend-only Supervisor commands through the app proxy."""
+        raise DeviceBuilderError("Supervisor requests require the browser administrator session", "session_required")
 
     def ha_people(self):
         people = []
@@ -4539,7 +4545,6 @@ class FingerprintAdmin:
         self.firmware_tasks = set()
         self.firmware_update_locks = {}
         self.firmware_original_configs = {}
-        self.local_device_builder_transport = None
     async def handle_mobile_tag_scan(self, event):
         data = event.get("data", {}) if isinstance(event, dict) else {}
         context = event.get("context", {}) if isinstance(event, dict) else {}
@@ -5135,6 +5140,52 @@ class FingerprintAdmin:
         response = await handler(request)
         response.headers["Cache-Control"] = "no-store"
         return response
+
+    @web.middleware
+    async def device_builder_ingress_context(self, request, handler):
+        # ingress_authentication has already checked the TCP peer and the
+        # current human admin. These headers are capabilities, not identity.
+        fields = [request.headers.getall(name, []) for name in (
+            "X-Device-Builder-Addon", "X-Device-Builder-Session", "X-Device-Builder-User",
+            "X-Device-Builder-Info",
+        )]
+        context = None
+        metadata = None
+        if any(fields):
+            if any(len(values) != 1 for values in fields):
+                raise web.HTTPBadRequest(text="Invalid ESPHome session headers")
+            slug, session, user, encoded_info = (values[0] for values in fields)
+            if (not re.fullmatch(r"[a-z0-9_-]{1,128}", slug)
+                    or not re.fullmatch(r"[A-Za-z0-9_-]{8,512}", session)
+                    or user != request.headers.get("X-Remote-User-Id")):
+                raise web.HTTPForbidden(text="ESPHome session does not match the Home Assistant user")
+            if not (request.path.startswith("/api/esphome/") or re.fullmatch(
+                    r"/api/readers/[^/]+/firmware/(prepare|apply|update)", request.path)):
+                raise web.HTTPBadRequest(text="ESPHome session headers are not accepted on this route")
+            context = (user, slug, session)
+            try:
+                if len(encoded_info) > 4096:
+                    raise ValueError
+                metadata = json.loads(encoded_info)
+                if not isinstance(metadata, dict) or set(metadata) != {
+                    "slug", "name", "repository", "state", "ingress", "ingress_token", "version", "stage",
+                }:
+                    raise ValueError
+                if metadata["slug"] != slug or metadata["ingress"] is not True:
+                    raise ValueError
+                if any(not isinstance(value, str) or len(value)>512 for key,value in metadata.items() if key!="ingress"):
+                    raise ValueError
+                if not re.fullmatch(r"[A-Za-z0-9_-]{8,512}", metadata["ingress_token"]):
+                    raise ValueError
+            except (ValueError, TypeError):
+                raise web.HTTPBadRequest(text="Invalid ESPHome app metadata") from None
+        receipt = DEVICE_BUILDER_INGRESS.set(context)
+        info_receipt = DEVICE_BUILDER_METADATA.set(metadata)
+        try:
+            return await handler(request)
+        finally:
+            DEVICE_BUILDER_INGRESS.reset(receipt)
+            DEVICE_BUILDER_METADATA.reset(info_receipt)
 
     async def index(self, _request):
         # Build a fresh response instead of FileResponse so ingress/WebViews
@@ -6143,13 +6194,13 @@ class FingerprintAdmin:
                 connection["base_url"], connection.get("token", ""),
             )
         transport = HomeAssistantIngressTransport(self.ha)
-        self.local_device_builder_transport = transport
         return DeviceBuilderProtocol(transport)
 
     def public_device_builder_connection(self):
         connection = self.registry.esphome_connection()
-        if connection.get("mode") == "local_ingress" and self.local_device_builder_transport:
-            connection.update(self.local_device_builder_transport.status)
+        status = getattr(self.ha, "local_device_builder_status", {})
+        if connection.get("mode") == "local_ingress" and status:
+            connection.update(status)
             connection["configured"] = True
             connection["token_configured"] = False
         return connection
@@ -6168,7 +6219,8 @@ class FingerprintAdmin:
         except DeviceBuilderError as error:
             if self.registry.esphome_connection().get("mode") == "external":
                 self.registry.mark_esphome_connection_error(error)
-            LOGGER.warning("Device Builder refresh failed: %s", error.code)
+            log = LOGGER.debug if error.code == "session_required" else LOGGER.warning
+            log("Device Builder refresh failed: %s", error.code)
 
     @staticmethod
     def device_builder_response(error):
@@ -6235,7 +6287,6 @@ class FingerprintAdmin:
                 server_info, result, preferences = await client.test_connection()
                 devices = self.public_esphome_devices(result)
                 connection = self.registry.set_esphome_connection_mode("local_ingress")
-                self.local_device_builder_transport = client.transport
             elif mode == "external":
                 base_url = validate_esphome_base_url(payload.get("base_url"))
                 token = saved.get("token", "") if payload.get("preserve_token") else str(payload.get("token") or "").strip()
@@ -6269,22 +6320,9 @@ class FingerprintAdmin:
 
     async def start_local_device_builder(self, request):
         self.require_admin_request(request)
-        transport = HomeAssistantIngressTransport(self.ha)
-        try:
-            addon = await transport._discover()
-        except DeviceBuilderError as error:
-            if error.code != "stopped":
-                return self.device_builder_response(error)
-            addon = {"slug": transport.status.get("addon")}
-        slug = str(addon.get("slug") or "")
-        if not slug:
-            return self.device_builder_response(DeviceBuilderError("ESPHome Device Builder was not found", "not_installed"))
-        try:
-            await self.ha.supervisor_api("POST", f"/addons/{slug}/start", {})
-        except (DeviceBuilderError, RuntimeError) as error:
-            return self.device_builder_response(DeviceBuilderError("Could not start ESPHome Device Builder", "supervisor_error"))
-        self.local_device_builder_transport = None
-        return web.json_response({"ok": True, "status": "starting"})
+        return self.device_builder_response(DeviceBuilderError(
+            "Start ESPHome using the Home Assistant browser administrator session", "session_required",
+        ))
 
     async def list_esphome_devices(self, request):
         self.require_admin_request(request)
@@ -6293,7 +6331,8 @@ class FingerprintAdmin:
         except DeviceBuilderError as error:
             self.registry.mark_esphome_connection_error(error)
             return self.device_builder_response(error)
-        return web.json_response({"ok": True, "devices": devices})
+        return web.json_response({"ok": True, "devices": devices,
+                                  "connection": self.public_device_builder_connection()})
 
     async def esphome_preview_data(self, payload):
         yaml = esphome_reader_config(payload)
@@ -6431,10 +6470,17 @@ class FingerprintAdmin:
         payload = await request.json()
         try:
             yaml = esphome_reader_config(payload)
+            save_profile = payload.get("save_profile", False)
+            if not isinstance(save_profile, bool):
+                raise ValueError("save_profile must be a boolean")
+            if save_profile and not str(payload.get("reader_id") or "").strip():
+                raise ValueError("Select a valid fingerprint reader")
+            secret_keys = esphome_secret_keys(payload)
+            firmware_profile = (
+                self.save_esphome_firmware_profile(payload) if save_profile else None
+            )
         except (AttributeError, TypeError, ValueError) as error:
             raise web.HTTPBadRequest(text=str(error))
-        secret_keys = esphome_secret_keys(payload)
-        firmware_profile = self.save_esphome_firmware_profile(payload)
         return web.json_response(
             {
                 "yaml": yaml,
@@ -7627,7 +7673,8 @@ class FingerprintAdmin:
 
     def application(self):
         app = web.Application(
-            client_max_size=32 * 1024, middlewares=[self.ingress_authentication]
+            client_max_size=32 * 1024,
+            middlewares=[self.ingress_authentication, self.device_builder_ingress_context],
         )
         app.router.add_get("/", self.index)
         app.router.add_static("/assets/", ASSETS_PATH, show_index=False)

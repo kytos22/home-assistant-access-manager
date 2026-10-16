@@ -66,13 +66,17 @@ async function openPage(browser, viewport, language = 'en') {
     }
     if (url.pathname.includes('/api/')) {
       writes.push({ path: url.pathname, method: request.method(), payload: request.postDataJSON() });
+      if (url.pathname.endsWith('/esphome/config')) {
+        const payload = request.postDataJSON();
+        return route.fulfill({json:{yaml:'esphome:\n  name: front-reader\n',firmware_profile:payload.save_profile ? {...payload,hardware_profile:payload.profile,secret_keys:{wifi_ssid_secret:payload.wifi_ssid_secret}} : null}});
+      }
       return route.fulfill({ json: { ok: true, ...(url.pathname.endsWith('/reveal') ? { value: 'synthetic-visible-code' } : {}) } });
     }
     const asset = url.pathname.indexOf('/assets/');
     if (asset >= 0) {
       const filename = path.join(root, 'access_manager/app', url.pathname.slice(asset + 1));
       if (!filename.startsWith(path.join(root, 'access_manager/app/assets') + path.sep)) return route.abort();
-      return route.fulfill({ body: fs.readFileSync(filename), contentType: filename.endsWith('.png') ? 'image/png' : 'image/jpeg' });
+      return route.fulfill({ body: fs.readFileSync(filename), contentType: filename.endsWith('.js') ? 'application/javascript' : filename.endsWith('.png') ? 'image/png' : 'image/jpeg' });
     }
     return route.fulfill({ body: html, contentType: 'text/html' });
   });
@@ -211,8 +215,109 @@ async function openPage(browser, viewport, language = 'en') {
       await page.selectOption('#language', 'es');
       assert.equal(await page.locator('html').getAttribute('lang'), 'es');
       assert.equal(await page.locator('#add-person').textContent(), 'Añadir usuario');
+      state.esphome_connection = { mode: 'local_ingress', configured: true, status: 'unauthorized' };
+      await refresh();
+      assert.equal(await page.locator('#esphome-connection-status').textContent(), 'Autorización denegada');
+      assert.equal(await page.locator('#esphome-connection-status').evaluate(element => element.classList.contains('deleting')), true);
+      await page.selectOption('#language', 'en');
+      assert.equal(await page.locator('#esphome-connection-status').textContent(), 'Authorization denied');
+      await page.selectOption('#language', 'es');
       if (screenshotDir) { await page.evaluate(() => scrollTo(0, 0)); await page.screenshot({ path: path.join(screenshotDir, `${name}.png`), fullPage: true }); }
       assert.deepEqual(errors, [], `Browser errors after interactions in ${name}`);
+      await context.close();
+    }
+    // Preview, copy and download never opt into a linked-reader profile write.
+    {
+      const {context,page,errors,writes} = await openPage(browser,{width:390,height:844},'es');
+      await page.selectOption('#mobile-tab-select','fingerprints');
+      assert.equal(await page.locator('#save-esphome-profile').isEnabled(),false);
+      assert.equal(await page.locator('#generate-esphome').textContent(),'Previsualizar configuración');
+      await page.selectOption('#esphome-reader-link','front');
+      assert.equal(await page.locator('#save-esphome-profile').isEnabled(),true);
+      await page.locator('#generate-esphome').click();
+      await page.locator('#generated-esphome').waitFor({state:'visible'});
+      assert.equal(writes.length,1);
+      assert.equal(writes[0].payload.save_profile,false);
+      assert.equal(writes[0].payload.reader_id,'front');
+      await page.locator('#copy-esphome').click();
+      const download = page.waitForEvent('download');
+      await page.locator('#download-esphome').click();
+      assert.equal((await download).suggestedFilename(),'front-reader.yaml');
+      assert.equal(writes.length,1,'Copy/download must not save or contact Device Builder');
+      await page.locator('#save-esphome-profile').click();
+      await page.locator('#save-esphome-profile').filter({hasText:'Perfil del lector guardado'}).waitFor();
+      assert.equal(writes.length,2);
+      assert.equal(writes[1].payload.save_profile,true);
+      assert.ok(writes.every(item=>item.path.endsWith('/esphome/config')));
+      await page.selectOption('#language','en');
+      assert.equal(await page.locator('#generate-esphome').textContent(),'Preview configuration');
+      assert.deepEqual(errors,[]);
+      await context.close();
+    }
+    // Real same-origin iframe/parent discovery, but every HA/API call is synthetic.
+    {
+      const context = await browser.newContext({viewport:{width:1440,height:1000}});
+      const page = await context.newPage();
+      const state = fixture();
+      state.esphome_connection = {mode:'local_ingress',configured:true,status:'session_required'};
+      const delegated = [], errors = [], unexpectedWrites = [];
+      let denyNext = false;
+      page.on('pageerror', error => errors.push(error.message));
+      await page.route('**/*', async route => {
+        const request = route.request(), url = new URL(request.url());
+        if (url.hostname !== 'access-manager.test') return route.abort();
+        if (url.pathname === '/ha-host') return route.fulfill({contentType:'text/html',body:`<!doctype html>
+          <home-assistant></home-assistant><script>
+          window.haCalls=[];document.querySelector('home-assistant').hass={user:{id:'admin-a',is_admin:true},
+          async callWS(command){window.haCalls.push(command);return command.endpoint==='/addons'
+          ?{addons:[{slug:'custom_esphome',name:'ESPHome Device Builder',state:'started'}]}
+          :command.endpoint.endsWith('/info')?{name:'ESPHome Device Builder',state:'started',ingress:true,ingress_entry:'/api/hassio_ingress/synthetic_ingress'}
+          :{session:'synthetic_session_'+window.haCalls.length};}};
+          </script><iframe style="width:100%;height:1100px" src="/ingress/test/"></iframe>`});
+        if (url.pathname.endsWith('/api/state')) return route.fulfill({json:state});
+        if (/\/api\/esphome\/(devices|connection)$/.test(url.pathname)) {
+          delegated.push({path:url.pathname,method:request.method(),headers:request.headers()});
+          if (denyNext) {denyNext=false;return route.fulfill({status:502,json:{ok:false,error:'Synthetic expired session',code:'unauthorized'}});}
+          state.esphome_connection = {mode:'local_ingress',configured:true,status:'connected'};
+          return route.fulfill({json:{ok:true,connection:state.esphome_connection,devices:[]}});
+        }
+        if (url.pathname.includes('/api/')) {unexpectedWrites.push(url.pathname);return route.abort();}
+        const asset = url.pathname.indexOf('/assets/');
+        if (asset >= 0) {
+          const filename = path.join(root,'access_manager/app',url.pathname.slice(asset+1));
+          if (!filename.startsWith(path.join(root,'access_manager/app/assets')+path.sep)) return route.abort();
+          return route.fulfill({body:fs.readFileSync(filename),contentType:filename.endsWith('.js')?'application/javascript':'image/png'});
+        }
+        return route.fulfill({body:html,contentType:'text/html'});
+      });
+      await page.goto('http://access-manager.test/ha-host');
+      const panel = page.frameLocator('iframe');
+      await panel.locator('#esphome-connection-status').filter({hasText:'Connected'}).waitFor({state:'attached'});
+      assert.equal(delegated.length,1);
+      assert.equal(delegated[0].headers['x-device-builder-user'],'admin-a');
+      const firstSession = delegated[0].headers['x-device-builder-session'];
+      await panel.locator('.tab-button[data-tab="fingerprints"]').click();
+      await page.evaluate(() => document.querySelector('home-assistant').hass.user.id='admin-b');
+      await panel.locator('#reconnect-local-esphome').click();
+      await panel.locator('#esphome-connection-result').filter({hasText:'Connection successful'}).waitFor();
+      assert.equal(delegated.at(-1).headers['x-device-builder-user'],'admin-b');
+      assert.notEqual(delegated.at(-1).headers['x-device-builder-session'],firstSession);
+      denyNext = true;
+      const beforeDenied = delegated.length;
+      await panel.locator('#reconnect-local-esphome').click();
+      await panel.locator('#esphome-connection-result').filter({hasText:'Synthetic expired session'}).waitFor();
+      assert.equal(delegated.length,beforeDenied+1,'A denied write must not be replayed');
+      await page.evaluate(() => document.querySelector('home-assistant').hass.user.is_admin=false);
+      await panel.locator('#reconnect-local-esphome').click();
+      await panel.locator('#esphome-connection-result').filter({hasText:'Open this panel in Home Assistant'}).waitFor();
+      assert.equal(delegated.length,beforeDenied+1,'Revoked users cannot reuse a capability');
+      assert.equal(await page.evaluate(() => JSON.stringify({local:{...localStorage},session:{...sessionStorage}}).includes('synthetic_session')),false);
+      assert.equal((await panel.locator('body').textContent()).includes(firstSession),false);
+      assert.deepEqual(unexpectedWrites,[]);
+      assert.deepEqual(errors,[]);
+      const haCommands = await page.evaluate(() => window.haCalls.map(call=>[call.method,call.endpoint]));
+      assert.ok(haCommands.every(([method,endpoint]) => (method==='GET'&&['/addons','/addons/custom_esphome/info'].includes(endpoint)) || (method==='POST'&&endpoint==='/ingress/session')));
+      assert.equal(JSON.parse(delegated[0].headers['x-device-builder-info']).ingress_token,'synthetic_ingress');
       await context.close();
     }
     for (const language of ['unsupported-language', null]) {
@@ -222,6 +327,6 @@ async function openPage(browser, viewport, language = 'en') {
       await context.close();
     }
     console.log(JSON.stringify({ result: 'passed', viewports: ['1440x1000', '900x1000', '390x844', '320x740'], sections: 7,
-      checks: ['search', 'filters', 'pagination', 'menus survive polling', 'mobile credential expansion', 'keyboard tabs', 'modal focus trap and restore', 'unsaved form preservation', 'API failure/recovery', 'invalid response', 'escaped person names', 'credential hiding when backgrounded', 'free fingerprint slots', 'approved hand selector', 'enrollment payload and control recovery', 'English/Spanish', 'unavailable storage'], screenshots: screenshotDir }));
+      checks: ['search', 'filters', 'pagination', 'menus survive polling', 'mobile credential expansion', 'keyboard tabs', 'modal focus trap and restore', 'unsaved form preservation', 'API failure/recovery', 'invalid response', 'escaped person names', 'credential hiding when backgrounded', 'free fingerprint slots', 'approved hand selector', 'enrollment payload and control recovery', 'English/Spanish', 'Device Builder authorization error', 'HA parent iframe delegation', 'user isolation and revocation', 'expired session does not replay writes', 'no persistent capabilities', 'unavailable storage'], screenshots: screenshotDir }));
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -575,7 +575,7 @@
         </div>
       </section>
       <div id="esphome-setup-guide" class="warning-box"></div>
-      <div class="actions"><button id="build-esphome" type="button" data-i18n="build_in_esphome">Create and compile in ESPHome</button><button id="generate-esphome" class="secondary" type="button" data-i18n="generate_config">Preview configuration</button><button id="copy-esphome" class="secondary" type="button" disabled data-i18n="copy">Copy</button><button id="download-esphome" class="secondary" type="button" disabled data-i18n="download_yaml">Download YAML</button></div>
+      <div class="actions"><button id="build-esphome" type="button" data-i18n="build_in_esphome">Create and compile in ESPHome</button><button id="generate-esphome" class="secondary" type="button" data-i18n="generate_config">Preview configuration</button><button id="save-esphome-profile" class="secondary" type="button" disabled data-i18n="save_reader_profile">Save reader profile</button><button id="copy-esphome" class="secondary" type="button" disabled data-i18n="copy">Copy</button><button id="download-esphome" class="secondary" type="button" disabled data-i18n="download_yaml">Download YAML</button></div>
       <textarea id="generated-esphome" class="generated-config" readonly hidden aria-label="Generated ESPHome YAML"></textarea>
       <pre id="esphome-job-status" class="generated-config" hidden></pre>
     </section>
@@ -801,6 +801,7 @@
   </section>
 </div>
 
+<script src="assets/device-builder-session.js"></script>
 <script>
 (() => {
   const $ = selector => document.querySelector(selector);
@@ -808,6 +809,10 @@
   let data = null;
   let busy = false;
   let refreshPromise = null;
+  const deviceBuilderSession = new window.AccessManagerDeviceBuilderSession();
+  let builderRefreshPending = false;
+  let builderRefreshAt = 0;
+  let builderConnectionError = "";
   const stored = (key, fallback) => { try { return localStorage.getItem(key) || fallback; } catch { return fallback; } };
   const remember = (key, value) => { try { localStorage.setItem(key, value); } catch {} };
   let language = ["en", "es"].includes(stored("access-manager-language", "en")) ? stored("access-manager-language", "en") : "en";
@@ -832,6 +837,8 @@
 
   const messages = {
     en: {
+      session_required:"Open this panel in Home Assistant and reconnect ESPHome",
+      unauthorized:"Authorization denied", supervisor_error:"Supervisor connection error",
       app_title:"Access Manager", app_subtitle:"Users · credentials · readers · doors", repository_documentation:"Repository documentation", language:"Language", installed_version:"Installed version",
       connecting:"Connecting…", connected:"Home Assistant connected", disconnected:"Home Assistant disconnected", panel_updating:"Loading the updated Access Manager panel…", panel_update_failed:"The updated panel could not be loaded. Close and reopen Access Manager, then try again.",
       tab_people:"Users & credentials", tab_fingerprints:"Fingerprint readers", tab_keypads:"Keypads", tab_doors:"Doors", tab_automations:"Automations", tab_settings:"Settings", tab_logs:"Log",
@@ -906,6 +913,8 @@
       left_hand:"LEFT HAND", right_hand:"RIGHT HAND"
     },
     es: {
+      session_required:"Abre este panel desde Home Assistant y reconecta ESPHome",
+      unauthorized:"Autorización denegada", supervisor_error:"Error de conexión con Supervisor",
       app_title:"Gestor de accesos", app_subtitle:"Usuarios · credenciales · lectores · puertas", repository_documentation:"Documentación del repositorio", language:"Idioma", installed_version:"Versión instalada",
       connecting:"Conectando…", connected:"Home Assistant conectado", disconnected:"Home Assistant desconectado", panel_updating:"Cargando el panel actualizado de Access Manager…", panel_update_failed:"No se pudo cargar el panel actualizado. Cierra y vuelve a abrir Access Manager e inténtalo de nuevo.",
       tab_people:"Usuarios y credenciales", tab_fingerprints:"Lectores de huellas", tab_keypads:"Keypads", tab_doors:"Puertas", tab_automations:"Automatizaciones", tab_settings:"Ajustes", tab_logs:"Registro",
@@ -984,6 +993,8 @@
   Object.assign(messages.en, { repository_documentation:"Documentation", search_people:"Find a person or credential", search_people_placeholder:"Name, reader or credential…", filter_people:"Show", all_people:"All people", linked_people:"Linked people", needs_attention:"Needs attention", previous_page:"Previous", next_page:"Next", people_per_page:"People per page", people_results:"{start}–{end} of {total} people", no_matches:"No matching results. Try another search or filter.", add_credential:"Add credential", search_activity:"Search recent activity", search_activity_placeholder:"Person, door, event or detail…", all_events:"All events", activity_results:"{count} of {total} recent entries", sync_connecting:"Loading your environment…", sync_updated:"Updated {time}", sync_failed:"Connection lost · showing the last received data", refresh_panel:"Refresh", request_timeout:"The request timed out. Check the connection and try again.", invalid_response:"The server returned an unexpected response.", loading:"Loading…" });
   Object.assign(messages.es, { repository_documentation:"Documentación", search_people:"Buscar persona o credencial", search_people_placeholder:"Nombre, lector o credencial…", filter_people:"Mostrar", all_people:"Todas las personas", linked_people:"Personas vinculadas", needs_attention:"Requieren atención", previous_page:"Anterior", next_page:"Siguiente", people_per_page:"Personas por página", people_results:"{start}–{end} de {total} personas", no_matches:"No hay coincidencias. Prueba otra búsqueda o filtro.", add_credential:"Añadir credencial", search_activity:"Buscar en la actividad reciente", search_activity_placeholder:"Persona, puerta, evento o detalle…", all_events:"Todos los eventos", activity_results:"{count} de {total} eventos recientes", sync_connecting:"Cargando tu entorno…", sync_updated:"Actualizado a las {time}", sync_failed:"Conexión perdida · se muestran los últimos datos recibidos", refresh_panel:"Actualizar", request_timeout:"La solicitud ha tardado demasiado. Comprueba la conexión e inténtalo de nuevo.", invalid_response:"El servidor ha devuelto una respuesta inesperada.", loading:"Cargando…" });
 
+  Object.assign(messages.en, {generate_config:"Preview configuration",save_reader_profile:"Save reader profile",reader_profile_saved:"Reader profile saved"});
+  Object.assign(messages.es, {generate_config:"Previsualizar configuración",save_reader_profile:"Guardar perfil del lector",reader_profile_saved:"Perfil del lector guardado"});
   messages.en.credential_count = "{count} credentials";
   messages.es.credential_count = "{count} credenciales";
   Object.assign(messages.en, { link_help_missing:"Home Assistant could not resolve this Person link. Existing physical credentials remain active; review the association to restore mobile NFC access." });
@@ -1001,18 +1012,35 @@
   const apiUrl = path => new URL(`api/${path}`, panelBaseUrl).toString();
 
   async function request(path, options = {}) {
+    let payload;
+    try { payload = options.body ? JSON.parse(options.body) : {}; } catch { payload = {}; }
+    const mode = payload?.mode || data?.esphome_connection?.mode || "local_ingress";
+    const needsBuilder = mode === "local_ingress" &&
+      (/^esphome\/(devices|preview|build)$/.test(path) ||
+      (path === "esphome/connection" && options.method === "PUT") ||
+      path === "esphome/connection/test" || /^readers\/[^/]+\/firmware\/(prepare|apply|update)$/.test(path));
+    let builderHeaders = {};
+    if (needsBuilder) {
+      try { builderHeaders = await deviceBuilderSession.headers(); }
+      catch (error) { builderConnectionError=error.code||"supervisor_error"; if(data)renderSettings(); throw Object.assign(new Error(t(builderConnectionError)), {code:error.code}); }
+    }
     const controller = new AbortController();
     const abort = () => controller.abort();
     options.signal?.addEventListener("abort", abort, {once:true});
     if (options.signal?.aborted) abort();
     const timeout = setTimeout(abort, 30000);
     try {
-      const response = await fetch(apiUrl(path), { cache:"no-store", ...options, signal:controller.signal, headers: {"Content-Type":"application/json", "X-Fingerprint-Admin":"1", "Accept-Language":language, ...(options.headers || {})} });
+      const response = await fetch(apiUrl(path), { cache:"no-store", ...options, signal:controller.signal, headers: {"Content-Type":"application/json", "X-Fingerprint-Admin":"1", "Accept-Language":language, ...(options.headers || {}), ...builderHeaders} });
       const text = await response.text();
       let result;
       try { result = text ? JSON.parse(text) : {}; } catch { if (response.ok) throw new Error(t("invalid_response")); }
       if (response.ok && (!result || typeof result !== "object" || Array.isArray(result))) throw new Error(t("invalid_response"));
-      if (!response.ok || result?.ok === false) throw new Error(result?.error || result?.message || text || `Error ${response.status}`);
+      if (!response.ok || result?.ok === false) {
+        if (needsBuilder) {builderConnectionError=result?.code||"unavailable";if(data)renderSettings();}
+        if (needsBuilder && ["unauthorized", "session_required"].includes(result?.code)) deviceBuilderSession.invalidate();
+        throw Object.assign(new Error(result?.error || result?.message || text || `Error ${response.status}`), {code:result?.code});
+      }
+      if (needsBuilder) builderConnectionError="";
       return result;
     } catch (error) {
       if (error.name === "AbortError") throw new Error(t("request_timeout"));
@@ -1423,9 +1451,9 @@
     $("#esphome-firmware-version").textContent=`v${data.reader_firmware_version||"—"}`;
     const connection=data.esphome_connection||{};
     const localMode=connection.mode!=="external";
-    const connectionStatus=connection.status||(connection.configured?"detecting":"connection_missing");
+    const connectionStatus=(localMode&&builderConnectionError)||connection.status||(connection.configured?"detecting":"connection_missing");
     $("#esphome-connection-status").textContent=t(connectionStatus==="connected"?"connection_ready":connectionStatus);
-    $("#esphome-connection-status").className=`status ${["error","not_installed","stopped","ingress_unavailable","incompatible"].includes(connectionStatus)?"deleting":""}`;
+    $("#esphome-connection-status").className=`status ${["error","unauthorized","session_required","supervisor_error","unavailable","not_installed","stopped","ingress_unavailable","incompatible"].includes(connectionStatus)?"deleting":""}`;
     $("#esphome-local-detail").textContent=localMode?(connection.addon?`${connection.addon}${connection.esphome_version?` · ESPHome ${connection.esphome_version}`:""}`:t("device_builder_connection_hint")):t("external_device_builder");
     $("#reconnect-local-esphome").hidden=!localMode;
     $("#start-local-esphome").hidden=connectionStatus!=="stopped";
@@ -1442,6 +1470,7 @@
 
   function renderEsphomeProfile(){
     syncEsphomeConfiguration();
+    $("#save-esphome-profile").disabled=!$("#esphome-reader-link").value;
     document.querySelectorAll(".reader-only-option").forEach(element=>element.hidden=$("#esphome-profile").value!=="reader_only");
     document.querySelectorAll(".display-option").forEach(element=>element.hidden=$("#esphome-profile").value!=="display");
     const existing=$("#esphome-install-mode").value==="existing";
@@ -1541,26 +1570,28 @@
   }
 
   async function deleteEsphomeConnection(){
+    deviceBuilderSession.invalidate();
     try{await request("esphome/connection",{method:"DELETE"});data.esphome_connection={};data.esphome_devices=[];data.esphome_configured=false;$("#esphome-token").value="";$("#esphome-base-url").value="";$("#esphome-base-url").dataset.edited="";renderSettings();showError();}
     catch(error){showError(error.message);}
   }
 
   async function reconnectLocalEsphome(){
+    deviceBuilderSession.invalidate();
     const output=$("#esphome-connection-result");output.hidden=false;output.textContent="…";
     try{const result=await request("esphome/connection",{method:"PUT",body:JSON.stringify({mode:"local_ingress"})});data.esphome_connection=result.connection;data.esphome_devices=result.devices||[];data.esphome_configured=true;output.textContent=`${t("connection_ok")} · ${result.devices?.length||0}`;renderSettings();showError();}
     catch(error){output.textContent=error.message;showError(error.message);}
   }
 
   async function startLocalEsphome(){
-    try{const result=await request("esphome/local/start",{method:"POST",body:"{}"});data.esphome_connection={mode:"local_ingress",configured:true,status:result.status};renderSettings();showError();}
-    catch(error){showError(error.message);}
+    try{await deviceBuilderSession.start();builderConnectionError="";data.esphome_connection={mode:"local_ingress",configured:true,status:"starting"};builderRefreshAt=0;renderSettings();showError();}
+    catch(error){showError(t(error.code||"supervisor_error"));}
   }
 
-  async function generateEsphomeConfig(){
-    const payload=esphomePayload();
+  async function generateEsphomeConfig(saveProfile=false){
+    const payload={...esphomePayload(),save_profile:saveProfile};
     try{
       const result=await request("esphome/config",{method:"POST",body:JSON.stringify(payload)}),output=$("#generated-esphome");
-      output.value=result.yaml;output.hidden=false;$("#copy-esphome").disabled=false;$("#download-esphome").disabled=false;if(result.firmware_profile){const reader=(data.access_readers||[]).find(item=>item.id===result.firmware_profile.reader_id);if(reader){reader.config=reader.config||{};reader.config.firmware_profile=result.firmware_profile;}}showError();
+      output.value=result.yaml;output.hidden=false;$("#copy-esphome").disabled=false;$("#download-esphome").disabled=false;if(result.firmware_profile){const reader=(data.access_readers||[]).find(item=>item.id===result.firmware_profile.reader_id);if(reader){reader.config=reader.config||{};reader.config.firmware_profile=result.firmware_profile;}const button=$("#save-esphome-profile");button.textContent=t("reader_profile_saved");setTimeout(()=>button.textContent=t("save_reader_profile"),1800);}showError();
     }catch(error){showError(error.message);}
   }
 
@@ -1611,6 +1642,28 @@
     $("#management").textContent = data.management_message || t("management_empty");
     renderPeople(); renderSharedKeypadCredentials(); renderFingerprintReaders(); renderKeypads(); renderDoors(); renderMobileNfc(); renderAutomations(); renderSettings(); renderLogs(); renderCapture(); renderKeypadLearning(); enhanceResponsiveTables();
   }
+  async function refreshLocalDeviceBuilder() {
+    if (builderRefreshPending || Date.now() < builderRefreshAt || document.hidden ||
+        data?.esphome_connection?.mode !== "local_ingress" || !deviceBuilderSession.getHass()) return;
+    builderRefreshPending = true;
+    builderRefreshAt = Date.now() + 60000;
+    try {
+      const result = await request("esphome/devices");
+      if (data.esphome_connection?.mode === "local_ingress") {
+        data.esphome_devices = result.devices || [];
+        data.esphome_connection = result.connection || data.esphome_connection;
+        data.esphome_configured = true;
+        renderSettings();
+      }
+    } catch (error) {
+      if (data?.esphome_connection?.mode === "local_ingress") {
+        builderConnectionError = error.code || "unavailable";
+        data.esphome_connection.status = error.code || "unavailable";
+        renderSettings();
+      }
+    } finally { builderRefreshPending = false; }
+  }
+
   function refresh() {
     if (refreshPromise) return refreshPromise;
     refreshPromise = (async () => {
@@ -1618,6 +1671,7 @@
       try { data = await request("state"); lastSynced = new Date(); transportFailed = false; if (connectionError && $("#notice").textContent === connectionError) showError(); connectionError = ""; render(); }
       catch (error) { transportFailed = true; connectionError = error.message; revealedCredentials.clear(); if (data) render(); else { $("#sync-status").textContent = t("sync_failed"); $("#connection").classList.remove("online"); $("#connection span:last-child").textContent = t("disconnected"); } showError(error.message); }
       finally { $("#refresh-panel").disabled = false; }
+      void refreshLocalDeviceBuilder();
     })().finally(() => { refreshPromise = null; });
     return refreshPromise;
   }
@@ -2004,7 +2058,8 @@
   $("#delete-esphome-connection").addEventListener("click",deleteEsphomeConnection);
   $("#reconnect-local-esphome").addEventListener("click",reconnectLocalEsphome);
   $("#start-local-esphome").addEventListener("click",startLocalEsphome);
-  $("#generate-esphome").addEventListener("click",generateEsphomeConfig);
+  $("#generate-esphome").addEventListener("click",()=>generateEsphomeConfig());
+  $("#save-esphome-profile").addEventListener("click",()=>generateEsphomeConfig(true));
   $("#build-esphome").addEventListener("click",buildEsphomeFirmware);
   $("#copy-esphome").addEventListener("click",copyEsphomeConfig);
   $("#download-esphome").addEventListener("click",downloadEsphomeConfig);
@@ -2012,11 +2067,13 @@
 
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
+      deviceBuilderSession.invalidate();
       revealedCredentials.clear();
       if (data?.privacy_mode) { renderPeople(); renderSharedKeypadCredentials(); }
     } else refresh();
   });
   applyLanguage();
+  window.addEventListener("pagehide", () => deviceBuilderSession.invalidate());
   switchTab(stored("access-manager-tab", "people"));
   renderEsphomeProfile();
   refresh();

@@ -91,7 +91,7 @@ The user subsequently confirmed the actual administrator session displayed the a
 
 After explicit removal approval, a partial backup containing only the diagnostic was created and verified by metadata, without Home Assistant settings or other apps. The diagnostic was stopped and uninstalled. Its four hash-verified generated source files were moved out of the local app store to a recoverable temporary location; the generator remains in this repository. The diagnostic is absent from both installed apps and store discovery. Other app versions/states, Access Manager source/UI hashes, and the existing Access Manager/Home Assistant container IDs/start times remained unchanged. No backup was restored or deleted.
 
-**Still pending:** full-candidate panel/integration validation and a consistent recovery plan for the active Access Manager. The isolated diagnostic results do not establish full-candidate Ingress success, restore safety, or physical OTA behavior.
+**Scope:** the isolated diagnostic results alone do not establish full-candidate Ingress success, restore safety, or physical OTA behavior. Subsequent separately approved recovery preparation and the temporary full-candidate trial are recorded below.
 
 ## 4. Private online data recovery bundle
 
@@ -129,3 +129,65 @@ After the offline and Ingress gates pass, arrange a separate approval/maintenanc
 6. If authentication or migration fails, stop validation and use the approved recovery plan; never bypass the security check, guess Person IDs, delete the database, or overwrite a migrated live database with older code.
 
 Record local, read-only preflight, live Ingress, full-update, and physical-device results separately. Follow [RELEASING.md](../RELEASING.md) for publication; this checklist grants no permission to push, publish, install, restore, or flash.
+
+## 6. Temporary full-candidate trial (2026-10-16)
+
+After explicit approval, the original 0.15.3 app was stopped and a fresh Supervisor partial backup containing only that app was created. Its database/key/options payload was checked against the stopped original. A separate private cold-data copy was consolidated and verified offline before being used for the candidate. No migrated candidate data was written over the stable app's data, and no backup was restored.
+
+A separately named 0.16.0 candidate was installed with its own slug and copied data. Only the candidate is running. The original remains installed and stopped, with its data and previous boot/watchdog/update settings recorded privately. Both apps are temporarily set to manual boot to prevent two controllers starting together; a Home Assistant reboot will therefore not start Access Manager automatically during the trial. Core and unrelated apps were not restarted or updated.
+
+The migrated candidate passed SQLite integrity/foreign-key checks and credential decryption/hash checks without disclosing values. Its backend/UI matched the submitted candidate and the HA WebSocket connection succeeded. The user reports that the panel looks correct; this is not proof that every panel operation or physical action has been validated.
+
+Device Builder startup discovery failed with `Unauthorized`. A read-only probe using the candidate's own credential confirmed that `config/auth/list` succeeds while `supervisor/api` for `GET /addons` is denied. Home Assistant's [Supervisor WebSocket handler](https://github.com/home-assistant/core/blob/2026.10.0/homeassistant/components/hassio/websocket_api.py) requires an administrator for that endpoint. The app's system-user credential is not the human administrator session. Merely broadening Supervisor roles does not establish a valid Ingress user session.
+
+The first local follow-up converted Supervisor rejections and transport failures into handled Device Builder errors, preserved task cancellation, and updated the displayed connection state. That handling alone did not repair the connection. A proposed browser-administrator delegation was initially stopped by automatic safety review pending explicit approval; its partial implementation was removed. The user subsequently approved implementation and testing **in local code only**, as recorded in section 7. No permission expansion, personal token fallback, live delegation or hot patch has been deployed.
+
+Next gate: separately approve updating/restarting only the candidate, then verify the real connection. Compilation, OTA, enrollment/deletion, door actions, production backup restoration, merging and release publication remain separate decisions. For rollback, stop the candidate first and use the stable app's unchanged data; never overwrite it with the migrated candidate database.
+
+## 7. Locally approved temporary Device Builder connection
+
+The browser uses the existing same-origin Home Assistant frontend `hass.callWS` connection for app discovery, selected-app metadata and Ingress session creation; no personal or Supervisor access token is read or copied. The backend validates the bounded delegated fields and actual ESPHome protocol, without any Supervisor command through its system-user Core proxy. The existing administrator/peer gate is unchanged and runs before the new capability middleware. See the [security model and limitations](../SECURITY.md#temporary-device-builder-delegation).
+
+The capability remains in memory and is scoped to its request and explicitly spawned jobs, never a global transport cache. Startup tasks cannot inherit one. Concurrent users, omitted/duplicate/malformed headers, forged direct-peer requests, unrelated routes, changed roles, cancellation, error cleanup, expired sessions, and completed-job reference cleanup are covered by synthetic tests. Sessions and private upstream error bodies are not returned or logged. No failed write is automatically resent. Starting a stopped ESPHome app requires its explicit browser button.
+
+Run the new JavaScript isolation tests alongside the existing suites:
+
+```sh
+node --test tests/test_device_builder_session.cjs
+python -B -m unittest discover -s tests -v
+node tests/check_ui.mjs
+npm run test:browser
+python -B tests/rehearse_upgrade.py --baseline-ref v0.15.3
+```
+
+Local results: 168 Python tests, 12 JavaScript session tests, 36 offline migration/recovery checks, UI syntax/structure and all seven sections at four browser sizes passed. The browser suite also embeds the panel inside a same-origin simulated HA parent, checks the initial connection and user switch/revocation, and verifies that an expired session does not replay a write or persist credentials. Every HA/ESPHome response in these tests is simulated; no production connection, app restart, compile, OTA or door action was performed.
+
+The app manifest, Supervisor permissions, firmware sources and approved hand image are unchanged. The module is included by the existing `COPY app /app` image rule, and the new tests are wired into CI. A subsequent candidate-only deployment was explicitly approved. Its first revision built and started with verified file hashes, a checked cold partial backup, unchanged stable data, unchanged Core process, and no startup exceptions. It did **not** fix Device Builder: the user's screenshot confirmed authorization denial.
+
+The live investigation identified the missing restriction in Supervisor's installed `api/proxy.py`: **all** app-proxied `supervisor/*` commands are rejected before Core receives them, including `/addons/<slug>/info`. Checking only Core's endpoint allowlist was insufficient. The correction moves metadata lookup to the already-authorized browser too and removes backend Supervisor requests entirely. Tests now cover the complete three-call browser flow and explicitly prohibit backend construction of a Supervisor command. No new permission or authentication bypass is used. A clean startup alone is not connection success; the subsequent live session result is recorded below.
+
+## 8. Approved candidate update and live connection check
+
+Only the temporary candidate was stopped, backed up, rebuilt and started. Each revision retained its previous image and source, plus a cold Supervisor partial backup containing only the candidate. The database/key/options payload matched the stopped app. A separate offline recovery copy passed integrity, foreign keys, credential decryption/hash checks and reopening, without a live restore or downloading real data off-host.
+
+The corrected code passed 171 Python tests, 14 JavaScript session tests, 36 offline migration/recovery checks and the browser suite at four sizes. Its exact backend, panel and session-module hashes were checked in both the source and the rebuilt running image. The original stable app remained stopped; its data hashes were unchanged. Core kept its original container/start time, and all other apps retained their states/versions. The candidate retained manual boot, disabled watchdog/automatic updates, `homeassistant_api: true`, `hassio_api: false` and the default Supervisor role.
+
+After startup, the running candidate's database passed integrity/foreign-key checks, record counts matched the verified recovery copy, and all encrypted credentials decrypted and matched their keyed hashes. The app connected to HA without tracebacks or unhandled background-task failures.
+
+The user then closed/reopened the updated panel, clicked **Reconnect**, and reported **Connected** for ESPHome Device Builder. This is a real user-confirmed session observation, not an automated live-browser capture or a claim that offline mocks prove compatibility. No reader flash, compilation, enrollment/deletion or door action was sent by the agent. The app version is still the temporary `0.16.0` candidate, not a new published release; updated branch submission/remote CI and release publication are still separate approvals.
+
+During this trial, do not start the stable app alongside the candidate. Both remain manually started, so a HA reboot will not automatically restart Access Manager. Recovery archives and image/source copies remain on the HA host and do not cover loss of that host/disk; restoring them requires separate approval. Remaining functional, firmware and physical-access tests must be agreed individually.
+
+## 9. Final local review after the connection check
+
+Review found that the manual YAML-generation action also persisted the selected reader's firmware profile. This made it unsuitable as a read-only preview. The local correction makes generation non-persistent by default and adds a separate **Save reader profile** button. Only an explicit JSON boolean `save_profile: true` enables that save; malformed flags, missing readers and non-fingerprint readers are rejected before a write. The manual workflow still retains administrator-chosen device and secret-key names when explicitly saved, without changing environment defaults or sending a Device Builder request.
+
+Regression tests verify unchanged reader data and SQLite write count during preview, explicit persistence after reopening the database, invalid-save rejection, bilingual labels and mobile controls. The simulated browser also checks that copying/downloading the YAML does not save a profile and that its filename matches the device name. No live panel action was automated: the computer-use runtime is unavailable in this session, and all browser-test communications are intercepted with synthetic responses.
+
+Final local results: **173 Python tests**, **14 JavaScript session tests**, **36 offline migration/recovery checks**, UI syntax/structure, browser checks for seven sections at four sizes, and `git diff --check` passed. These results supersede earlier local counts, not the recorded deployed source hashes. The preview/profile correction has not been deployed; the connection confirmation in section 8 applies to the previous, installed revision. No additional Home Assistant mutation, compilation, OTA, door action or credential change was performed.
+
+Next checkpoint: obtain approval to submit the follow-up code to the existing review and run fresh remote CI. This does not authorize merging, publishing a release, replacing the running candidate or starting the stable controller. Agree separately on any remaining live integration or physical-device tests; do not manufacture a production failure or weaken the overwrite checks to finish a checklist.
+
+## 10. Approved follow-up submission
+
+The user approved submitting the follow-up changes to existing PR #24 and running CI. This approval excludes merging, tags/releases, deployment, firmware writes and any change to Home Assistant. The CI result must correspond to the new PR head, not the original candidate's successful runs. Use the PR's checks and workflow logs as the authoritative remote build evidence. This submission does not replace the installed candidate or close the remaining live integration/recovery gates.

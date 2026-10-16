@@ -8,6 +8,7 @@ Every Access Manager release must use the same version in the app manifest, pane
    ```text
    python -B -m unittest discover -s tests -v
    node tests/check_ui.mjs
+   node --test tests/test_device_builder_session.cjs
    npm ci --ignore-scripts
    npx playwright install chromium
    npm run test:browser

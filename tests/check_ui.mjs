@@ -11,6 +11,14 @@ if (scripts.length !== 1) {
 }
 
 new Function(scripts[0][1]);
+const sessionModule = await readFile(new URL("../access_manager/app/assets/device-builder-session.js", import.meta.url), "utf8");
+new Function(sessionModule);
+if (!html.includes('<script src="assets/device-builder-session.js"></script>')) {
+  throw new Error("Temporary Device Builder session module is not loaded");
+}
+if (/localStorage|sessionStorage|document\.cookie|access_token/.test(sessionModule)) {
+  throw new Error("The session bridge must not store capabilities or read HA access tokens");
+}
 
 for (const marker of [
   'id="language"',
@@ -91,6 +99,8 @@ for (const marker of [
   'esphome/preview',
   'id="esphome-configuration"',
   'id="esphome-reader-link"',
+  'id="save-esphome-profile"',
+  'save_profile:saveProfile',
   'id="save-esphome-environment-defaults"',
   'id="esphome-wifi-ssid-secret"',
   'id="esphome-api-key-secret"',

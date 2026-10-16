@@ -122,6 +122,68 @@ class DashboardJobTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(TimeoutError):
                 await self.ha.websocket_command({"type": "person/list"})
 
+    async def test_supervisor_denial_is_a_handled_builder_error_without_retry(self):
+        self.transport.ingress_context = ("admin-user", "esphome", "synthetic_session")
+        self.ha.ingress_user_is_admin = AsyncMock(return_value=False)
+        self.ha.websocket_command = AsyncMock(side_effect=RuntimeError("Unauthorized"))
+        self.transport._legacy_dashboard_command = AsyncMock()
+        with self.assertRaises(APP.DeviceBuilderError) as error:
+            await self.transport.command("devices/list")
+        self.assertEqual(error.exception.code, "unauthorized")
+        self.assertEqual(self.transport.status["status"], "unauthorized")
+        self.ha.websocket_command.assert_not_awaited()
+        self.transport._legacy_dashboard_command.assert_not_called()
+
+    async def test_supervisor_failures_do_not_leak_private_upstream_details(self):
+        self.transport.ingress_context = ("admin-user", "esphome", "synthetic_session")
+        for failure, code in (
+            (RuntimeError("synthetic-private-session-value"), "unauthorized"),
+            (TimeoutError("synthetic-private-session-value"), "unauthorized"),
+            (APP.ClientError("synthetic-private-session-value"), "unauthorized"),
+            (OSError("synthetic-private-session-value"), "unauthorized"),
+        ):
+            with self.subTest(failure=type(failure).__name__):
+                self.ha.ingress_user_is_admin = AsyncMock(side_effect=failure)
+                with self.assertRaises(APP.DeviceBuilderError) as error:
+                    await self.transport.command("devices/list")
+                self.assertEqual(error.exception.code, code)
+                self.assertEqual(self.transport.status["status"], code)
+                self.assertNotIn("synthetic-private", str(error.exception))
+                self.assertTrue(error.exception.__suppress_context__)
+
+    async def test_supervisor_cancellation_is_not_converted_to_a_connection_error(self):
+        self.transport.ingress_context = ("admin-user", "esphome", "synthetic_session")
+        self.ha.ingress_user_is_admin = AsyncMock(side_effect=asyncio.CancelledError)
+        with self.assertRaises(asyncio.CancelledError):
+            await self.transport._discover()
+
+    async def test_startup_refresh_handles_authorization_denial(self):
+        self.transport.ingress_context = ("admin-user", "esphome", "synthetic_session")
+        self.ha.ingress_user_is_admin = AsyncMock(return_value=False)
+        self.ha.websocket_command = AsyncMock(side_effect=RuntimeError("Unauthorized"))
+        client = APP.DeviceBuilderProtocol(self.transport)
+        admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+        admin.registry = SimpleNamespace(
+            esphome_connection=Mock(return_value={"mode": "local_ingress"}),
+            mark_esphome_connection_error=Mock(),
+        )
+        admin.device_builder_client = Mock(return_value=client)
+        with self.assertLogs(APP.LOGGER, level="WARNING") as captured:
+            await admin.refresh_device_builder_cache()
+        self.assertEqual(captured.output, [
+            "WARNING:fingerprint_admin:Device Builder refresh failed: unauthorized",
+        ])
+        admin.registry.mark_esphome_connection_error.assert_not_called()
+
+    async def test_legacy_dashboard_denial_updates_connection_status(self):
+        self.transport._websocket_command = AsyncMock(side_effect=APP._LegacyDashboardRequired)
+        self.transport._legacy_dashboard_command = AsyncMock(
+            side_effect=APP.DeviceBuilderError("Denied", "unauthorized"),
+        )
+        with self.assertRaises(APP.DeviceBuilderError):
+            await self.transport.command("devices/list")
+        self.assertEqual(self.transport.status["status"], "unauthorized")
+
     async def test_missing_or_invalid_exit_code_is_never_a_success(self):
         class Socket:
             def __init__(self, code): self.code = code

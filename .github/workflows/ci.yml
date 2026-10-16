@@ -18,6 +18,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npx playwright install --with-deps chromium
       - run: npm run test:ui
+      - run: node --test tests/test_device_builder_session.cjs
       - run: npm run test:browser
   validate:
     runs-on: ubuntu-latest
@@ -43,6 +44,8 @@ jobs:
         run: python -B tests/rehearse_upgrade.py --baseline-ref v0.15.3
       - name: Validate UI JavaScript
         run: node tests/check_ui.mjs
+      - name: Validate temporary Device Builder session isolation
+        run: node --test tests/test_device_builder_session.cjs
       - name: Validate YAML
         run: |
           python - <<'PY'

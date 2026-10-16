@@ -522,6 +522,9 @@ class RegistryTests(unittest.TestCase):
 
     def test_local_ingress_discovers_supported_addons_without_public_url(self):
         class FakeHomeAssistant:
+            async def ingress_user_is_admin(self, user_id):
+                return True
+
             def __init__(self, addons, details=None):
                 self.addons = addons
                 self.details = details or {}
@@ -552,20 +555,21 @@ class RegistryTests(unittest.TestCase):
             "ingress_entry": "/api/hassio_ingress/local_ingress_token",
         })
         transport = APP.HomeAssistantIngressTransport(home_assistant)
+        transport.ingress_context = ("admin-user", "a0d7b954_esphome", "synthetic_session")
+        transport.addon_info = home_assistant.details
         addon = asyncio.run(transport._discover())
         self.assertEqual(addon["slug"], "a0d7b954_esphome")
         self.assertEqual(
             home_assistant.calls,
-            [
-                ("GET", "/addons", None),
-                ("GET", "/addons/a0d7b954_esphome/info", None),
-            ],
+            [],
         )
 
         stopped = APP.HomeAssistantIngressTransport(FakeHomeAssistant([{
             "slug": "esphome_beta", "name": "ESPHome Device Builder Beta",
             "state": "stopped", "ingress": True,
         }]))
+        stopped.ingress_context = ("admin-user", "esphome_beta", "synthetic_session")
+        stopped.addon_info = {"name":"ESPHome Device Builder Beta", "state":"stopped", "ingress":True}
         with self.assertRaisesRegex(APP.DeviceBuilderError, "stopped"):
             asyncio.run(stopped._discover())
         self.assertEqual(stopped.status["status"], "stopped")
@@ -947,6 +951,78 @@ class RegistryTests(unittest.TestCase):
             )
             registry.connection.close()
 
+    def test_esphome_preview_does_not_save_linked_profile_without_explicit_flag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            registry = APP.Registry(Path(directory) / "esphome-preview.db")
+            registry.create_reader("front_reader", "Front reader", "fingerprint", None, {})
+            admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+            admin.registry = registry
+            payload = {
+                "reader_id": "front_reader", "profile": "display",
+                "device_name": "display1", "friendly_name": "Display1",
+                "configuration": "display1.yaml", "display_language": "Español",
+                "wifi_ssid_secret": "wifi_ssid2",
+            }
+
+            class Request:
+                headers = {"X-Fingerprint-Admin": "1"}
+
+                async def json(self):
+                    return payload
+
+            original = registry.reader("front_reader")
+            changes = registry.connection.total_changes
+            for flag in (None, False):
+                if flag is not None:
+                    payload["save_profile"] = flag
+                result = asyncio.run(admin.generate_esphome_config(Request()))
+                response = json.loads(result.text)
+                self.assertIsNone(response["firmware_profile"])
+                self.assertIn("!secret wifi_ssid2", response["yaml"])
+                self.assertEqual(registry.reader("front_reader"), original)
+                self.assertEqual(registry.connection.total_changes, changes)
+
+            payload["save_profile"] = True
+            result = asyncio.run(admin.generate_esphome_config(Request()))
+            self.assertEqual(json.loads(result.text)["firmware_profile"]["reader_id"], "front_reader")
+            self.assertEqual(registry.esphome_secret_keys()["wifi_ssid_secret"], "wifi_ssid")
+            registry.connection.close()
+            reopened = APP.Registry(Path(directory) / "esphome-preview.db")
+            stored = reopened.reader("front_reader")["config"]["firmware_profile"]
+            self.assertEqual(stored["configuration"], "display1.yaml")
+            self.assertEqual(stored["secret_keys"]["wifi_ssid_secret"], "wifi_ssid2")
+            self.assertEqual(stored["display_language"], "Español")
+            reopened.connection.close()
+
+    def test_esphome_profile_save_rejects_implicit_flags_and_invalid_reader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            APP.DATA_DIR = Path(directory)
+            registry = APP.Registry(Path(directory) / "esphome-invalid-profile.db")
+            registry.create_reader("keypad", "Keypad", "keypad", None, {})
+            admin = APP.FingerprintAdmin.__new__(APP.FingerprintAdmin)
+            admin.registry = registry
+            payload = {"profile": "display", "device_name": "display1"}
+
+            class Request:
+                headers = {"X-Fingerprint-Admin": "1"}
+
+                async def json(self):
+                    return payload
+
+            changes = registry.connection.total_changes
+            for flag in ("true", "false", 1, 0, None, {}, []):
+                payload["save_profile"] = flag
+                with self.assertRaises(APP.web.HTTPBadRequest):
+                    asyncio.run(admin.generate_esphome_config(Request()))
+            payload["save_profile"] = True
+            for reader_id in ("", "missing", "keypad"):
+                payload["reader_id"] = reader_id
+                with self.assertRaises(APP.web.HTTPBadRequest):
+                    asyncio.run(admin.generate_esphome_config(Request()))
+            self.assertEqual(registry.connection.total_changes, changes)
+            registry.connection.close()
+
     def test_esphome_configuration_filename_is_fixed_by_device_name(self):
         self.assertEqual(
             APP.esphome_configuration_for_device("front-reader"),
@@ -1243,7 +1319,7 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_supervisor_api_uses_current_websocket_endpoint_schema(self):
+    async def test_supervisor_metadata_cannot_use_the_app_websocket_proxy(self):
         commands = []
 
         async def websocket_command(command):
@@ -1251,16 +1327,10 @@ class DoorActionTests(unittest.IsolatedAsyncioTestCase):
             return {"addons": []}
 
         self.ha.websocket_command = websocket_command
-        result = await self.ha.supervisor_api("get", "/addons")
-        self.assertEqual(result, {"addons": []})
-        self.assertEqual(
-            commands,
-            [{
-                "type": "supervisor/api",
-                "method": "GET",
-                "endpoint": "/addons",
-            }],
-        )
+        with self.assertRaises(APP.DeviceBuilderError) as error:
+            await self.ha.supervisor_api("get", "/addons/esphome/info")
+        self.assertEqual(error.exception.code,"session_required")
+        self.assertEqual(commands,[])
 
     async def test_home_assistant_tag_refresh_is_bounded(self):
         refreshes = []

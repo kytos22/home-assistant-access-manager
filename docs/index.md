@@ -148,9 +148,9 @@ Select a reader to inspect only that device's physical slots. Enroll, link, assi
 
 #### ESPHome Device Builder
 
-The normal connection is automatic. Access Manager discovers the installed Device Builder through the authenticated Home Assistant Supervisor API and opens a short-lived Ingress session. It does not expose port `6052`, store an Ingress cookie, or bundle its own compiler.
+The normal connection is automatic when the panel is opened inside Home Assistant. The administrator's existing frontend connection discovers the installed Device Builder and obtains a temporary Ingress session. Access Manager does not read a Home Assistant access token, expose port `6052`, write the Ingress capability to persistent storage, or bundle its own compiler. The capability is isolated to the current request and its explicitly requested jobs; new remote operations recheck current administrator rights. See [Temporary Device Builder delegation](../SECURITY.md#temporary-device-builder-delegation).
 
-The connection card reports detecting, not installed, stopped, starting, Ingress unavailable, incompatible, connected, or error states. Starting a stopped Device Builder always requires an explicit administrator action.
+The connection card reports detecting, not installed, stopped, starting, Ingress unavailable, incompatible, connected, or authorization/error states. Starting a stopped Device Builder always requires an explicit administrator action. If the session expires, open the panel from Home Assistant and choose **Reconnect**. A rejected write, compile or OTA is not automatically replayed; review its actual result before submitting again.
 
 An external Device Builder can be configured under **Advanced configuration**. A submitted password is used once to obtain a token and is never saved. The returned token is encrypted in the app's private data directory.
 
@@ -169,7 +169,9 @@ An external Device Builder can be configured under **Advanced configuration**. A
 
 The configuration filename is always derived as `<device_name>.yaml` and cannot be edited independently. This prevents one reader from overwriting another reader's canonical YAML.
 
-**Create and compile in ESPHome** writes the managed wrapper through Device Builder and starts compilation. **Preview configuration** and **Download YAML** remain available as a manual fallback.
+**Preview configuration**, **Copy**, and **Download YAML** are a manual fallback: they do not save the linked reader's profile, write a Device Builder file, compile, or install firmware. **Save reader profile** explicitly stores the selected reader's device name, hardware choices and secret-key names in Access Manager only. It does not change common environment defaults or contact Device Builder. Use this separate action when keeping the profile for a manual installation.
+
+**Create and compile in ESPHome** first checks the target and shows a confirmation; only confirming writes the managed wrapper and starts compilation. A submitted build also saves its linked-reader profile. Existing configurations are refused when a name collision is detected or Device Builder cannot confirm version-history support; connecting successfully alone does not authorize overwriting a YAML file.
 
 #### Managed firmware updates
 
