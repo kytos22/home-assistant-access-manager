@@ -8,10 +8,24 @@ permissions:
   contents: read
 
 jobs:
+  panel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:ui
+      - run: node --test tests/test_device_builder_session.cjs
+      - run: npm run test:browser
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -26,8 +40,12 @@ jobs:
         run: python -m py_compile access_manager/app/main.py
       - name: Run registry tests
         run: python -m unittest discover -s tests -v
+      - name: Rehearse released registry upgrade and recovery offline
+        run: python -B tests/rehearse_upgrade.py --baseline-ref v0.15.3
       - name: Validate UI JavaScript
         run: node tests/check_ui.mjs
+      - name: Validate temporary Device Builder session isolation
+        run: node --test tests/test_device_builder_session.cjs
       - name: Validate YAML
         run: |
           python - <<'PY'
@@ -52,8 +70,9 @@ jobs:
         run: esphome compile esphome/reader-only.example.yaml
       - name: Build add-on image
         run: |
+          version=$(python -c 'import yaml; print(yaml.safe_load(open("access_manager/config.yaml"))["version"])')
           docker build \
-            --build-arg BUILD_VERSION=0.14.0 \
+            --build-arg BUILD_VERSION="$version" \
             --build-arg BUILD_ARCH=amd64 \
-            --tag access-manager-ci:0.14.0 \
+            --tag "access-manager-ci:$version" \
             access_manager
